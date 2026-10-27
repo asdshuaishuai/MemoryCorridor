@@ -1,0 +1,5 @@
+import {
+  "memorycorridor/base",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitstack/moonyaml" @yaml,
+}

@@ -1,0 +1,12 @@
+import {
+  "memorycorridor/pack",
+  "memorycorridor/base",
+  "memorycorridor/core",
+  "memorycorridor/decl",
+  "memorycorridor/vault",
+  "memorycorridor/index",
+  "memorycorridor/visual",
+  "memorycorridor/interop",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/encoding/base64",
+}

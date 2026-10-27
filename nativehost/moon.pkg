@@ -1,0 +1,9 @@
+import {
+  "memorycorridor/base",
+  "memorycorridor/agent",
+  "memorycorridor/platform",
+  "memorycorridor/vault",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/ref",
+}
+options(targets: { "host.mbt": ["native"] })

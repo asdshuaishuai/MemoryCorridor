@@ -1,0 +1,11 @@
+_build/
+dist/
+.DS_Store
+*.mbti
+__pycache__/
+.playwright-mcp/
+logs/
+.mooncakes/
+vendor/reader/node_modules/
+.stepcode/
+.corridor/

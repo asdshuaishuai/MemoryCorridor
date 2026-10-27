@@ -1,0 +1,5 @@
+import {
+  "memorycorridor/base",
+  "memorycorridor/core",
+  "memorycorridor/vendor/reader" @reader,
+}

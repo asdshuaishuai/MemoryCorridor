@@ -1,0 +1,7 @@
+import {
+  "memorycorridor/base",
+  "memorycorridor/agent",
+  "memorycorridor/nativehost",
+}
+pkgtype(kind: "executable")
+options(targets: { "main.mbt": ["native"] })

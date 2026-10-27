@@ -1,0 +1,257 @@
+{
+  "date": "2026-10-27",
+  "platform": "Darwin kelthasdeMac-mini.local 27.2.0 Darwin Kernel Version 27.2.0: Wed Oct 14 23:47:07 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T8132 arm64",
+  "tool": "native cli",
+  "scope": "diagnostic local baseline; no portable SLA",
+  "cases": [
+    {
+      "pages": 32,
+      "vectors": 32,
+      "queries": 8,
+      "notes": 200,
+      "retrieval": {
+        "hybrid": {
+          "samples": 8,
+          "median_ms": 60.43391698040068,
+          "p95_ms": 61.919583939015865
+        },
+        "keyword": {
+          "samples": 8,
+          "median_ms": 59.61856245994568,
+          "p95_ms": 61.65012496057898
+        },
+        "vector": {
+          "samples": 8,
+          "median_ms": 49.70366699853912,
+          "p95_ms": 50.82429200410843
+        }
+      },
+      "allocation": [
+        {
+          "dedup": "exact",
+          "spread": "ranked",
+          "strategy": "ranked_halves_exact_body_paragraph_v1",
+          "median_ms": 57.69537505693734,
+          "median_blocks": 6.0,
+          "median_block_bytes": 1190.0
+        },
+        {
+          "dedup": "exact",
+          "spread": "even",
+          "strategy": "exact_body_paragraph_even_v2",
+          "median_ms": 60.03450002754107,
+          "median_blocks": 10.0,
+          "median_block_bytes": 1200.0
+        },
+        {
+          "dedup": "similar",
+          "spread": "even",
+          "strategy": "similar_body_paragraph_even_v2",
+          "median_ms": 66.8958755559288,
+          "median_blocks": 10.0,
+          "median_block_bytes": 1200.0
+        }
+      ],
+      "memory": [
+        {
+          "op": "memory-prefetch",
+          "samples": 8,
+          "median_ms": 99.67212547780946,
+          "p95_ms": 101.99491598177701
+        },
+        {
+          "op": "memory-list",
+          "samples": 8,
+          "median_ms": 102.16733353445306,
+          "p95_ms": 103.12304203398526
+        },
+        {
+          "op": "inbox",
+          "samples": 8,
+          "median_ms": 109.5060205552727,
+          "p95_ms": 111.9483340298757
+        },
+        {
+          "op": "impact-audit",
+          "samples": 8,
+          "median_ms": 83.32095801597461,
+          "p95_ms": 84.06166697386652
+        }
+      ],
+      "concurrency": [
+        {
+          "workers": 8,
+          "successful": 1,
+          "locked": 7,
+          "max_ms": 43.255959055386484
+        }
+      ]
+    },
+    {
+      "pages": 128,
+      "vectors": 128,
+      "queries": 8,
+      "notes": 200,
+      "retrieval": {
+        "hybrid": {
+          "samples": 8,
+          "median_ms": 213.56174995889887,
+          "p95_ms": 214.75512499455363
+        },
+        "keyword": {
+          "samples": 8,
+          "median_ms": 212.19750051386654,
+          "p95_ms": 217.38650009501725
+        },
+        "vector": {
+          "samples": 8,
+          "median_ms": 172.4302505608648,
+          "p95_ms": 173.95008297171444
+        }
+      },
+      "allocation": [
+        {
+          "dedup": "exact",
+          "spread": "ranked",
+          "strategy": "ranked_halves_exact_body_paragraph_v1",
+          "median_ms": 211.17374947061762,
+          "median_blocks": 6.0,
+          "median_block_bytes": 1190.0
+        },
+        {
+          "dedup": "exact",
+          "spread": "even",
+          "strategy": "exact_body_paragraph_even_v2",
+          "median_ms": 214.0591875067912,
+          "median_blocks": 10.0,
+          "median_block_bytes": 1200.0
+        },
+        {
+          "dedup": "similar",
+          "spread": "even",
+          "strategy": "similar_body_paragraph_even_v2",
+          "median_ms": 219.71979149384424,
+          "median_blocks": 10.0,
+          "median_block_bytes": 1200.0
+        }
+      ],
+      "memory": [
+        {
+          "op": "memory-prefetch",
+          "samples": 8,
+          "median_ms": 135.40097896475345,
+          "p95_ms": 140.8206248888746
+        },
+        {
+          "op": "memory-list",
+          "samples": 8,
+          "median_ms": 136.51987496996298,
+          "p95_ms": 137.65716704074293
+        },
+        {
+          "op": "inbox",
+          "samples": 8,
+          "median_ms": 144.0772705245763,
+          "p95_ms": 145.68770898040384
+        },
+        {
+          "op": "impact-audit",
+          "samples": 8,
+          "median_ms": 119.93231251835823,
+          "p95_ms": 123.90170793514699
+        }
+      ],
+      "concurrency": [
+        {
+          "workers": 8,
+          "successful": 1,
+          "locked": 7,
+          "max_ms": 162.6549999928102
+        }
+      ]
+    },
+    {
+      "pages": 256,
+      "vectors": 256,
+      "queries": 8,
+      "notes": 200,
+      "retrieval": {
+        "hybrid": {
+          "samples": 8,
+          "median_ms": 401.71589551027864,
+          "p95_ms": 404.52070895116776
+        },
+        "keyword": {
+          "samples": 8,
+          "median_ms": 416.6658330359496,
+          "p95_ms": 421.7338329181075
+        },
+        "vector": {
+          "samples": 8,
+          "median_ms": 334.0804794570431,
+          "p95_ms": 346.75366699229926
+        }
+      },
+      "allocation": [
+        {
+          "dedup": "exact",
+          "spread": "ranked",
+          "strategy": "ranked_halves_exact_body_paragraph_v1",
+          "median_ms": 414.1061045229435,
+          "median_blocks": 6.0,
+          "median_block_bytes": 1190.0
+        },
+        {
+          "dedup": "exact",
+          "spread": "even",
+          "strategy": "exact_body_paragraph_even_v2",
+          "median_ms": 416.11056245164946,
+          "median_blocks": 10.0,
+          "median_block_bytes": 1200.0
+        },
+        {
+          "dedup": "similar",
+          "spread": "even",
+          "strategy": "similar_body_paragraph_even_v2",
+          "median_ms": 425.57016597129405,
+          "median_blocks": 10.0,
+          "median_block_bytes": 1200.0
+        }
+      ],
+      "memory": [
+        {
+          "op": "memory-prefetch",
+          "samples": 8,
+          "median_ms": 180.6063544936478,
+          "p95_ms": 182.12845805101097
+        },
+        {
+          "op": "memory-list",
+          "samples": 8,
+          "median_ms": 183.10939596267417,
+          "p95_ms": 191.23445800505579
+        },
+        {
+          "op": "inbox",
+          "samples": 8,
+          "median_ms": 192.99877097364515,
+          "p95_ms": 202.71237497217953
+        },
+        {
+          "op": "impact-audit",
+          "samples": 8,
+          "median_ms": 170.64114549430087,
+          "p95_ms": 175.9174580220133
+        }
+      ],
+      "concurrency": [
+        {
+          "workers": 8,
+          "successful": 1,
+          "locked": 7,
+          "max_ms": 316.39191694557667
+        }
+      ]
+    }
+  ]
+}

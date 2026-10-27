@@ -1,0 +1,98 @@
+{
+  "date": "2026-10-16",
+  "dataset": "four owned deterministic domain fixtures; native ingestion and retrieval",
+  "question_count": 6,
+  "recall_at_3": 1.0,
+  "source_attachment_rate": 1.0,
+  "questions_sha256": "cc3de49c7914567680cc0e87bc5e4d7327437543f7095aa94aff981cd441203a",
+  "budget_samples": {
+    "64": {
+      "used": 64,
+      "blocks": 1
+    },
+    "128": {
+      "used": 128,
+      "blocks": 1
+    },
+    "256": {
+      "used": 195,
+      "blocks": 1
+    },
+    "512": {
+      "used": 195,
+      "blocks": 1
+    },
+    "1024": {
+      "used": 195,
+      "blocks": 1
+    }
+  },
+  "scope": "retrieval/provenance and UTF-8 budget baseline; no model quality or semantic entailment claim",
+  "results": [
+    {
+      "query": "光合作用",
+      "expected": "concepts/physics-energy",
+      "hits": [
+        "concepts/physics-energy"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "context_used": 199
+    },
+    {
+      "query": "免疫记忆",
+      "expected": "concepts/medicine-vaccine",
+      "hits": [
+        "concepts/medicine-vaccine",
+        "concepts/food-fermentation",
+        "concepts/software-vector"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "context_used": 512
+    },
+    {
+      "query": "余弦相似度",
+      "expected": "concepts/software-vector",
+      "hits": [
+        "concepts/software-vector",
+        "concepts/food-fermentation",
+        "concepts/medicine-vaccine"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "context_used": 512
+    },
+    {
+      "query": "发酵温度",
+      "expected": "concepts/food-fermentation",
+      "hits": [
+        "concepts/food-fermentation",
+        "concepts/software-vector"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "context_used": 367
+    },
+    {
+      "query": "vector backend",
+      "expected": "concepts/software-vector",
+      "hits": [
+        "concepts/software-vector"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "context_used": 195
+    },
+    {
+      "query": "antibody",
+      "expected": "concepts/medicine-vaccine",
+      "hits": [
+        "concepts/medicine-vaccine"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "context_used": 237
+    }
+  ]
+}

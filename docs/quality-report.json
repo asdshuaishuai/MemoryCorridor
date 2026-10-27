@@ -1,0 +1,86 @@
+{
+  "dataset": "owned PROPOSAL.md and LICENSE; manually curated reference pages",
+  "source_sha256": "53246263db47edfbdbbfc614aca804156c75f5d5b0f6ca6f1a4d1f494a95eb69",
+  "questions_sha256": "946d2a6d51cfc40f90421ced5bd5442cc06a5e440d8028723b3ac707db979237",
+  "question_count": 6,
+  "recall_at_3": 1.0,
+  "source_attachment_rate": 1.0,
+  "raw_exact_match_rate": 0.6666666666666666,
+  "scope": "retrieval/provenance smoke evaluation only; no model-generated page quality or semantic entailment claim",
+  "results": [
+    {
+      "query": "文学化目录",
+      "expected": "concepts/文学化目录",
+      "source": "raw/项目方案.md",
+      "hits": [
+        "concepts/文学化目录",
+        "overview",
+        "concepts/来源失效"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "raw_exact_match": true
+    },
+    {
+      "query": "EmbeddingProvider",
+      "expected": "concepts/向量检索",
+      "source": "raw/项目方案.md",
+      "hits": [
+        "concepts/向量检索"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "raw_exact_match": true
+    },
+    {
+      "query": "VectorSearchBackend",
+      "expected": "concepts/向量检索",
+      "source": "raw/项目方案.md",
+      "hits": [
+        "concepts/向量检索"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "raw_exact_match": true
+    },
+    {
+      "query": "撤销原始来源",
+      "expected": "concepts/来源失效",
+      "source": "raw/项目方案.md",
+      "hits": [
+        "concepts/来源失效",
+        "concepts/文学化目录",
+        "overview"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "raw_exact_match": false
+    },
+    {
+      "query": "审核决定",
+      "expected": "concepts/来源失效",
+      "source": "raw/项目方案.md",
+      "hits": [
+        "concepts/来源失效",
+        "concepts/文学化目录",
+        "overview"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "raw_exact_match": true
+    },
+    {
+      "query": "正文 Markdown",
+      "expected": "concepts/文学化目录",
+      "source": "raw/项目方案.md",
+      "hits": [
+        "concepts/文学化目录",
+        "overview",
+        "concepts/向量检索"
+      ],
+      "recall_at_3": true,
+      "source_attached": true,
+      "raw_exact_match": false
+    }
+  ]
+}

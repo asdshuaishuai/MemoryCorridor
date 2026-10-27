@@ -1,0 +1,13 @@
+MemoryCorridor is an independently implemented knowledge engine.
+Compiled-wiki methodology informed by the upstream research listed in
+PROPOSAL.md. No llm_wiki source code, prompts, or schema text are included.
+
+YAML adapter: moonbitstack/moonyaml 0.1.1, Apache-2.0.
+Registry SHA-256: 8c64d0414917c64919bdc29307522b87239e44e401e4960496d786d3a9539d68.
+License: licenses/moonyaml-Apache-2.0.txt.
+
+Offline reader: markdown-it (MIT), DOMPurify (Apache-2.0 option),
+highlight.js (BSD-3-Clause), Prettier (MIT), and their dependencies.
+Exact versions/integrity: vendor/reader/package-lock.json and provenance.json.
+Full notices: licenses/ and the dependency-notices JSON in generated HTML.
+Third-party source and generated embeddings are excluded from owned source ratios.

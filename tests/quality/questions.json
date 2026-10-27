@@ -1,0 +1,8 @@
+[
+  {"query":"文学化目录", "expected":"concepts/文学化目录", "source":"raw/项目方案.md"},
+  {"query":"EmbeddingProvider", "expected":"concepts/向量检索", "source":"raw/项目方案.md"},
+  {"query":"VectorSearchBackend", "expected":"concepts/向量检索", "source":"raw/项目方案.md"},
+  {"query":"撤销原始来源", "expected":"concepts/来源失效", "source":"raw/项目方案.md"},
+  {"query":"审核决定", "expected":"concepts/来源失效", "source":"raw/项目方案.md"},
+  {"query":"正文 Markdown", "expected":"concepts/文学化目录", "source":"raw/项目方案.md"}
+]

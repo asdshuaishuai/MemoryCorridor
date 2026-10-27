@@ -1,0 +1,4 @@
+import {
+  "memorycorridor/base",
+  "moonbitstack/moonyaml" @yaml,
+}

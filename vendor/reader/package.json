@@ -1,0 +1,13 @@
+{
+  "name": "memorycorridor-reader-dependencies",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": {
+    "dompurify": "3.4.17",
+    "highlight.js": "11.12.0",
+    "markdown-it": "15.0.3",
+    "prettier": "3.9.10"
+  },
+  "devDependencies": { "esbuild": "0.25.12" }
+}

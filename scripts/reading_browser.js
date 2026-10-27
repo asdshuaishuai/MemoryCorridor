@@ -1,0 +1,94 @@
+// Playwright tool entry: browser_run_code_unsafe(filename=absolute path).
+async page => {
+  const passed=[], errors=[], network=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',m=>{if(m.type()==='error') errors.push(m.text());});
+  page.on('request',r=>network.push(r.url()));
+  const check=(value,message)=>{if(!value) throw new Error(message);};
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('http://127.0.0.1:8768/');
+  await page.getByRole('link',{name:'富文本与代码',exact:true}).click();
+  const article=page.locator('.reading:not([hidden])');
+  await article.locator('[data-rendered=ready]').waitFor();
+  check(await article.locator('.rendered h1').textContent()==='渲染验收','Markdown heading');
+  check(await article.locator('.rendered strong').count()===2,'Markdown and inline HTML emphasis');
+  check(await article.locator('.rendered blockquote').count()===1,'quote');
+  check(await article.locator('.rendered ol > li').count()===2,'ordered list');
+  check(await article.locator('.rendered ol ul > li').count()===1,'nested list');
+  check(await article.locator('.rendered table tbody tr').count()===2,'table');
+  check(await article.locator('code.language-mbt .hljs-keyword').count()>0,'MoonBit highlight');
+  check(await article.locator('code.language-python .hljs-keyword').count()>0,'Python highlight');
+  check(await article.locator('code.language-unknown-language').textContent()==='<tag>untouched</tag>\n','unknown language fallback');
+  check(await article.locator('code.language-html').textContent().then(s=>s.includes('<script>') && s.includes('window.CODE_EXECUTED')),'HTML code stays code');
+  const image=article.locator('.rendered img[alt="本地证据"]');
+  await image.waitFor();
+  check(await image.evaluate(x=>x.complete && x.naturalWidth===1),'offline evidence image');
+  passed.push('Markdown structure, HTML fragments, MoonBit/Python/HTML syntax and offline images');
+
+  const code=article.locator('code.language-javascript');
+  const button=article.locator('.code-toolbar').filter({hasText:'javascript'}).getByRole('button');
+  await button.filter({hasText:'原始排版'}).waitFor();
+  const formatted=await code.textContent();
+  check(formatted.includes('const answer = {'),'default language-specific formatter');
+  await button.click(); const raw=await code.textContent();
+  check(raw.startsWith('const answer={value:42,list:[1,2]};function greet(name)'),'original layout is byte-preserved');
+  await button.click(); check(await code.textContent()===formatted,'formatter toggle restores preview');
+  const jsonCode=article.locator('code.language-json');
+  const jsonButton=article.locator('.code-toolbar').filter({hasText:'json'}).getByRole('button');
+  await jsonButton.filter({hasText:'原始排版'}).waitFor();
+  const jsonFormatted=await jsonCode.textContent(); await jsonButton.click();
+  const jsonRaw=await jsonCode.textContent();
+  check(JSON.stringify(JSON.parse(jsonFormatted))===JSON.stringify(JSON.parse(jsonRaw)),'JSON formatter preserves value');
+  await jsonButton.click();
+  await article.getByText('查看原文',{exact:true}).click();
+  check(await article.locator('.original[open] .original-code').textContent().then(s=>s.includes('**加粗文本**')),'original Markdown retained');
+  await article.getByText('查看原文',{exact:true}).click();
+  passed.push('Prettier formatting, exact original layout toggle and source inspection');
+
+  await page.getByRole('link',{name:'跳转标题',exact:true}).click();
+  check(page.url().includes('--'),'heading permalink');
+  check(await article.locator('.rendered h2').isVisible(),'heading route retains article');
+  await page.reload(); await article.locator('[data-rendered=ready]').waitFor();
+  check(await article.locator('.rendered h2').isVisible(),'heading deep-link reload');
+  await page.getByRole('link',{name:'原始 HTML',exact:true}).click();
+  const iframe=article.locator('iframe'); await iframe.waitFor();
+  check(await iframe.getAttribute('sandbox')==='','sandbox isolation');
+  const frame=page.frameLocator('.reading:not([hidden]) iframe');
+  await frame.getByRole('heading',{name:'独立 HTML 页面'}).waitFor();
+  check(await frame.locator('body').evaluate(x=>getComputedStyle(x).backgroundColor)==='rgb(234, 243, 255)','HTML document styling');
+  check(await frame.locator('table td').allTextContents().then(x=>x.includes('已渲染')),'HTML table');
+  check(await frame.locator('script,iframe,[onerror]').count()===0,'HTML executable content removed');
+  check(await frame.locator('img[alt="frame image"]').evaluate(x=>x.complete && x.naturalWidth===1),'HTML local asset');
+  check(!await page.evaluate(()=>window.READER_ATTACKED || window.CODE_EXECUTED),'no user code executed');
+  check(await page.locator('main > .reading').count()===11,'content cannot create host reading routes');
+  passed.push('heading routes/reload, full HTML styles/table/assets, sandbox and attack corpus');
+
+  await page.locator('aside').getByRole('link',{name:'raw/example.py',exact:true}).click();
+  await article.locator('code.language-python .hljs-keyword').first().waitFor();
+  check((await article.locator('code.language-python').textContent()).includes('    return value * 2'),'source language and indentation');
+  await page.getByRole('link',{name:'富文本与代码',exact:true}).click();
+  const graphPanel=page.locator('.graph-panel');
+  if (await graphPanel.count() > 0) {
+    const map=graphPanel.locator("svg.graph-map");
+    await map.waitFor();
+    check(await map.locator("line.graph-edge").count() > 0,'snapshot graph edges');
+    check(await map.locator("circle.graph-node").count() > 0,'snapshot graph nodes');
+    const firstNode=map.locator("a").first();
+    const target=await firstNode.getAttribute('href');
+    await firstNode.click();
+    check(page.url().endsWith(target),'graph node routes through the hash router');
+    check(await page.locator('.reading:not([hidden])').count() === 1,'graph navigation selects one article');
+    passed.push('snapshot graph map renders, routes and stays inside the panel');
+  }
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
+  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'mobile page width');
+  await page.getByRole('searchbox').fill('不存在的检索内容');
+  check(await page.locator('#no-results').isVisible(),'search empty state');
+  await page.getByRole('searchbox').fill('');
+  check(await page.getByRole('link',{name:'富文本与代码',exact:true}).isVisible(),'search reset');
+  check(errors.length===0,'runtime errors: '+errors.join('; '));
+  check(network.every(url=>url.startsWith('http://127.0.0.1:8768/') || url.startsWith('data:') || url==='about:srcdoc'),'unexpected network: '+network.join(', '));
+  passed.push('source-code view, mobile overflow, search states, zero console errors and no CDN requests');
+  return {passed,errors,requests:network.length};
+}

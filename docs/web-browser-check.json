@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-16",
+  "scope": "Actual browser against scripts/serve.py and a native-compiled rich-reading fixture; no desktop application",
+  "viewports": [{"width":1440,"height":1000},{"width":390,"height":844}],
+  "passed": [
+    "Markdown headings, lists, tables, inline HTML and local images",
+    "MoonBit, Python and HTML syntax highlighting; unknown-language text preservation",
+    "JavaScript/JSON formatting, exact original layout toggle and original source inspection",
+    "Chinese heading deep links and reload",
+    "Full HTML styles, table and local assets inside sandbox",
+    "Executable HTML removal and host navigation isolation",
+    "Mobile page width and search empty/reset states",
+    "Zero runtime errors and no external dependency requests"
+  ],
+  "runtimeErrors": [],
+  "networkRequests": 2,
+  "screenshots": ["web-wide.png", "web-mobile.png"]
+}
