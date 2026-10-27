@@ -374,6 +374,28 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert record_invalid_details(root) == [], (op, field)
         checked += 1
 
+    # The import event. `import` needs a directory that actually holds a
+    # markdown file, or it refuses before the event is written.
+    (root / "imports/m").mkdir(parents=True, exist_ok=True)
+    (root / "imports/m/a.md").write_text("# 导入的材料\n\n器形与釉色。\n")
+    call(root, "import", format="markdown", directory="imports/m",
+         at="2026-11-14T12:50:00Z")
+    event_cases += [
+        ("import", "format", "a\nb", "import_event_format_invalid"),
+        ("import", "version", 0, "import_event_version_invalid"),
+    ]
+    for op, field, value, expected in event_cases[-2:]:
+        target = event_file(op)
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed[field] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (op, field, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], (op, field)
+        checked += 1
+
     # The evidence event. The item shape is byte ranges that must not split a
     # character, and the page hash has to be the current one, so both are real
     # values rather than placeholders.
