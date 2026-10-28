@@ -95,6 +95,13 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     registration = call(root, "provider-register", provider="本地后端", kind="embedding",
                         space={"id": "vec", "dimensions": 8}, capabilities=["embed"],
                         at="2026-11-14T10:30:00Z")
+    # A search provider, registered here rather than next to the job cases: the
+    # vault has been through archive, restore and replace by then, and a provider
+    # registered late is resolved against a catalog those operations rewrote.
+    call(root, "provider-register", provider="检索端", kind="search",
+         space={"id": "vec9", "dimensions": 8}, capabilities=["search"],
+         at="2026-11-14T10:31:00Z")
+
     # The op addresses a provider by name; its record is addressed by path.
     provider = registration["provider"]
     provider_path = registration["path"]
@@ -437,10 +444,14 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # character, and the page hash has to be the current one, so both are real
     # values rather than placeholders.
     real_hash = call(root, "list-pages")[0]["sha256"]
-    call(root, "evidence-submit", page="concepts/ceramics", page_hash=real_hash,
-         items=[{"source": "raw/ceramics.md", "body_start": 0, "body_end": 3,
-                 "quote": "器", "source_start": 0, "source_end": 3,
-                 "source_quote": "器"}])
+    # The submit returns the record id, which is what the file is named after.
+    # Locating the file by glob would pick whichever evidence record sorts first,
+    # and by this point the vault holds several.
+    evidence_id = call(root, "evidence-submit", page="concepts/ceramics",
+                       page_hash=real_hash,
+                       items=[{"source": "raw/ceramics.md", "body_start": 0,
+                               "body_end": 3, "quote": "器", "source_start": 0,
+                               "source_end": 3, "source_quote": "器"}])["id"]
     event_cases += [
         ("evidence-submit", "evidence", "short", "evidence_event_id_invalid"),
         ("evidence-submit", "page_hash", "short",
@@ -456,6 +467,76 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert expected in got, (op, field, got, expected)
         target.write_text(original, encoding="utf-8")
         assert record_invalid_details(root) == [], (op, field)
+        checked += 1
+
+    # The evidence record's own claim checks. Its id is a hash of
+    # page + page_hash + claims, and the id must equal the filename, so editing a
+    # claim means recomputing the id, renaming the file and repointing the
+    # catalog entry -- otherwise the identity check fires first and the claim
+    # branches stay unreachable. The canonical form the engine hashes is
+    # sorted-key, compact-separator JSON.
+    import hashlib
+
+    evidence_file = root / "state/evidence" / (evidence_id + ".json")
+    original_evidence = evidence_file.read_text(encoding="utf-8")
+    catalog = root / "index.mbt.md"
+    original_catalog = catalog.read_text(encoding="utf-8")
+
+    def retune_evidence(edit):
+        parsed = json.loads(original_evidence)
+        edit(parsed)
+        payload = json.dumps(
+            {"page": parsed["page"], "page_hash": parsed["page_hash"],
+             "claims": parsed["claims"]},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        parsed["id"] = hashlib.sha256(
+            ("evidence-v1\n" + payload).encode("utf-8")).hexdigest()
+        moved = evidence_file.parent / (parsed["id"] + ".json")
+        moved.write_text(json.dumps(parsed, ensure_ascii=False),
+                         encoding="utf-8")
+        evidence_file.unlink()
+        lines = original_catalog.splitlines()
+        wanted = "state/evidence/" + evidence_file.name
+        for i, line in enumerate(lines):
+            if wanted in line and line.strip().startswith('entry("'):
+                lines[i] = line.replace(evidence_file.name, moved.name)
+                break
+        catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        found = record_invalid_details(root)
+        moved.unlink()
+        evidence_file.write_text(original_evidence, encoding="utf-8")
+        catalog.write_text(original_catalog, encoding="utf-8")
+        return found
+
+    evidence_claim_cases = [
+        ("no claims at all", lambda d: d.__setitem__("claims", []),
+         "evidence_claims_count_invalid"),
+        ("a source outside raw/",
+         lambda d: d["claims"][0].__setitem__("source", "wiki/x.md"),
+         "evidence_source_invalid"),
+        ("a negative body start",
+         lambda d: d["claims"][0].__setitem__("body_start", -1),
+         "evidence_range_invalid"),
+        ("a body range that ends where it starts",
+         lambda d: d["claims"][0].__setitem__("body_end", 0),
+         "evidence_range_invalid"),
+        ("an empty quote",
+         lambda d: d["claims"][0].__setitem__("quote", ""),
+         "evidence_quote_invalid"),
+        ("a source range with no quote",
+         lambda d: [d["claims"][0].pop(k, None)
+                    for k in ("source_end", "source_quote")],
+         "evidence_source_binding_required"),
+        ("a negative source start",
+         lambda d: d["claims"][0].__setitem__("source_start", -1),
+         "evidence_source_range_invalid"),
+        ("an empty source quote",
+         lambda d: d["claims"][0].__setitem__("source_quote", ""),
+         "evidence_source_quote_invalid"),
+    ]
+    for label, edit, expected in evidence_claim_cases:
+        found = retune_evidence(edit)
+        assert expected in found, (label, found, expected)
         checked += 1
 
     # The page lifecycle events. `archive-page` then `restore-page` produces both
@@ -477,9 +558,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         ("page-restore", "page_hash", "short", "page_restore_event_hash_invalid"),
         ("page-restore", "archive", "bogus", "page_restore_event_archive_invalid"),
         ("page-restore", "version", "short", "page_restore_event_version_invalid"),
+        ("page-restore", "at", "short", "page_restore_event_time_invalid"),
         ("forget", "source", "bogus", "forget_event_source_invalid"),
     ]
-    for op, field, value, expected in event_cases[-9:]:
+    for op, field, value, expected in event_cases[-10:]:
         target = event_file(op)
         original = target.read_text(encoding="utf-8")
         parsed = json.loads(original)
@@ -723,6 +805,32 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          "provider_event_identity_invalid"),
         ("review-resolve", "key", "another-key", "review_event_identity_invalid"),
     ]
+
+    # The same trick on the events this suite already produced. Each of these
+    # derives its filename from a field the case points at another *valid* value,
+    # so the derived name and the file on disk disagree -- which is the identity
+    # branch, not the field-shape branch. An earlier note in this file called
+    # these unreachable because renaming an event file only makes an orphan; that
+    # is true of renaming, and false of retargeting a field.
+    valid_hash = "a" * 64
+    event_identity_cases += [
+        ("evidence-submit", "evidence", valid_hash,
+         "evidence_event_identity_invalid"),
+        ("purpose-suggest", "suggestion", valid_hash,
+         "purpose_event_identity_invalid"),
+        ("quality-audit", "id", valid_hash, "quality_event_identity_invalid"),
+        ("research-topic", "research", valid_hash,
+         "research_event_identity_invalid"),
+        ("overview-suggest", "suggestion", valid_hash,
+         "overview_event_identity_invalid"),
+        # `impact-open` has two distinct checks: the id must equal
+        # `impact_id(kind, subject, cause)`, and the filename must equal the hash
+        # of key/current/at. Retargeting the id reaches the first; moving `at` to
+        # another valid timestamp reaches the second.
+        ("impact-open", "impact", valid_hash, "impact_event_identity_invalid"),
+        ("impact-open", "at", "2026-11-14T09:00:00Z",
+         "impact_event_path_invalid"),
+    ]
     for op, field, value, expected in event_identity_cases:
         target = event_file(op)
         original = target.read_text(encoding="utf-8")
@@ -733,6 +841,386 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert expected in got, (op, field, got, expected)
         target.write_text(original, encoding="utf-8")
         assert record_invalid_details(root) == [], (op, field)
+        checked += 1
+
+    # Record-level branches that need a second field moved, or a state the setup
+    # above never produced.
+    #
+    # `memory-supersede` marks the old note superseded and writes a new one, so
+    # both halves of the chain exist afterwards; archiving the replacement gives
+    # a note whose status is `archived`.
+    # `glaze.md` rather than `ceramics.md`: the page-lifecycle section above has
+    # already revoked the latter by the time this runs.
+    replaced = call(root, "memory-supersede", id=note,
+                    text="替换后的版本内容与原先不同，长度也足够通过门槛。",
+                    conditions=["核对时"], sources=["raw/glaze.md"],
+                    at="2026-11-14T09:35:00Z", key="replacement")["id"]
+    call(root, "memory-archive", id=replaced, at="2026-11-14T09:45:00Z")
+    resolved_review = call(root, "review-list")[0]["id"]
+    call(root, "review-resolve", id=resolved_review, action="skip", note="n",
+         at="2026-11-14T11:45:00Z")
+    # A fresh overview: the shared one has already been through apply and cancel
+    # by the time this section runs, so its fields no longer start from
+    # `proposed`.
+    fresh_overview = call(root, "overview-suggest", at="2026-11-14T13:00:00Z",
+                          key="fresh-ov")["id"]
+
+    record_cases = [
+        # A note the engine archived carries no `archived_at` of its own.
+        (f"state/memory/{replaced}.json", "archived_at", None,
+         "memory_archived_at_required"),
+        # The other half of the same pair, on the superseded note.
+        (f"state/memory/{note}.json", "superseded_by", None,
+         "memory_superseded_by_required"),
+        # An overview that claims to be applied must say when, and with what
+        # result hash.
+        (f"state/overview/{fresh_overview}.json", "closed_at", "short",
+         "overview_applied_record_invalid"),
+        # A cancelled overview must not carry a result hash at all.
+        (f"state/overview/{fresh_overview}.json", "result_hash", "a" * 64,
+         "overview_cancelled_record_invalid"),
+        # A resolved review keeps its decision nested, and both of the decision's
+        # own fields are checked.
+        (f"state/reviews/{resolved_review}.json", "decision", {"at": "short"},
+         "review_decision_at_invalid"),
+        (f"state/reviews/{resolved_review}.json", "decision", {"key": ""},
+         "review_idempotency_key_invalid"),
+    ]
+    for path, field, value, expected in record_cases:
+        target = root / path
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        if field == "closed_at":
+            parsed["status"] = "applied"
+            parsed["result_hash"] = "a" * 64
+            parsed["closed_at"] = value
+        elif field == "result_hash":
+            parsed["status"] = "cancelled"
+            parsed["closed_at"] = "2026-11-14T10:20:00Z"
+            parsed["result_hash"] = value
+        elif field == "decision":
+            parsed["decision"].update(value)
+        else:
+            parsed[field] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (path, field, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], path
+        checked += 1
+
+    # A record whose top level is not an object. Every other case edits a field
+    # of a well-formed record; this one replaces the whole file.
+    target = root / f"state/memory/{note}.json"
+    original = target.read_text(encoding="utf-8")
+    target.write_text("[]", encoding="utf-8")
+    got = record_invalid_details(root)
+    assert any(row.startswith("record_object_required") for row in got), got
+    target.write_text(original, encoding="utf-8")
+    assert record_invalid_details(root) == []
+    checked += 1
+
+    # The memory record's id must equal `memory_note_id(key, note_hash)`. The
+    # filename is checked first, so pointing the id at another *valid* hash only
+    # works if the file is renamed to match -- and the IR line has to be found by
+    # the record path, not by the bare id, because the `memory-submit` event file
+    # carries the same id in its name.
+    index = root / "index.mbt.md"
+    original_index = index.read_text(encoding="utf-8")
+    target = root / f"state/memory/{note}.json"
+    original = target.read_text(encoding="utf-8")
+    parsed = json.loads(original)
+    parsed["id"] = "a" * 64
+    renamed = target.parent / ("a" * 64 + ".json")
+    renamed.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+    target.unlink()
+    lines = original_index.splitlines()
+    wanted = "state/memory/" + target.name
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = line.replace(target.name, renamed.name)
+            break
+    index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    got = record_invalid_details(root)
+    assert "memory_record_identity_mismatch" in got, got
+    renamed.unlink()
+    target.write_text(original, encoding="utf-8")
+    index.write_text(original_index, encoding="utf-8")
+    assert record_invalid_details(root) == []
+    checked += 1
+
+    # Two event kinds this suite had never produced, so their branches were
+    # unreachable rather than unreferenced.
+    #
+    # `import` needs a directory that actually holds a markdown file, or it
+    # refuses before any event is written.
+    (root / "imports/m").mkdir(parents=True, exist_ok=True)
+    (root / "imports/m/a.md").write_text("# 导入的材料\n\n器形与釉色。\n")
+    call(root, "import", format="markdown", directory="imports/m",
+         at="2026-11-14T12:50:00Z")
+
+    # `source-missing` is written by `scan` when a registered raw file has
+    # disappeared from disk. It has to come last: deleting the source makes every
+    # page that cites it inactive, so nothing that touches a page can follow.
+    (root / "raw/glaze.md").unlink()
+    call(root, "scan")
+
+    event_cases += [
+        ("import", "format", "a\nb", "import_event_format_invalid"),
+        ("import", "version", 0, "import_event_version_invalid"),
+        ("import", "bundle", "a" * 64, "import_event_identity_invalid"),
+        ("ingest", "pages", {"wiki/x.md": "short"},
+         "ingest_event_page_hash_invalid"),
+        ("source-missing", "source_hash", "short",
+         "source_missing_event_invalid"),
+        ("source-missing", "source", "raw/" + "b" * 64 + ".md",
+         "source_missing_event_identity_invalid"),
+    ]
+    for op, field, value, expected in event_cases[-6:]:
+        target = event_file(op)
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed[field] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (op, field, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], (op, field)
+        checked += 1
+
+    # A provider's declared capabilities have to match its kind, and the check
+    # lives on `provider-register` itself rather than in the event layer, so the
+    # refusal comes back as an error rather than as a lint violation.
+    call(root, "provider-register", provider="无嵌入能力", kind="embedding",
+         space={"id": "nocap", "dimensions": 8}, capabilities=["search"],
+         at="2026-11-14T13:10:00Z",
+         error="provider_embed_capability_required")
+    call(root, "provider-register", provider="无检索能力", kind="search",
+         space={"id": "nocap2", "dimensions": 8}, capabilities=["embed"],
+         at="2026-11-14T13:11:00Z",
+         error="provider_search_capability_required")
+    checked += 2
+
+    # The space id carried by the register event. The event's field is `space`,
+    # an object, so the id is nested one level down.
+    for value in ("", "x" * 600, "a\nb"):
+        target = event_file("provider-register")
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed["space"]["id"] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert "provider_event_space_invalid" in got, (value, got)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], value
+        checked += 1
+
+    # The job request envelope. An embedding request carries items and a text
+    # recipe; a search request carries a query and a limit, and each kind has its
+    # own bounds. A search provider needs a space of its own -- sharing one with
+    # an embedding provider is refused as a kind mismatch.
+    plan_items = call(root, "embedding-plan",
+                      space={"id": "vec", "dimensions": 8})["items"]
+    for label, request, expected in (
+            ("an item whose hash is not a hash",
+             {"items": [dict(plan_items[0], sha256="short")],
+              "text_recipe": "title-body-prefix16KiB-v1"},
+             "provider_job_embedding_item_invalid"),
+            ("an item with no page",
+             {"items": [dict(plan_items[0], page="")],
+              "text_recipe": "title-body-prefix16KiB-v1"},
+             "provider_job_embedding_item_invalid"),
+            ("a limit below the range", {"query": "釉色", "limit": 0},
+             "provider_job_limit_invalid"),
+            ("a limit above the range", {"query": "釉色", "limit": 101},
+             "provider_job_limit_invalid"),
+            ("a query past the size bound", {"query": "x" * 4097, "limit": 2},
+             "provider_job_query_too_large"),
+    ):
+        # Deliberately not named `provider`, `kind` or `space`: those names are
+        # already bound at this scope and later sections read them.
+        job_provider = "本地后端" if "items" in request else "检索端"
+        job_kind = "embedding" if "items" in request else "search"
+        job_space = ({"id": "vec", "dimensions": 8} if "items" in request
+                     else {"id": "vec9", "dimensions": 8})
+        call(root, "provider-job-open", provider=job_provider, kind=job_kind,
+             space=job_space, request=request, at="2026-11-14T13:30:00Z",
+             error=expected)
+        checked += 1
+
+    # An overview applied from a synthesis page. `overview-apply` only accepts a
+    # page whose kind is `synthesis` and which cites its sources, and the event it
+    # writes carries the `sources` list that the last branch checks.
+    # Both earlier sources were revoked by the page-lifecycle section, so a new
+    # one goes through the full publish flow to become a registered entry.
+    publish(root, "fresh.md", "新材料。", "concepts/fresh", "新鲜")
+    call(root, "rebuild")
+    applied_overview = call(root, "overview-suggest", at="2026-11-14T14:05:00Z",
+                            key="applied-ov")["id"]
+    call(root, "overview-apply", id=applied_overview,
+         text="---\ntype: synthesis\ntitle: 综述\n"
+              "sources: [\"raw/fresh.md\"]\n---\n\n新材料。\n",
+         at="2026-11-14T14:06:00Z")
+    for value in (["wiki/x.md"], ["raw/fresh.md", "raw/fresh.md"]):
+        target = event_file("overview-apply")
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed["sources"] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False),
+                          encoding="utf-8")
+        got = record_invalid_details(root)
+        assert "overview_event_source_invalid" in got, (value, got)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], value
+        checked += 1
+
+    # A research topic closed with real sources. The completed event is the only
+    # place `sources` is required and checked, so the topic has to be closed
+    # first.
+    closed_topic = call(root, "research-topic", topic="已关闭的研究主题",
+                        queries=["釉色"], at="2026-11-14T14:10:00Z",
+                        key="closed-topic")["id"]
+    # Both earlier sources have been revoked by the page-lifecycle section above,
+    # so a fresh one is written and scanned in.
+    (root / "raw/fresh.md").write_text("新材料。\n")
+    call(root, "scan")
+    call(root, "research-complete", id=closed_topic,
+         sources=["raw/fresh.md"], at="2026-11-14T14:15:00Z")
+    for field, value, expected in (
+            ("sources", [], "research_event_sources_required"),
+            ("sources", ["wiki/x.md"], "research_event_source_invalid"),
+            ("sources", ["raw/fresh.md", "raw/fresh.md"],
+             "research_event_source_invalid")):
+        target = event_file("research-completed")
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed[field] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (field, value, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], (field, value)
+        checked += 1
+
+    # A vector record. `embedding-submit` writes one, and its `space` object
+    # carries the id that has to stay within bounds.
+    call(root, "provider-register", provider="向量端", kind="embedding",
+         space={"id": "vec8", "dimensions": 8}, capabilities=["embed"],
+         at="2026-11-14T14:20:00Z")
+    vector_plan = call(root, "embedding-plan", space={"id": "vec8", "dimensions": 8},
+                       provider="向量端", limit=1)
+    vector_item = vector_plan["items"][0]
+    call(root, "embedding-submit", space={"id": "vec8", "dimensions": 8},
+         provider="向量端",
+         items=[{"page": vector_item["page"], "sha256": vector_item["sha256"],
+                 "values": [0.1] * 8}])
+    vector_files = sorted((root / "vectors").glob("*.json"))
+    assert vector_files, "embedding-submit must write a vector record"
+    vector_file = vector_files[0]
+    original_vector = vector_file.read_text(encoding="utf-8")
+    for value in ("", "x" * 600):
+        parsed = json.loads(original_vector)
+        parsed["space"] = {"id": value, "dimensions": 8}
+        vector_file.write_text(json.dumps(parsed, ensure_ascii=False),
+                               encoding="utf-8")
+        got = record_invalid_details(root)
+        assert "vector_record_space_invalid" in got, (value, got)
+        vector_file.write_text(original_vector, encoding="utf-8")
+        assert record_invalid_details(root) == [], value
+        checked += 1
+
+    # The remaining record and event branches, each needing a state the suite had
+    # not produced yet.
+    #
+    # `evidence_record_identity_mismatch`: the id must equal the hash of
+    # page + page_hash + claims. Pointing it at another *valid* hash and renaming
+    # the file to match reaches the mismatch, because the filename check passes
+    # and only the content hash disagrees.
+    import hashlib
+
+    evidence_file = root / "state/evidence" / (evidence_id + ".json")
+    original_evidence = evidence_file.read_text(encoding="utf-8")
+    catalog = root / "index.mbt.md"
+    original_catalog = catalog.read_text(encoding="utf-8")
+    parsed = json.loads(original_evidence)
+    parsed["id"] = "a" * 64
+    moved = evidence_file.parent / ("a" * 64 + ".json")
+    moved.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+    evidence_file.unlink()
+    lines = original_catalog.splitlines()
+    wanted = "state/evidence/" + evidence_file.name
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = line.replace(evidence_file.name, moved.name)
+            break
+    catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    got = record_invalid_details(root)
+    assert "evidence_record_identity_mismatch" in got, got
+    moved.unlink()
+    evidence_file.write_text(original_evidence, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    assert record_invalid_details(root) == []
+    checked += 1
+
+    # An impact the host closed. `dismissed` is only read once the status is
+    # `resolved`, and `resolved_at` is only read on the same branch, so the
+    # impact has to be resolved before either can be tampered.
+    open_impact = call(root, "impact-list")["impacts"][0]["id"]
+    call(root, "impact-resolve", id=open_impact, note="宿主已处理",
+         at="2026-11-14T14:00:00Z")
+    impact_file = root / "state/impacts" / (open_impact + ".json")
+    original_impact = impact_file.read_text(encoding="utf-8")
+    for field, value, expected in (
+            ("dismissed", "short", "impact_dismissed_invalid"),
+            ("resolved_at", "short", "impact_resolved_at_required")):
+        parsed = json.loads(original_impact)
+        parsed[field] = value
+        impact_file.write_text(json.dumps(parsed, ensure_ascii=False),
+                               encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (field, got, expected)
+        impact_file.write_text(original_impact, encoding="utf-8")
+        assert record_invalid_details(root) == [], field
+        checked += 1
+
+    # A resolved review's `page` and `source` are nullable, so the shape branch
+    # is reached by a value that is neither null nor a string.
+    for field, expected in (("page", "review_event_page_invalid"),
+                            ("source", "review_event_source_invalid")):
+        target = event_file("review-resolve")
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed[field] = 0
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (field, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], field
+        checked += 1
+
+    # A job record in a closed state. `worker` is read whenever it is present at
+    # all, and a failed job must not carry a result.
+    job_file = root / "state/provider-jobs" / (job + ".json")
+    original_job = job_file.read_text(encoding="utf-8")
+    for field, value, expected in (
+            ("worker", "", "provider_job_worker_invalid"),
+            ("result", {"x": 1}, "provider_job_failed_result")):
+        parsed = json.loads(original_job)
+        parsed["status"] = "failed"
+        parsed["closed_at"] = "2026-11-14T14:30:00Z"
+        parsed["error"] = "boom"
+        # `worker` and `lease_until` are checked as a pair, so an empty worker
+        # needs a lease to be present or the pair branch fires first. The result
+        # case leaves both alone, because a null worker with a lease is the same
+        # pair fault.
+        if field == "worker":
+            parsed["lease_until"] = "2026-11-14T14:30:00Z"
+        parsed[field] = value
+        job_file.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (field, got, expected)
+        job_file.write_text(original_job, encoding="utf-8")
+        assert record_invalid_details(root) == [], field
         checked += 1
 
     # The provider-job state machine is where the Proposal Engine hands work to
