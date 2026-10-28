@@ -1006,6 +1006,40 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     assert record_invalid_details(root) == []
     checked += 1
 
+    # A review resolved twice. The event is named after the review id and the
+    # idempotency key, so resolving, rolling the record back to pending by hand,
+    # and resolving again with the same key lands on the first event.
+    conflict_review = next(row["id"] for row in call(root, "review-list")
+                           if row["status"] == "pending")
+    review_at = "2026-11-14T16:10:00Z"
+    call(root, "review-resolve", id=conflict_review, action="skip", note="n",
+         at=review_at)
+    review_file = root / "state/reviews" / (conflict_review + ".json")
+    original_review = review_file.read_text(encoding="utf-8")
+    # Read again rather than reusing an earlier copy: every op above that wrote
+    # an event also rewrote the catalog.
+    original_catalog = catalog.read_text(encoding="utf-8")
+    rolled = json.loads(original_review)
+    rolled["status"] = "pending"
+    rolled["decision"] = None
+    rolled_text = json.dumps(rolled, ensure_ascii=False)
+    review_file.write_text(rolled_text, encoding="utf-8")
+    lines = original_catalog.splitlines()
+    wanted = '"state/reviews/' + conflict_review + '.json"'
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = re.sub(
+                r'"[0-9a-f]{64}"',
+                '"' + hashlib.sha256(rolled_text.encode("utf-8")).hexdigest()
+                + '"', line, count=1)
+            break
+    catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    call(root, "review-resolve", id=conflict_review, action="skip", note="n",
+         at=review_at, error="review_event_conflict")
+    review_file.write_text(original_review, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
+
     # Two event kinds this suite had never produced, so their branches were
     # unreachable rather than unreferenced.
     #
