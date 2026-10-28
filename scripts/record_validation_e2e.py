@@ -2115,6 +2115,37 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     catalog.write_text(original_catalog, encoding="utf-8")
     checked += 1
 
+    # The restore event, by the same trick as the archive one: every field feeds
+    # its filename and `version` is pinned, so the bytes are what can differ.
+    # The event check runs before the `page_already_active` check, so a second
+    # restore with identical parameters reaches it.
+    restore_at = "2026-11-14T18:20:00Z"
+    call(root, "restore-page", id="concepts/active", at=restore_at)
+    restore_event = next(
+        path for path in sorted((root / "state/events").glob("*.json"))
+        if json.loads(path.read_text(encoding="utf-8")).get("op") == "page-restore"
+        and json.loads(path.read_text(encoding="utf-8")).get("at") == restore_at)
+    original_restore = restore_event.read_text(encoding="utf-8")
+    original_catalog = catalog.read_text(encoding="utf-8")
+    reserialized = json.dumps(json.loads(original_restore), ensure_ascii=False,
+                              indent=1)
+    restore_event.write_text(reserialized, encoding="utf-8")
+    lines = original_catalog.splitlines()
+    wanted = '"state/events/' + restore_event.name + '"'
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = re.sub(
+                r'"[0-9a-f]{64}"',
+                '"' + hashlib.sha256(reserialized.encode("utf-8")).hexdigest()
+                + '"', line, count=1)
+            break
+    catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    call(root, "restore-page", id="concepts/active", at=restore_at,
+         error="page_restore_event_conflict")
+    restore_event.write_text(original_restore, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
