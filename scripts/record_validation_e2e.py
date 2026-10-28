@@ -1595,6 +1595,61 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert record_invalid_details(root) == [], value
         checked += 1
 
+    # The interop bundle reader's two size bounds. The per-file read limit and
+    # the bundle total are both 16 MiB, so the total bound needs several files
+    # that each stay under it -- one oversized file is refused by the reader
+    # before the bundle ever sees it.
+    bundle_dir = root / "imports/limits"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        (bundle_dir / ("part%d.md" % i)).write_bytes(b"x" * (6 * 1024 * 1024))
+    call(root, "import", format="markdown", directory="imports/limits",
+         at="2026-11-14T15:30:00Z", error="interop_bytes_limit")
+    for i in range(3):
+        (bundle_dir / ("part%d.md" % i)).unlink()
+    checked += 1
+
+    for i in range(4098):
+        (bundle_dir / ("f%04d.md" % i)).write_text("# t\n\nx\n",
+                                                  encoding="utf-8")
+    call(root, "import", format="markdown", directory="imports/limits",
+         at="2026-11-14T15:35:00Z", error="interop_file_count_limit")
+    for i in range(4098):
+        (bundle_dir / ("f%04d.md" % i)).unlink()
+    checked += 1
+
+    # A backfill query file whose name already holds different bytes. The path
+    # is the hash of the content being written, so a collision means somebody
+    # put other bytes at that exact name.
+    backfill_title = "查询主题"
+    backfill_text = "查询用的正文内容。"
+    backfill_content = ("# " + backfill_title + "\n\n" + backfill_text + "\n")
+    backfill_path = root / "raw/queries" / (
+        hashlib.sha256(backfill_content.encode("utf-8")).hexdigest() + ".md")
+    backfill_path.parent.mkdir(parents=True, exist_ok=True)
+    backfill_path.write_text("# 别的标题\n\n完全不同的正文。\n", encoding="utf-8")
+    call(root, "backfill", title=backfill_title, text=backfill_text,
+         error="backfill_content_collision")
+    backfill_path.unlink()
+    checked += 1
+
+    # A search job completed against a different space than the one it was
+    # opened with.
+    call(root, "provider-register", provider="检索端乙", kind="search",
+         space={"id": "vec9", "dimensions": 8}, capabilities=["search"],
+         at="2026-11-14T15:40:00Z")
+    search_job = call(root, "provider-job-open", provider="检索端乙",
+                      kind="search", space={"id": "vec9", "dimensions": 8},
+                      request={"query": "釉色", "limit": 2},
+                      at="2026-11-14T15:45:00Z")["id"]
+    call(root, "provider-job-claim", id=search_job, worker="w1",
+         lease_until="2026-11-14T16:00:00Z", at="2026-11-14T15:46:00Z")
+    call(root, "provider-job-complete", id=search_job, worker="w1",
+         at="2026-11-14T15:50:00Z",
+         result={"space": {"id": "other", "dimensions": 8}, "hits": []},
+         error="provider_job_result_space_mismatch")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
