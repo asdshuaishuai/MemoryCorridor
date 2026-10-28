@@ -12,6 +12,7 @@ This suite tampers one field per record kind and asserts the exact branch fires,
 so removing any of them turns the suite red instead of silently widening what a
 hand-edited vault may contain.
 """
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -122,6 +123,43 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
                             "body_end": start + len(quote.encode()), "quote": quote,
                             "source_start": 0, "source_end": len("器形与釉色。".encode()),
                             "source_quote": "器形与釉色。"}])["id"]
+
+    checked = 0
+    catalog = root / "index.mbt.md"
+    original_catalog = catalog.read_text(encoding="utf-8")
+
+    # An order whose recorded source hash no longer matches the bytes on disk.
+    # `context` re-reads the raw file and compares, so tampering the order
+    # record's own `source_hash` is enough -- and the catalog hash has to move
+    # with it or every verifying read refuses first. This sits early because
+    # `scan` only registers an order while the catalog is still in step; later
+    # in the suite the same call leaves an unregistered file behind.
+    (root / "raw/ordercheck.md").write_text("订单核对用的材料。\n")
+    source_order = call(root, "scan")["orders"][0]
+    order_file = root / "state/orders" / (source_order + ".json")
+    original_order = order_file.read_text(encoding="utf-8")
+    tampered_order = json.loads(original_order)
+    tampered_order["source_hash"] = "0" * 64
+    tampered_order_text = json.dumps(tampered_order, ensure_ascii=False)
+    order_file.write_text(tampered_order_text, encoding="utf-8")
+    catalog_lines = catalog.read_text(encoding="utf-8").splitlines()
+    order_wanted = '"state/orders/' + source_order + '.json"'
+    for i, line in enumerate(catalog_lines):
+        if order_wanted in line and line.strip().startswith('entry("'):
+            catalog_lines[i] = re.sub(
+                r'"[0-9a-f]{64}"',
+                '"' + hashlib.sha256(
+                    tampered_order_text.encode("utf-8")).hexdigest() + '"',
+                line, count=1)
+            break
+    catalog.write_text("\n".join(catalog_lines) + "\n", encoding="utf-8")
+    call(root, "context", order=source_order, error="source_changed")
+    # The order file is removed rather than restored: the catalog copy put back
+    # below predates the scan that registered it, so leaving the file would make
+    # it an unregistered orphan.
+    order_file.unlink()
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
 
     # Each entry is (record path, field, bad value, expected branch).
     # An impact record needs the topic's inputs to have moved, and a review needs
