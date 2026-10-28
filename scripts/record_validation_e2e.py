@@ -161,6 +161,45 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     catalog.write_text(original_catalog, encoding="utf-8")
     checked += 1
 
+    # A previous record that already claims to have been replaced by something
+    # else. `superseded_by` is only meaningful next to a replacement, so a
+    # hand-written value pointing at a different record is refused rather than
+    # silently re-pointed.
+    replaced_hash = call(root, "read-page",
+                         id="concepts/ceramics")["entry"]["sha256"]
+    stale_claims = [{"source": "raw/ceramics.md", "body_start": 0,
+                     "body_end": 3, "quote": "器", "source_start": 0,
+                     "source_end": 3, "source_quote": "器"}]
+    fresh_claims = [{"source": "raw/ceramics.md", "body_start": 3,
+                     "body_end": 6, "quote": "形", "source_start": 3,
+                     "source_end": 6, "source_quote": "形"}]
+    stale_evidence = call(root, "evidence-submit", page="concepts/ceramics",
+                          page_hash=replaced_hash,
+                          items=stale_claims)["id"]
+    stale_file = root / "state/evidence" / (stale_evidence + ".json")
+    original_stale = stale_file.read_text(encoding="utf-8")
+    original_catalog = catalog.read_text(encoding="utf-8")
+    tampered = json.loads(original_stale)
+    tampered["superseded_by"] = "f" * 64
+    tampered_text = json.dumps(tampered, ensure_ascii=False)
+    stale_file.write_text(tampered_text, encoding="utf-8")
+    lines = catalog.read_text(encoding="utf-8").splitlines()
+    wanted = '"state/evidence/' + stale_evidence + '.json"'
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = re.sub(
+                r'"[0-9a-f]{64}"',
+                '"' + hashlib.sha256(tampered_text.encode("utf-8")).hexdigest()
+                + '"', line, count=1)
+            break
+    catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    call(root, "evidence-replace", page="concepts/ceramics",
+         page_hash=replaced_hash, previous=stale_evidence,
+         items=fresh_claims, error="evidence_already_replaced")
+    stale_file.write_text(original_stale, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
+
     replace_hash = call(root, "read-page", id="concepts/ceramics")["entry"]["sha256"]
     first_claims = [{"source": "raw/ceramics.md", "body_start": 0, "body_end": 6,
                      "quote": "器形", "source_start": 0, "source_end": 6, "source_quote": "器形"}]
