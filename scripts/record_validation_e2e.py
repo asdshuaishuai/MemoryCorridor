@@ -2079,6 +2079,42 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          at=apply_at, error="suggestion_event_conflict")
     checked += 1
 
+    # A page-archive event whose bytes differ from what the engine would write.
+    # Every field of that event feeds its filename and `version` is pinned to 1,
+    # so no field edit reaches the conflict branch -- but the engine compares raw
+    # bytes, and the same fields serialize differently. A re-archive with the same
+    # parameters then finds a file it did not write.
+    archive_at = "2026-11-14T18:10:00Z"
+    archive_reason = "归档后复核"
+    call(root, "archive-page", id="concepts/active",
+         at=archive_at, reason=archive_reason)
+    # Located by its own timestamp: an earlier section already archived this page,
+    # so the first `page-archive` event in directory order is not this one.
+    archive_event = next(
+        path for path in sorted((root / "state/events").glob("*.json"))
+        if json.loads(path.read_text(encoding="utf-8")).get("op") == "page-archive"
+        and json.loads(path.read_text(encoding="utf-8")).get("at") == archive_at)
+    original_archive = archive_event.read_text(encoding="utf-8")
+    original_catalog = catalog.read_text(encoding="utf-8")
+    reserialized = json.dumps(json.loads(original_archive), ensure_ascii=False,
+                              indent=1)
+    archive_event.write_text(reserialized, encoding="utf-8")
+    lines = original_catalog.splitlines()
+    wanted = '"state/events/' + archive_event.name + '"'
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = re.sub(
+                r'"[0-9a-f]{64}"',
+                '"' + hashlib.sha256(reserialized.encode("utf-8")).hexdigest()
+                + '"', line, count=1)
+            break
+    catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    call(root, "archive-page", id="concepts/active", at=archive_at,
+         reason=archive_reason, error="page_archive_event_conflict")
+    archive_event.write_text(original_archive, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
