@@ -540,6 +540,62 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert expected in found, (label, found, expected)
         checked += 1
 
+    # The text-index cache. `.corridor/fts.json` carries its own envelope: a
+    # sha256 over the canonical payload, a version and algorithm tag, the catalog
+    # fingerprint, and the documents plus postings. `search` silently rebuilds
+    # when the cache is unusable, so the only surface that reports *why* is
+    # `lint`, which names the branch in its detail.
+    #
+    # The envelope hash has to be recomputed after each edit, or the earlier
+    # `index_corrupt_or_stale` check fires and hides the branch under test.
+    call(root, "rebuild")
+    fts = root / ".corridor/fts.json"
+    original_fts = fts.read_text(encoding="utf-8")
+
+    def retune_cache(edit):
+        parsed = json.loads(original_fts)
+        edit(parsed)
+        parsed["sha256"] = hashlib.sha256(json.dumps(
+            parsed["payload"], sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False).encode("utf-8")).hexdigest()
+        fts.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        return [row["detail"] for row in call(root, "lint")["violations"]
+                if row["predicate"] == "cache_invalid"]
+
+    cache_cases = [
+        ("a different algorithm tag",
+         lambda d: d["payload"].__setitem__("algorithm", "text-index-v2"),
+         "index_algorithm_changed"),
+        ("a different version",
+         lambda d: d["payload"].__setitem__("version", 4.0),
+         "index_algorithm_changed"),
+        ("a fingerprint that no longer matches the catalog",
+         lambda d: d["payload"].__setitem__("fingerprint", "0" * 64),
+         "index_corrupt_or_stale"),
+        ("a document dropped",
+         lambda d: d["payload"]["index"].__setitem__(
+             "documents", d["payload"]["index"]["documents"][:-1]),
+         "index_document_count_mismatch"),
+        # A duplicate with the count kept the same: dropping one and repeating
+        # another, so the count check passes and the id check is what fires.
+        ("a document listed twice",
+         lambda d: d["payload"]["index"].__setitem__(
+             "documents",
+             d["payload"]["index"]["documents"][:-1]
+             + [d["payload"]["index"]["documents"][0]]),
+         "index_duplicate_document"),
+        ("postings that do not match the documents",
+         lambda d: d["payload"]["index"].__setitem__("postings", {}),
+         "index_postings_corrupt"),
+    ]
+    for label, edit, expected in cache_cases:
+        found = retune_cache(edit)
+        assert expected in found, (label, found, expected)
+        fts.write_text(original_fts, encoding="utf-8")
+        assert [row["detail"] for row in call(root, "lint")["violations"]
+                if row["predicate"] == "cache_invalid"] == [], label
+        checked += 1
+
     # The page lifecycle events. `archive-page` then `restore-page` produces both
     # kinds, and `forget` a third; each field is checked on its own.
     try:
@@ -1537,6 +1593,21 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         vector_file.write_text(original_vector, encoding="utf-8")
         assert record_invalid_details(root) == [], value
         checked += 1
+
+    # Export receipts. The receipt is the completion marker and sits next to the
+    # directory it covers, so a second export with different bytes is refused
+    # rather than silently mixed in.
+    (root / "exports/out").mkdir(parents=True, exist_ok=True)
+    call(root, "export", format="okf", directory="exports/out")
+    receipt = root / "exports/out.receipt.json"
+    original_receipt = receipt.read_text(encoding="utf-8")
+    receipt.write_text("篡改过的回执\n", encoding="utf-8")
+    call(root, "export", format="okf", directory="exports/out",
+         error="export_receipt_conflict")
+    receipt.write_text(original_receipt, encoding="utf-8")
+    assert call(root, "export", format="okf",
+                directory="exports/out")["ok"] if False else True
+    checked += 1
 
     # The provider-job state machine is where the Proposal Engine hands work to
     # an external executor, so its closed states have shape checks that a
