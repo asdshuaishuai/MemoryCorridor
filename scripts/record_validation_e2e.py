@@ -433,6 +433,66 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert record_invalid_details(root) == [], (op, field)
         checked += 1
 
+    # An overview applied twice -- the same teardown as the purpose case, with
+    # one more piece: `overview-apply` publishes `wiki/overview.md`, so that page
+    # has to be withdrawn too or the baseline no longer matches.
+    #
+    # This sits early, while the page set is still the two the setup published:
+    # `overview-suggest` records the page hashes at suggest time, and a teardown
+    # that does not reproduce them exactly is refused as stale.
+    early_overview = call(root, "overview-suggest", at="2026-11-14T09:35:00Z",
+                          key="early-ov")["id"]
+    early_file = root / "state/overview" / (early_overview + ".json")
+    original_overview = early_file.read_text(encoding="utf-8")
+    early_text = ("---\ntype: synthesis\ntitle: 综述\n"
+                  "sources: [\"raw/ceramics.md\"]\n---\n\n器形与釉色。\n")
+    early_at = "2026-11-14T09:40:00Z"
+    call(root, "overview-apply", id=early_overview, text=early_text,
+         at=early_at)
+
+    catalog_lines = catalog.read_text(encoding="utf-8").splitlines()
+    entry_count = sum(1 for line in catalog_lines
+                      if line.strip().startswith('entry('))
+    kept_lines, dropped = [], 0
+    for line in catalog_lines:
+        stripped = line.strip()
+        if stripped.startswith('entry('):
+            fields = re.findall(r'"([^"]*)"', stripped)
+            ident, path = fields[0], fields[1]
+            # The apply event's entry goes; its file stays, because the conflict
+            # is precisely that the file is already there.
+            if re.match(r'state/events/overview-apply-', ident):
+                dropped += 1
+                continue
+            # The published overview page is the opposite: entry and file both go.
+            if ident == "overview":
+                target = root / path
+                if target.exists():
+                    target.unlink()
+                dropped += 1
+                continue
+            if ('"state/overview/' + early_overview + '.json"') in line:
+                line = re.sub(
+                    r'"[0-9a-f]{64}"',
+                    '"' + hashlib.sha256(
+                        original_overview.encode("utf-8")).hexdigest() + '"',
+                    line, count=1)
+        if 'corridor_entries().length()' in line:
+            line = re.sub(r'\d+', str(entry_count - dropped), line)
+        kept_lines.append(line)
+    catalog.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+    early_file.write_text(original_overview, encoding="utf-8")
+
+    call(root, "overview-apply", id=early_overview, text=early_text,
+         at=early_at, error="overview_event_conflict")
+    # The event file was deliberately left behind to create the conflict; it is
+    # unregistered now, so it goes before the vault is handed to later sections.
+    for path in sorted((root / "state/events").glob("*.json")):
+        if json.loads(path.read_text(encoding="utf-8")).get(
+                "op") == "overview-apply":
+            path.unlink()
+    checked += 1
+
     # Two order-lifecycle branches, driven through a single order so the order
     # book never holds two open orders at once -- `analysis-submit` refuses while
     # any *other* order sits in `context-ready` or `analysis-done`.
