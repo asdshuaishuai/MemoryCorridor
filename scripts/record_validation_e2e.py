@@ -1684,6 +1684,18 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          error="provider_job_result_space_mismatch")
     checked += 1
 
+    # Restoring a page that is already active. A page of its own is published
+    # here because the earlier ones have been archived, restored and had their
+    # sources revoked by this point, so their lifecycle state is not knowable.
+    publish(root, "active.md", "活跃页面的材料。", "concepts/active", "活跃")
+    call(root, "rebuild")
+    call(root, "archive-page", id="concepts/active",
+         at="2026-11-14T16:15:00Z", reason="归档后再恢复")
+    call(root, "restore-page", id="concepts/active", at="2026-11-14T16:20:00Z")
+    call(root, "restore-page", id="concepts/active",
+         at="2026-11-14T16:25:00Z", error="page_already_active")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
