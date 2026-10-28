@@ -363,15 +363,26 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # every field of every event kind and records what `lint` reports; these
     # entries come from it, and each one locates its event file by `op` because
     # the filename is a hash.
-    def event_file(op):
+    def event_file(op, **where):
+        """Locate an event by op and, optionally, by field values.
+
+        Event filenames are content hashes, so the sorted order of the directory
+        changes whenever a new event is written. Matching on a field keeps a case
+        aimed at the event it means even after later sections add more.
+        """
         for path in sorted((root / "state/events").glob("*.json")):
-            if json.loads(path.read_text(encoding="utf-8")).get("op") == op:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            if parsed.get("op") != op:
+                continue
+            if all(parsed.get(key) == value for key, value in where.items()):
                 return path
         raise AssertionError("no event for op " + op)
 
     event_cases = [
-        ("ingest", "source", "wiki/index.md", "ingest_event_source_invalid"),
-        ("ingest", "pages", [], "ingest_event_pages_invalid"),
+        ("ingest", "source", "wiki/index.md", "ingest_event_source_invalid",
+         {"source": "raw/ceramics.md"}),
+        ("ingest", "pages", [], "ingest_event_pages_invalid",
+         {"source": "raw/ceramics.md"}),
         ("memory-submit", "key", "a\nb", "memory_event_key_invalid"),
         ("memory-submit", "memory", "short", "memory_event_id_invalid"),
         ("memory-submit", "note_hash", "short", "memory_event_note_hash_invalid"),
@@ -408,8 +419,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         ("provider-register", "provider", "", "provider_event_name_invalid"),
         ("provider-register", "at", "short", "event_time_invalid"),
     ]
-    for op, field, value, expected in event_cases:
-        target = event_file(op)
+    for case in event_cases:
+        op, field, value, expected = case[:4]
+        where = case[4] if len(case) > 4 else {}
+        target = event_file(op, **where)
         original = target.read_text(encoding="utf-8")
         parsed = json.loads(original)
         parsed[field] = value
@@ -419,6 +432,40 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         target.write_text(original, encoding="utf-8")
         assert record_invalid_details(root) == [], (op, field)
         checked += 1
+
+    # Two order-lifecycle branches, driven through a single order so the order
+    # book never holds two open orders at once -- `analysis-submit` refuses while
+    # any *other* order sits in `context-ready` or `analysis-done`.
+    #
+    # This sits after the event cases above because a commit writes a fresh
+    # `ingest` event, and those cases now locate theirs by source rather than by
+    # directory order.
+    (root / "raw/staging.md").write_text("暂存目录核对用的材料。\n")
+    staged_order = call(root, "scan")["orders"][0]
+    staged_context = call(root, "context", order=staged_order)
+    call(root, "analysis-submit", order=staged_order,
+         context_token=staged_context["context_token"],
+         analysis={"entities": [], "concepts": ["暂存"], "conflicts": [],
+                   "summary": "暂存"})
+    staged_dir = root / "staging" / staged_order
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    (staged_dir / "page.md").write_text(
+        "---\ntype: concept\ntitle: 暂存\n"
+        "sources: [\"raw/staging.md\"]\n---\n暂存目录核对用的材料。\n")
+    call(root, "commit", order=staged_order,
+         pages=[{"id": "concepts/staged", "path": "wiki/concepts/staged.md",
+                 "staged": "staging/other/page.md"}],
+         at="2026-11-14T09:20:00Z", error="staging_order_mismatch")
+    checked += 1
+
+    # The same order, committed properly this time. `context` on a committed
+    # order has nothing left to hand out.
+    call(root, "commit", order=staged_order,
+         pages=[{"id": "concepts/staged", "path": "wiki/concepts/staged.md",
+                 "staged": "staging/" + staged_order + "/page.md"}],
+         at="2026-11-14T09:25:00Z")
+    call(root, "context", order=staged_order, error="order_terminal")
+    checked += 1
 
     # The provider job events. `provider-job-open` needs a request that matches
     # the page bytes exactly, which `embedding-plan` produces, and a provider
