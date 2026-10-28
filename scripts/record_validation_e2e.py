@@ -1140,6 +1140,138 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          error="order_already_committed")
     checked += 1
 
+    # Event conflicts. Two shapes, both about an event file that already exists
+    # while the op is not in a replay state.
+    #
+    # `impact-resolve` names its event after the impact id and the timestamp, so
+    # resolving, reopening the record by hand, and resolving again at the same
+    # timestamp lands on the first event.
+    conflict_impact = call(root, "impact-list")["impacts"][0]["id"]
+    resolve_at = "2026-11-14T14:50:00Z"
+    call(root, "impact-resolve", id=conflict_impact, note="宿主已处理",
+         at=resolve_at)
+    impact_file = root / "state/impacts" / (conflict_impact + ".json")
+    original_impact = impact_file.read_text(encoding="utf-8")
+    # The resolve above wrote an event, so the catalog is read again rather than
+    # reusing the copy taken earlier.
+    original_catalog = catalog.read_text(encoding="utf-8")
+    reopened = json.loads(original_impact)
+    reopened["status"] = "open"
+    reopened["resolved_at"] = None
+    reopened["dismissed"] = None
+    reopened["updated_at"] = "2026-11-14T14:00:00Z"
+    reopened_text = json.dumps(reopened, ensure_ascii=False)
+    impact_file.write_text(reopened_text, encoding="utf-8")
+    lines = original_catalog.splitlines()
+    wanted = '"state/impacts/' + conflict_impact + '.json"'
+    for i, line in enumerate(lines):
+        if wanted in line and line.strip().startswith('entry("'):
+            lines[i] = re.sub(
+                r'"[0-9a-f]{64}"',
+                '"' + hashlib.sha256(reopened_text.encode("utf-8")).hexdigest()
+                + '"', line, count=1)
+            break
+    catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    call(root, "impact-resolve", id=conflict_impact, note="宿主已处理",
+         at=resolve_at, error="impact_event_conflict")
+    impact_file.write_text(original_impact, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
+
+    # `research-topic` checks the record first and the event second, so the event
+    # branch needs the record gone while the event stays. Dropping the file also
+    # means dropping its catalog line and moving the block's own count assertion,
+    # or the catalog stops compiling for the wrong reason.
+    conflict_topic = call(root, "research-topic", topic="事件冲突主题",
+                          queries=["釉色"], at="2026-11-14T14:55:00Z",
+                          key="conflict-topic")["id"]
+    research_file = root / "state/research" / (conflict_topic + ".json")
+    original_research = research_file.read_text(encoding="utf-8")
+    original_catalog = catalog.read_text(encoding="utf-8")
+    research_file.unlink()
+    lines = original_catalog.splitlines()
+    wanted = '"state/research/' + conflict_topic + '.json"'
+    kept = [line for line in lines
+            if not (wanted in line and line.strip().startswith('entry("'))]
+    for i, line in enumerate(kept):
+        if 'corridor_entries().length()' in line:
+            kept[i] = re.sub(r'\d+',
+                             str(int(re.search(r'\d+', line).group()) - 1), line)
+    catalog.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    call(root, "research-topic", topic="事件冲突主题", queries=["釉色"],
+         at="2026-11-14T14:55:00Z", key="conflict-topic",
+         error="research_event_conflict")
+    research_file.write_text(original_research, encoding="utf-8")
+    catalog.write_text(original_catalog, encoding="utf-8")
+    checked += 1
+
+    # The view surface. A view path has to live under `views/` and end in
+    # `.mbt.md`, and `view-init` refuses to overwrite.
+    for view in ("other/x.mbt.md", "views/x.md"):
+        call(root, "view-init", view=view, error="view_path_required")
+        checked += 1
+    call(root, "view-init", view="views/read.mbt.md")
+    call(root, "view-init", view="views/read.mbt.md",
+         error="view_already_exists")
+    checked += 1
+
+    # The provider job lease and result. A lease has to be strictly after the
+    # call's own timestamp, and a completion has to carry one item per requested
+    # page with the page and hash the request named.
+    job_plan = call(root, "embedding-plan", space={"id": "vec", "dimensions": 8},
+                    provider="本地后端", limit=1)
+    job_item = job_plan["items"][0]
+    lease_job = call(root, "provider-job-open", provider="本地后端",
+                     kind="embedding", space={"id": "vec", "dimensions": 8},
+                     request={"items": job_plan["items"],
+                              "text_recipe": job_plan["text_recipe"]},
+                     at="2026-11-14T14:10:00Z", key="lease-job")["id"]
+    for lease_until in ("2026-11-14T14:15:00Z", "2026-11-14T14:00:00Z"):
+        call(root, "provider-job-claim", id=lease_job, worker="w1",
+             lease_until=lease_until, at="2026-11-14T14:15:00Z",
+             error="provider_job_lease_invalid")
+        checked += 1
+    call(root, "provider-job-claim", id="z" * 64, worker="w1",
+         lease_until="2026-11-14T15:00:00Z", at="2026-11-14T14:15:00Z",
+         error="provider_job_id_invalid")
+    checked += 1
+
+    # A request that names the same page twice.
+    call(root, "provider-job-open", provider="本地后端", kind="embedding",
+         space={"id": "vec", "dimensions": 8},
+         request={"items": [job_item, job_item],
+                  "text_recipe": job_plan["text_recipe"]},
+         at="2026-11-14T14:20:00Z",
+         error="provider_job_request_duplicate_page")
+    checked += 1
+
+    # A completion whose item count does not match the request, and one that
+    # names a page the request never asked for.
+    result_job = call(root, "provider-job-open", provider="本地后端",
+                      kind="embedding", space={"id": "vec", "dimensions": 8},
+                      request={"items": job_plan["items"],
+                               "text_recipe": job_plan["text_recipe"]},
+                      at="2026-11-14T14:25:00Z", key="result-job")["id"]
+    call(root, "provider-job-claim", id=result_job, worker="w1",
+         lease_until="2026-11-14T15:00:00Z", at="2026-11-14T14:26:00Z")
+    other_item = next(row for row in call(root, "list-pages")
+                      if row["id"] != job_item["page"])
+    for label, result, expected in (
+            ("no items at all", {"items": []},
+             "provider_job_result_items_invalid"),
+            ("more items than requested",
+             {"items": [dict(job_item, values=[0.1] * 8, values_b64=""),
+                        dict(job_item, values=[0.1] * 8, values_b64="")]},
+             "provider_job_result_items_invalid"),
+            ("a page the request never named",
+             {"items": [{"page": other_item["id"],
+                         "sha256": other_item["sha256"],
+                         "values": [0.1] * 8, "values_b64": ""}]},
+             "provider_job_result_page_mismatch")):
+        call(root, "provider-job-complete", id=result_job, result=result,
+             at="2026-11-14T14:30:00Z", worker="w1", error=expected)
+        checked += 1
+
     # Request-shape checks that live on the op rather than in a record. Each one
     # refuses before anything is written, so the branch is reached by handing the
     # op a value it will not accept.
