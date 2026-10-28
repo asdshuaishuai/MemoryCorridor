@@ -1074,59 +1074,78 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert record_invalid_details(root) == [], value
         checked += 1
 
-    # A research topic closed with real sources. The completed event is the only
-    # place `sources` is required and checked, so the topic has to be closed
-    # first.
-    closed_topic = call(root, "research-topic", topic="已关闭的研究主题",
-                        queries=["釉色"], at="2026-11-14T14:10:00Z",
-                        key="closed-topic")["id"]
-    # Both earlier sources have been revoked by the page-lifecycle section above,
-    # so a fresh one is written and scanned in.
-    (root / "raw/fresh.md").write_text("新材料。\n")
-    call(root, "scan")
-    call(root, "research-complete", id=closed_topic,
-         sources=["raw/fresh.md"], at="2026-11-14T14:15:00Z")
-    for field, value, expected in (
-            ("sources", [], "research_event_sources_required"),
-            ("sources", ["wiki/x.md"], "research_event_source_invalid"),
-            ("sources", ["raw/fresh.md", "raw/fresh.md"],
-             "research_event_source_invalid")):
-        target = event_file("research-completed")
-        original = target.read_text(encoding="utf-8")
-        parsed = json.loads(original)
-        parsed[field] = value
-        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
-        got = record_invalid_details(root)
-        assert expected in got, (field, value, got, expected)
-        target.write_text(original, encoding="utf-8")
-        assert record_invalid_details(root) == [], (field, value)
-        checked += 1
+    # Idempotency. AGENTS.md requires interruption recovery and idempotent retry
+    # to be actually tested, and these are the branches that say a retry collided
+    # with what the first attempt already wrote.
+    #
+    # `memory-pin` derives its event name from the pinned flag and the timestamp,
+    # so replaying the *same* pair is a replay, but pinning True then False then
+    # True again at one timestamp makes the third call land on the first call's
+    # event path while the record has moved on.
+    pinned_note = call(root, "memory-submit", kind="fact", scope="workspace",
+                       text="另一条记忆，用于固定操作的幂等冲突，长度足够通过门槛。",
+                       conditions=["核对时"], sources=["raw/fresh.md"],
+                       at="2026-11-14T14:35:00Z", key="pin-note")["id"]
+    pin_at = "2026-11-14T14:40:00Z"
+    call(root, "memory-pin", id=pinned_note, pinned=True, at=pin_at)
+    call(root, "memory-pin", id=pinned_note, pinned=False, at=pin_at)
+    call(root, "memory-pin", id=pinned_note, pinned=True, at=pin_at,
+         error="memory_event_conflict")
+    checked += 1
 
-    # A vector record. `embedding-submit` writes one, and its `space` object
-    # carries the id that has to stay within bounds.
-    call(root, "provider-register", provider="向量端", kind="embedding",
-         space={"id": "vec8", "dimensions": 8}, capabilities=["embed"],
-         at="2026-11-14T14:20:00Z")
-    vector_plan = call(root, "embedding-plan", space={"id": "vec8", "dimensions": 8},
-                       provider="向量端", limit=1)
-    vector_item = vector_plan["items"][0]
-    call(root, "embedding-submit", space={"id": "vec8", "dimensions": 8},
-         provider="向量端",
-         items=[{"page": vector_item["page"], "sha256": vector_item["sha256"],
-                 "values": [0.1] * 8}])
-    vector_files = sorted((root / "vectors").glob("*.json"))
-    assert vector_files, "embedding-submit must write a vector record"
-    vector_file = vector_files[0]
-    original_vector = vector_file.read_text(encoding="utf-8")
-    for value in ("", "x" * 600):
-        parsed = json.loads(original_vector)
-        parsed["space"] = {"id": value, "dimensions": 8}
-        vector_file.write_text(json.dumps(parsed, ensure_ascii=False),
-                               encoding="utf-8")
-        got = record_invalid_details(root)
-        assert "vector_record_space_invalid" in got, (value, got)
-        vector_file.write_text(original_vector, encoding="utf-8")
-        assert record_invalid_details(root) == [], value
+    # `evidence-replace` refuses to replace a record with itself.
+    replace_hash = next(row["sha256"] for row in call(root, "list-pages")
+                        if row["id"] == "concepts/fresh")
+    replace_items = [{"source": "raw/fresh.md", "body_start": 0, "body_end": 3,
+                      "quote": "新", "source_start": 0, "source_end": 3,
+                      "source_quote": "新"}]
+    replaced = call(root, "evidence-submit", page="concepts/fresh",
+                    page_hash=replace_hash, items=replace_items)["id"]
+    call(root, "evidence-replace", page="concepts/fresh", page_hash=replace_hash,
+         previous=replaced, items=replace_items,
+         error="evidence_replace_same_record")
+    checked += 1
+
+    # Ids that are not 64 hex characters. Each op validates the id it is handed
+    # before it looks anything up, so the refusal is an error rather than a lint
+    # violation -- and `export` only reaches its own check once the format and the
+    # `exports/` prefix are both right.
+    (root / "exports/out").mkdir(parents=True, exist_ok=True)
+    bad_id = "z" * 64
+    invalid_id_cases = [
+        ("export", {"format": "okf", "directory": "exports/out",
+                    "bundle": bad_id}, "invalid_bundle_id"),
+        # The page published above, not the first one: the earlier pages have been
+        # archived, restored and had their source revoked by this point.
+        ("evidence-replace",
+         {"page": "concepts/fresh",
+          "page_hash": next(row["sha256"] for row in call(root, "list-pages")
+                            if row["id"] == "concepts/fresh"),
+          "previous": bad_id,
+          "items": [{"source": "raw/fresh.md", "body_start": 0,
+                     "body_end": 3, "quote": "新", "source_start": 0,
+                     "source_end": 3, "source_quote": "新"}]},
+         "invalid_evidence_id"),
+        ("commit", {"order": bad_id, "pages": [],
+                    "at": "2026-11-14T09:30:00Z"}, "invalid_order_id"),
+        ("overview-apply",
+         {"id": bad_id,
+          "text": "---\ntype: synthesis\ntitle: x\n"
+                  "sources: [\"raw/ceramics.md\"]\n---\n\nx\n",
+          "at": "2026-11-14T10:20:00Z"}, "invalid_overview_id"),
+        ("research-complete", {"id": bad_id, "sources": ["raw/ceramics.md"],
+                               "at": "2026-11-14T09:50:00Z"},
+         "invalid_research_id"),
+        ("review-resolve", {"id": bad_id, "action": "skip", "note": "n",
+                            "at": "2026-11-14T11:45:00Z"},
+         "invalid_review_id"),
+        ("purpose-apply", {"id": bad_id,
+                           "text": "---\ntype: purpose\n---\n\nx\n",
+                           "at": "2026-11-14T10:25:00Z"},
+         "invalid_suggestion_id"),
+    ]
+    for op, fields, expected in invalid_id_cases:
+        call(root, op, error=expected, **fields)
         checked += 1
 
     # The remaining record and event branches, each needing a state the suite had
@@ -1221,6 +1240,61 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert expected in got, (field, got, expected)
         job_file.write_text(original_job, encoding="utf-8")
         assert record_invalid_details(root) == [], field
+        checked += 1
+
+    # A research topic closed with real sources. The completed event is the only
+    # place `sources` is required and checked, so the topic has to be closed
+    # first.
+    closed_topic = call(root, "research-topic", topic="已关闭的研究主题",
+                        queries=["釉色"], at="2026-11-14T14:10:00Z",
+                        key="closed-topic")["id"]
+    # Both earlier sources have been revoked by the page-lifecycle section above,
+    # so a fresh one is written and scanned in.
+    (root / "raw/fresh.md").write_text("新材料。\n")
+    call(root, "scan")
+    call(root, "research-complete", id=closed_topic,
+         sources=["raw/fresh.md"], at="2026-11-14T14:15:00Z")
+    for field, value, expected in (
+            ("sources", [], "research_event_sources_required"),
+            ("sources", ["wiki/x.md"], "research_event_source_invalid"),
+            ("sources", ["raw/fresh.md", "raw/fresh.md"],
+             "research_event_source_invalid")):
+        target = event_file("research-completed")
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed[field] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (field, value, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], (field, value)
+        checked += 1
+
+    # A vector record. `embedding-submit` writes one, and its `space` object
+    # carries the id that has to stay within bounds.
+    call(root, "provider-register", provider="向量端", kind="embedding",
+         space={"id": "vec8", "dimensions": 8}, capabilities=["embed"],
+         at="2026-11-14T14:20:00Z")
+    vector_plan = call(root, "embedding-plan", space={"id": "vec8", "dimensions": 8},
+                       provider="向量端", limit=1)
+    vector_item = vector_plan["items"][0]
+    call(root, "embedding-submit", space={"id": "vec8", "dimensions": 8},
+         provider="向量端",
+         items=[{"page": vector_item["page"], "sha256": vector_item["sha256"],
+                 "values": [0.1] * 8}])
+    vector_files = sorted((root / "vectors").glob("*.json"))
+    assert vector_files, "embedding-submit must write a vector record"
+    vector_file = vector_files[0]
+    original_vector = vector_file.read_text(encoding="utf-8")
+    for value in ("", "x" * 600):
+        parsed = json.loads(original_vector)
+        parsed["space"] = {"id": value, "dimensions": 8}
+        vector_file.write_text(json.dumps(parsed, ensure_ascii=False),
+                               encoding="utf-8")
+        got = record_invalid_details(root)
+        assert "vector_record_space_invalid" in got, (value, got)
+        vector_file.write_text(original_vector, encoding="utf-8")
+        assert record_invalid_details(root) == [], value
         checked += 1
 
     # The provider-job state machine is where the Proposal Engine hands work to
