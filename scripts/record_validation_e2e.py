@@ -1882,6 +1882,59 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          at="2026-11-14T17:10:00Z", error="interop_receipt_conflict")
     checked += 1
 
+    # A purpose applied twice. The apply event is named after the suggestion id
+    # and the result hash, so applying, undoing the apply by hand, and applying
+    # again with the same text lands on the first event.
+    #
+    # Three things have to be undone together, or an earlier check fires first:
+    # the apply event's catalog entry (its file stays, because the conflict is
+    # "file already there"), the purpose bytes and their catalog hash (otherwise
+    # `purpose_suggestion_stale`), and the suggestion record itself (otherwise
+    # the call replays instead of reaching the event check).
+    conflict_suggestion = call(root, "purpose-suggest",
+                               at="2026-11-14T17:50:00Z",
+                               key="conflict-sugg")["id"]
+    original_purpose = (root / "purpose.md").read_text(encoding="utf-8")
+    suggestion_file = root / "state/suggestions" / (
+        conflict_suggestion + ".json")
+    original_suggestion = suggestion_file.read_text(encoding="utf-8")
+    purpose_text = ("---\ntype: purpose\ntitle: 目标\n---\n\n研究目标。\n")
+    apply_at = "2026-11-14T17:55:00Z"
+    call(root, "purpose-apply", id=conflict_suggestion, text=purpose_text,
+         at=apply_at)
+
+    catalog_lines = catalog.read_text(encoding="utf-8").splitlines()
+    entry_count = sum(1 for line in catalog_lines
+                      if line.strip().startswith('entry('))
+    kept_lines = []
+    for line in catalog_lines:
+        stripped = line.strip()
+        if stripped.startswith('entry('):
+            if re.match(r'entry\("state/events/purpose-apply-', stripped):
+                continue
+            if '"purpose.md"' in line:
+                line = re.sub(
+                    r'"[0-9a-f]{64}"',
+                    '"' + hashlib.sha256(
+                        original_purpose.encode("utf-8")).hexdigest() + '"',
+                    line, count=1)
+            if ('"state/suggestions/' + conflict_suggestion + '.json"') in line:
+                line = re.sub(
+                    r'"[0-9a-f]{64}"',
+                    '"' + hashlib.sha256(
+                        original_suggestion.encode("utf-8")).hexdigest() + '"',
+                    line, count=1)
+        if 'corridor_entries().length()' in line:
+            line = re.sub(r'\d+', str(entry_count - 1), line)
+        kept_lines.append(line)
+    catalog.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+    (root / "purpose.md").write_text(original_purpose, encoding="utf-8")
+    suggestion_file.write_text(original_suggestion, encoding="utf-8")
+
+    call(root, "purpose-apply", id=conflict_suggestion, text=purpose_text,
+         at=apply_at, error="suggestion_event_conflict")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
