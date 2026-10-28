@@ -161,6 +161,51 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     catalog.write_text(original_catalog, encoding="utf-8")
     checked += 1
 
+    replace_hash = call(root, "read-page", id="concepts/ceramics")["entry"]["sha256"]
+    first_claims = [{"source": "raw/ceramics.md", "body_start": 0, "body_end": 6,
+                     "quote": "器形", "source_start": 0, "source_end": 6, "source_quote": "器形"}]
+    second_claims = [{"source": "raw/ceramics.md", "body_start": 3, "body_end": 6,
+                      "quote": "形", "source_start": 3, "source_end": 6, "source_quote": "形"}]
+    previous_evidence = call(root, "evidence-submit", page="concepts/ceramics",
+                             page_hash=replace_hash, items=first_claims)["id"]
+    previous_bytes = (root / "state/evidence" / (previous_evidence + ".json")).read_text(encoding="utf-8")
+    evidence_before = {line.strip().split('"')[1]
+                       for line in catalog.read_text(encoding="utf-8").splitlines()
+                       if line.strip().startswith('entry("state/evidence/')}
+    call(root, "evidence-replace", page="concepts/ceramics", page_hash=replace_hash,
+         previous=previous_evidence, items=second_claims)
+    catalog_lines = catalog.read_text(encoding="utf-8").splitlines()
+    entry_count = sum(1 for line in catalog_lines if line.strip().startswith('entry('))
+    kept_lines, dropped = [], 0
+    for line in catalog_lines:
+        stripped = line.strip()
+        if stripped.startswith('entry('):
+            fields = re.findall(r'"([^"]*)"', stripped)
+            ident, path = fields[0], fields[1]
+            if re.match(r'state/events/evidence-replace-', ident):
+                dropped += 1
+                continue
+            if ident.startswith("state/evidence/"):
+                if ident not in evidence_before and ident != ("state/evidence/" + previous_evidence + ".json"):
+                    target = root / path
+                    if target.exists():
+                        target.unlink()
+                    dropped += 1
+                    continue
+                if ident == "state/evidence/" + previous_evidence + ".json":
+                    line = re.sub(r'"[0-9a-f]{64}"', '"' + hashlib.sha256(previous_bytes.encode("utf-8")).hexdigest() + '"', line, count=1)
+        if 'corridor_entries().length()' in line:
+            line = re.sub(r'\d+', str(entry_count - dropped), line)
+        kept_lines.append(line)
+    catalog.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+    (root / "state/evidence" / (previous_evidence + ".json")).write_text(previous_bytes, encoding="utf-8")
+    call(root, "evidence-replace", page="concepts/ceramics", page_hash=replace_hash,
+         previous=previous_evidence, items=second_claims, error="evidence_event_conflict")
+    for path in sorted((root / "state/events").glob("*.json")):
+        if json.loads(path.read_text(encoding="utf-8")).get("op") == "evidence-replace":
+            path.unlink()
+    checked += 1
+
     # Each entry is (record path, field, bad value, expected branch).
     # An impact record needs the topic's inputs to have moved, and a review needs
     # quality debt, so both are created here rather than in the setup above.
