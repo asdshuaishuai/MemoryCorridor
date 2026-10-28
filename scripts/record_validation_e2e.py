@@ -1696,6 +1696,18 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          at="2026-11-14T16:25:00Z", error="page_already_active")
     checked += 1
 
+    # An overview page has to be a synthesis page with a title and at least one
+    # source. Two of the three shape faults reach the same branch; the missing
+    # title is caught earlier by the frontmatter parser.
+    overview_target = call(root, "overview-suggest", at="2026-11-14T16:30:00Z",
+                           key="shape-ov")["id"]
+    for text in ("---\ntype: concept\ntitle: x\n"
+                 "sources: [\"raw/fresh.md\"]\n---\n\nx\n",
+                 "---\ntype: synthesis\ntitle: x\nsources: []\n---\n\nx\n"):
+        call(root, "overview-apply", id=overview_target, text=text,
+             at="2026-11-14T16:35:00Z", error="overview_page_required")
+        checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
