@@ -1123,6 +1123,66 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         catalog.write_text(original_catalog, encoding="utf-8")
         checked += 1
 
+    source_overview = call(root, "overview-suggest",
+                           at="2026-11-14T10:15:00Z",
+                           key="source-ov")["id"]
+
+    # A page lifecycle reason, and a cancel aimed at an order that is already
+    # committed. Both refuse on the op, before anything is written.
+    committed_order = call(root, "scan")["orders"][0] if call(
+        root, "scan")["orders"] else order
+    for value in ("", "a\nb"):
+        call(root, "archive-page", id="concepts/ceramics",
+             at="2026-11-14T12:10:00Z", reason=value,
+             error="page_lifecycle_reason_invalid")
+        checked += 1
+    call(root, "cancel", order=committed_order,
+         error="order_already_committed")
+    checked += 1
+
+    # Request-shape checks that live on the op rather than in a record. Each one
+    # refuses before anything is written, so the branch is reached by handing the
+    # op a value it will not accept.
+    field_cases = [
+        ("overview-suggest", {"at": "short", "key": "short-at"},
+         "overview_time_invalid"),
+        ("purpose-suggest", {"at": "short", "key": "short-at"},
+         "suggestion_time_invalid"),
+        ("research-topic", {"topic": "时间校验", "queries": ["釉色"],
+                            "at": "short", "key": "short-at"},
+         "research_time_invalid"),
+        ("research-complete", {"id": "a" * 64, "sources": [],
+                               "at": "2026-11-14T09:50:00Z"},
+         "research_sources_count_invalid"),
+        ("research-complete", {"id": "a" * 64,
+                               "sources": ["raw/ceramics.md"] * 65,
+                               "at": "2026-11-14T09:50:00Z"},
+         "research_sources_count_invalid"),
+        ("memory-prefetch", {"query": ""}, "memory_query_invalid"),
+        ("memory-prefetch", {"query": "x" * 4097}, "memory_query_invalid"),
+        ("overview-apply", {"id": "a" * 64, "text": "",
+                            "at": "2026-11-14T10:20:00Z"},
+         "overview_text_invalid"),
+        ("purpose-apply", {"id": "a" * 64, "text": "",
+                           "at": "2026-11-14T10:25:00Z"},
+         "purpose_text_invalid"),
+        # A synthesis page that cites the same source twice. The source list is
+        # checked for duplicates as well as for the raw/ prefix.
+        ("overview-apply", {"id": source_overview,
+                            "text": "---\ntype: synthesis\ntitle: 综述\n"
+                                    "sources: [\"raw/fresh.md\","
+                                    "\"raw/fresh.md\"]\n---\n\n新材料。\n",
+                            "at": "2026-11-14T10:20:00Z"},
+         "overview_source_invalid"),
+        # `export` accepts only the two interop formats, and reaches its own
+        # bundle-id check only after the format is one of them.
+        ("export", {"format": "bogus", "directory": "exports/out"},
+         "interop_format_unsupported"),
+    ]
+    for op, fields, expected in field_cases:
+        call(root, op, error=expected, **fields)
+        checked += 1
+
     # Idempotency. AGENTS.md requires interruption recovery and idempotent retry
     # to be actually tested, and these are the branches that say a retry collided
     # with what the first attempt already wrote.
