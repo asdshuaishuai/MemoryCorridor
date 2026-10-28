@@ -1746,6 +1746,16 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
              at="2026-11-14T16:35:00Z", error="overview_page_required")
         checked += 1
 
+    # The same idempotency key against a different page set. `overview-suggest`
+    # replays only when the key, the purpose hash and the page hashes all match,
+    # so publishing a page in between turns the replay into a conflict.
+    call(root, "overview-suggest", at="2026-11-14T16:40:00Z",
+         key="keyed-ov")
+    publish(root, "keyed.md", "键冲突用的材料。", "concepts/keyed", "键冲突")
+    call(root, "overview-suggest", at="2026-11-14T16:42:00Z", key="keyed-ov",
+         error="overview_key_conflict")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
