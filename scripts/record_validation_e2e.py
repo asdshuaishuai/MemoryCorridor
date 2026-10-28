@@ -374,6 +374,43 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert record_invalid_details(root) == [], (op, field)
         checked += 1
 
+    # The provider job events. `provider-job-open` needs a request that matches
+    # the page bytes exactly, which `embedding-plan` produces, and a provider
+    # registered for the job's kind.
+    plan = call(root, "embedding-plan", space={"id": "vec", "dimensions": 8})
+    opened = call(root, "provider-job-open", provider="本地后端", kind="embedding",
+                  space={"id": "vec", "dimensions": 8},
+                  request={"items": plan["items"],
+                           "text_recipe": "title-body-prefix16KiB-v1"},
+                  at="2026-11-14T12:40:00Z")
+    job_id = opened["id"] if isinstance(opened, dict) else opened
+    call(root, "provider-job-claim", id=job_id, worker="w1",
+         lease_until="2026-11-14T13:00:00Z", at="2026-11-14T12:42:00Z")
+    call(root, "provider-job-heartbeat", id=job_id, worker="w1",
+         lease_until="2026-11-14T14:00:00Z", at="2026-11-14T12:43:00Z")
+    event_cases += [
+        ("provider-job-open", "kind", "bogus", "provider_job_event_kind_invalid"),
+        ("provider-job-open", "provider", "", "provider_job_event_provider_invalid"),
+        ("provider-job-claim", "worker", "a\nb", "provider_job_event_field_invalid: worker"),
+        ("provider-job-claim", "lease_until", "2026-11-14T10:00:00Z",
+         "provider_job_event_identity_invalid"),
+        ("provider-job-heartbeat", "worker", "a\nb",
+         "provider_job_event_field_invalid: worker"),
+        ("provider-job-heartbeat", "lease_until", "2026-11-14T10:00:00Z",
+         "provider_job_event_identity_invalid"),
+    ]
+    for op, field, value, expected in event_cases[-6:]:
+        target = event_file(op)
+        original = target.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        parsed[field] = value
+        target.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        got = record_invalid_details(root)
+        assert expected in got, (op, field, got, expected)
+        target.write_text(original, encoding="utf-8")
+        assert record_invalid_details(root) == [], (op, field)
+        checked += 1
+
     # The import event. `import` needs a directory that actually holds a
     # markdown file, or it refuses before the event is written.
     (root / "imports/m").mkdir(parents=True, exist_ok=True)
