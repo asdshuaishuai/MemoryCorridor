@@ -1391,6 +1391,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     checked += 1
 
     # `evidence-replace` refuses to replace a record with itself.
+    call(root, "rebuild")
     replace_hash = next(row["sha256"] for row in call(root, "list-pages")
                         if row["id"] == "concepts/fresh")
     replace_items = [{"source": "raw/fresh.md", "body_start": 0, "body_end": 3,
@@ -1607,6 +1608,32 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     receipt.write_text(original_receipt, encoding="utf-8")
     assert call(root, "export", format="okf",
                 directory="exports/out")["ok"] if False else True
+    checked += 1
+
+    # A superseded note keeps its audit history but refuses further lifecycle
+    # operations: the chain has already moved past it.
+    superseded_note = call(root, "memory-submit", kind="fact", scope="workspace",
+                           text="另一条用于取代链的记忆，长度足够通过相似度门槛。",
+                           conditions=["核对时"], sources=["raw/fresh.md"],
+                           at="2026-11-14T15:00:00Z", key="chain")["id"]
+    call(root, "memory-supersede", id=superseded_note,
+         text="取代后的内容与原先不同，长度同样足够通过门槛。",
+         conditions=["核对时"], sources=["raw/fresh.md"],
+         at="2026-11-14T15:05:00Z", key="chain-2")
+    call(root, "memory-archive", id=superseded_note, at="2026-11-14T15:10:00Z",
+         error="memory_superseded_note_refused")
+    checked += 1
+
+    # The same idempotency key against a different purpose. `purpose-apply` moves
+    # the purpose hash, so the next `purpose-suggest` with that key is a conflict
+    # rather than a replay.
+    keyed = call(root, "purpose-suggest", at="2026-11-14T15:15:00Z",
+                 key="keyed")["id"]
+    call(root, "purpose-apply", id=keyed,
+         text="---\ntype: purpose\ntitle: 新目标\n---\n\n新的研究目标。\n",
+         at="2026-11-14T15:20:00Z")
+    call(root, "purpose-suggest", at="2026-11-14T15:25:00Z", key="keyed",
+         error="suggestion_key_conflict")
     checked += 1
 
     # The provider-job state machine is where the Proposal Engine hands work to
