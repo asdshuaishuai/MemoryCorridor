@@ -14,6 +14,7 @@ hand-edited vault may contain.
 """
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -1072,6 +1073,54 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert "overview_event_source_invalid" in got, (value, got)
         target.write_text(original, encoding="utf-8")
         assert record_invalid_details(root) == [], value
+        checked += 1
+
+    catalog = root / "index.mbt.md"
+    original_catalog = catalog.read_text(encoding="utf-8")
+
+    # Record conflicts. Each of these records is content-addressed by a key, and
+    # the op looks the record up by that key before it writes. Tampering the key
+    # in the stored record makes the lookup miss while the file is still there,
+    # which is the conflict rather than a fresh write.
+    #
+    # The catalog hash has to be repointed too: a tampered state file otherwise
+    # makes every verifying read refuse with `content_changed` before the op runs.
+    def retune_record(path, edit):
+        original = path.read_text(encoding="utf-8")
+        parsed = json.loads(original)
+        edit(parsed)
+        rewritten = json.dumps(parsed, ensure_ascii=False)
+        path.write_text(rewritten, encoding="utf-8")
+        lines = original_catalog.splitlines()
+        wanted = '"' + str(path.relative_to(root)) + '"'
+        for i, line in enumerate(lines):
+            if wanted in line and line.strip().startswith('entry("'):
+                lines[i] = re.sub(
+                    r'"[0-9a-f]{64}"',
+                    '"' + hashlib.sha256(rewritten.encode("utf-8")).hexdigest()
+                    + '"', line, count=1)
+                break
+        catalog.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return original
+
+    conflict_cases = [
+        ("research-topic", {"topic": "陶瓷釉色", "queries": ["釉色"],
+                            "at": "2026-11-14T09:45:00Z", "key": "topic"},
+         lambda d: d.__setitem__("key", "另一个键"), "research_record_conflict"),
+        ("overview-suggest", {"at": "2026-11-14T10:15:00Z", "key": "ov"},
+         lambda d: d.__setitem__("key", "另一个键"), "overview_record_conflict"),
+        ("purpose-suggest", {"at": "2026-11-14T10:16:00Z", "key": "goal"},
+         lambda d: d.__setitem__("key", "另一个键"),
+         "suggestion_record_conflict"),
+    ]
+    for op, fields, edit, expected in conflict_cases:
+        target = root / ("state/research/" + topic + ".json" if op == "research-topic"
+                         else "state/overview/" + overview + ".json" if op == "overview-suggest"
+                         else "state/suggestions/" + goal + ".json")
+        original = retune_record(target, edit)
+        call(root, op, error=expected, **fields)
+        target.write_text(original, encoding="utf-8")
+        catalog.write_text(original_catalog, encoding="utf-8")
         checked += 1
 
     # Idempotency. AGENTS.md requires interruption recovery and idempotent retry
