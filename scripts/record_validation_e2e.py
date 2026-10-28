@@ -1756,6 +1756,85 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          error="overview_key_conflict")
     checked += 1
 
+    # A re-import whose broken-link review is still on disk. `import` writes
+    # exactly four catalog entries: the page, the raw original, the receipt and
+    # the review. Dropping the first three and keeping the review makes the next
+    # import recompute the same review id and find the file already there.
+    #
+    # The page is matched by its *id* (`imports/<bundle>/...`) but deleted by its
+    # *path* (`wiki/imports/...`) -- the id is not a path, and the page entry's
+    # own sources list also mentions the raw file, so neither can be matched
+    # anywhere in the line.
+    review_dir = root / "imports/reviewcheck"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "a.md").write_text(
+        "---\ntitle: 甲\n---\n\n参见 [[concepts/missing]]。\n", encoding="utf-8")
+    call(root, "import", format="markdown", directory="imports/reviewcheck",
+         at="2026-11-14T17:00:00Z")
+    catalog_lines = catalog.read_text(encoding="utf-8").splitlines()
+    kept_lines = []
+    for line in catalog_lines:
+        stripped = line.strip()
+        if not stripped.startswith('entry('):
+            kept_lines.append(line)
+            continue
+        fields = re.findall(r'"([^"]*)"', stripped)
+        ident, path = fields[0], fields[1]
+        if (ident.startswith("raw/imports/")
+                or ident.startswith("state/events/import-")
+                or ident.startswith("imports/")):
+            target = root / path
+            if target.exists():
+                target.unlink()
+            continue
+        kept_lines.append(line)
+    remaining = sum(1 for line in kept_lines
+                    if line.strip().startswith('entry('))
+    for i, line in enumerate(kept_lines):
+        if 'corridor_entries().length()' in line:
+            kept_lines[i] = re.sub(r'\d+', str(remaining), line)
+    catalog.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+    call(root, "import", format="markdown", directory="imports/reviewcheck",
+         at="2026-11-14T17:00:00Z", error="interop_review_conflict")
+    checked += 1
+
+    # The same four-entry teardown, but keeping the receipt file while dropping
+    # its catalog entry. `import` replays as soon as the receipt is *registered*,
+    # so the conflict branch needs the file present and the entry gone -- which
+    # in turn means the raw original and the page have to go too, or
+    # `interop_raw_already_registered` fires first.
+    receipt_dir = root / "imports/receiptcheck"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    (receipt_dir / "a.md").write_text(
+        "---\ntitle: 甲\n---\n\n正文，没有断链。\n", encoding="utf-8")
+    call(root, "import", format="markdown", directory="imports/receiptcheck",
+         at="2026-11-14T17:10:00Z")
+    kept_lines = []
+    for line in catalog.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith('entry('):
+            kept_lines.append(line)
+            continue
+        fields = re.findall(r'"([^"]*)"', stripped)
+        ident, path = fields[0], fields[1]
+        if ident.startswith("state/events/import-"):
+            continue
+        if ident.startswith("raw/imports/") or ident.startswith("imports/"):
+            target = root / path
+            if target.exists():
+                target.unlink()
+            continue
+        kept_lines.append(line)
+    remaining = sum(1 for line in kept_lines
+                    if line.strip().startswith('entry('))
+    for i, line in enumerate(kept_lines):
+        if 'corridor_entries().length()' in line:
+            kept_lines[i] = re.sub(r'\d+', str(remaining), line)
+    catalog.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+    call(root, "import", format="markdown", directory="imports/receiptcheck",
+         at="2026-11-14T17:10:00Z", error="interop_receipt_conflict")
+    checked += 1
+
     # Export receipts. The receipt is the completion marker and sits next to the
     # directory it covers, so a second export with different bytes is refused
     # rather than silently mixed in.
