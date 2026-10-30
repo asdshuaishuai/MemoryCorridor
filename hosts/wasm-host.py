@@ -227,7 +227,7 @@ class Storage:
         return (0, b"")
 
 
-def serve(module_path, root, http_port=None):
+def serve(module_path, root, http_port=None, mcp_mode=False):
     from wasmtime import Engine, Store, Module, Linker, Func, FuncType, ValType
 
     storage = Storage(root)
@@ -366,6 +366,9 @@ def serve(module_path, root, http_port=None):
         return 0
 
     stdin = sys.stdin.buffer
+    mcp_line = None
+    if mcp_mode:
+        mcp_line = exports["mcp_execute_line"]
     while True:
         line = stdin.readline()
         if not line:
@@ -373,6 +376,12 @@ def serve(module_path, root, http_port=None):
         request = line.rstrip(b"\n")
         if request == b":exit":
             break
+        if mcp_line is not None:
+            reply = mcp_line(store, request.decode("utf-8", "replace"))
+            if reply:
+                sys.stdout.buffer.write(reply.encode("utf-8") + b"\n")
+                sys.stdout.buffer.flush()
+            continue
         # Segmented request load: the module appends chunks, so text-carrying
         # ops (backfill, drafts) reach the same 16 MiB ceiling as single files.
         exports["input_reset"](store)
@@ -398,8 +407,10 @@ def main():
     parser.add_argument("--root", required=True, help="vault directory the module operates on")
     parser.add_argument("--serve", type=int, default=None, metavar="PORT",
                         help="serve the eight read-only HTTP routes on 127.0.0.1:PORT")
+    parser.add_argument("--mcp", action="store_true",
+                        help="MCP stdio mode: JSON-RPC request lines in, reply lines out")
     args = parser.parse_args()
-    sys.exit(serve(args.module, args.root, args.serve))
+    sys.exit(serve(args.module, args.root, args.serve, args.mcp))
 
 
 if __name__ == "__main__":

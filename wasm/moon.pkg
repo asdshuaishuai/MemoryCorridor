@@ -14,10 +14,16 @@ options(
   // The service face needs linear-memory pointers, so host.mbt/service.mbt are
   // active on the wasm target and compile as inert stubs under native (the
   // native CLI/MCP path is nativehost); the pure 15-op face stays dual-target
-  // for wasm-gc hosts. The pure-WASI service face lives in wasipure/.
-  targets: { "host.mbt": ["wasm", "native"], "service.mbt": ["wasm", "native"], "sock.mbt": ["wasm", "native"], "http.mbt": ["wasm", "native"] },
+  // for wasm-gc hosts. The MCP face (mcp.mbt) rides the same service session.
+  targets: {
+    "host.mbt": ["wasm", "native"],
+    "service.mbt": ["wasm", "native"],
+    "sock.mbt": ["wasm", "native"],
+    "http.mbt": ["wasm", "native"],
+    "mcp.mbt": ["wasm", "native"],
+  },
   link: {
-    "wasm": { "exports": ["input_reset", "input_push", "execute", "output_byte", "scratch", "input_load", "output_ptr", "service_execute", "web_handle_connection"], "export-memory-name": "memory" },
+    "wasm": { "exports": ["input_reset", "input_push", "execute", "output_byte", "scratch", "input_load", "output_ptr", "service_execute", "web_handle_connection", "mcp_execute_line"], "export-memory-name": "memory" },
     "wasm-gc": { "exports": ["input_reset", "input_push", "execute", "output_byte"] },
   },
 )
