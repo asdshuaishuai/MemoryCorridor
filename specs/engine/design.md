@@ -11,6 +11,6 @@
 - 默认暴力向量后端通过核心接口实现，向量空间和正文版本参与有效性验证。宿主负责模型与外部检索接入。
 - index/context.mbt 提供查询词覆盖的段落选择、长段落词定位和 UTF-8 区间；检索与图候选按排名分配剩余预算，完全重复正文保留独立引用后只装配一次。agent 负责装配前的来源/正文校验，CLI/MCP/Web 使用同一实现。
 - views/*.mbt.md 单独声明可视页面；视觉宿主对接知识数据，已评估 MoonViz 的 SVG 入口；首版为可选择长文本的 MoonBit HTML 渲染器，详情见 docs/visual-mbtmd.md。
-- scripts/serve.py 是固定 vault 的 Python 标准库 HTTP 薄适配，仅监听 loopback；读取和搜索委托 native 引擎，页面来自文学化编译，不维护桌面应用或专用桌面集成。
+- web 包是固定 vault 的 MoonBit 原生 loopback HTTP 薄适配（socket 走 platform 的 native FFI），读取和搜索经 nativehost 进程内派发给引擎，页面来自文学化编译，不维护桌面应用或专用桌面集成。
 
 验收包括纯函数反例、临时 vault 端到端、类型错误/路径漂移、每个提交中断点、进程锁、缓存损坏/重建、模型空间隔离、视觉实际交互与源码占比。

@@ -30,6 +30,7 @@ LAYERS = {
     "nativehost": 5,
     "cli": 6,
     "mcp": 6,
+    "web": 6,
 }
 SAME_LAYER_ALLOWED = {("wasm", "agent"), ("nativehost", "platform")}
 REQUIRED_LICENSES = {

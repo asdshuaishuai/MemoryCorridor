@@ -1,0 +1,9 @@
+import {
+  "memorycorridor/base",
+  "memorycorridor/nativehost",
+  "memorycorridor/platform",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+}
+pkgtype(kind: "executable")
+options(targets: { "main.mbt": ["native"] })

@@ -34,7 +34,7 @@ def binary(package, target):
         candidate = base / name
         if candidate.is_file():
             return candidate
-    raise SystemExit(f"missing {package} executable; run moon build --target {target} cli mcp")
+    raise SystemExit(f"missing {package} executable; run moon build --target {target} cli mcp web")
 
 
 def copy_file(stage, relative, destination=None):
@@ -70,8 +70,9 @@ def main():
     parser.add_argument("--skip-build", action="store_true")
     args = parser.parse_args()
     if not args.skip_build:
-        subprocess.run(["moon", "build", "--target", args.target, "cli", "mcp"], cwd=ROOT, check=True)
+        subprocess.run(["moon", "build", "--target", args.target, "cli", "mcp", "web"], cwd=ROOT, check=True)
     cli, mcp = binary("cli", args.target), binary("mcp", args.target)
+    web = binary("web", args.target)
     tag = f"memorycorridor-{version()}-{args.target}-{platform.system().lower()}-{platform.machine().lower()}"
     args.output.mkdir(parents=True, exist_ok=True)
     archive = args.output / f"{tag}.tar.gz"
@@ -82,10 +83,10 @@ def main():
         copy_file(stage, "NOTICE")
         for document in DOCS[3:]:
             copy_file(stage, document)
-        copy_file(stage, "scripts/serve.py", "scripts/serve.py")
         copy_file(stage, "scripts/watch.py", "scripts/watch.py")
         copy_file(stage, str(cli.relative_to(ROOT)), "bin/memorycorridor-cli" + (".exe" if cli.suffix == ".exe" else ""))
         copy_file(stage, str(mcp.relative_to(ROOT)), "bin/memorycorridor-mcp" + (".exe" if mcp.suffix == ".exe" else ""))
+        copy_file(stage, str(web.relative_to(ROOT)), "bin/memorycorridor-web" + (".exe" if web.suffix == ".exe" else ""))
         for executable in (stage / "bin").iterdir():
             executable.chmod(0o755)
         rows = []

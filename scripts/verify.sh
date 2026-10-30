@@ -5,7 +5,7 @@ map_vault="$(mktemp -d /tmp/corridor-map-verify.XXXXXX)"
 trap 'rm -rf "$map_vault"' EXIT
 moon check --target native --deny-warn
 moon test --target native
-moon build --target native cli mcp
+moon build --target native cli mcp web
 scripts/platform_smoke.sh
 python3 scripts/dep_audit.py
 python3 scripts/e2e.py

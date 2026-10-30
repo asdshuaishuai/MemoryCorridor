@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGES = ["base", "core", "decl", "vault", "index", "agent", "platform", "nativehost", "cli", "mcp", "visual", "wasm", "pack", "interop"]
+PACKAGES = ["base", "core", "decl", "vault", "index", "agent", "platform", "nativehost", "cli", "mcp", "web", "visual", "wasm", "pack", "interop"]
 counts = {}
 details = {}
 
@@ -32,7 +32,7 @@ for directory in PACKAGES:
         counts[language] = counts.get(language, 0) + lines
         details[str(p.relative_to(ROOT))] = lines
 # The watcher is a shipped runtime adapter, so it belongs in the denominator.
-for adapter in [ROOT / "scripts/watch.py", ROOT / "scripts/serve.py"]:
+for adapter in [ROOT / "scripts/watch.py"]:
     if adapter.exists():
         lines = count(adapter)
         counts["Python"] = counts.get("Python", 0) + lines
@@ -58,6 +58,7 @@ allowed = {"base": [], "core": ["base"], "decl": ["base", "core"],
            "platform": ["base"], "visual": ["base", "core", "vendor/reader"],
            "nativehost": ["base", "agent", "platform", "vault"],
            "cli": ["base", "agent", "nativehost"], "mcp": ["base", "agent", "nativehost"],
+           "web": ["base", "nativehost", "platform"],
            "wasm": ["base", "core", "decl", "index", "agent", "visual"], "pack": ["base"], "interop": ["base"]}
 for package, dependencies in allowed.items():
     imports = re.findall(r'"memorycorridor/([^"]+)"', (ROOT / package / "moon.pkg").read_text())

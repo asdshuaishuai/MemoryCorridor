@@ -138,7 +138,7 @@ print(root / "state/impacts")
 call("view-init")
 call("render-view")
 # The web service verifies before every read, so the retrieval cache has to be
-# built here. Without it `serve.py` answers 409 for every route.
+# built here. Without it the `web` server answers 409 for every route.
 call("rebuild")
 print(root / ".corridor/viewer.html")
 process.stdin.close()

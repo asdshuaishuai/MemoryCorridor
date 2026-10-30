@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 
 REPO = Path(__file__).resolve().parents[1]
 EXE = REPO / "_build/native/debug/build/cli/cli.exe"
+SERVER = REPO / "_build/native/debug/build/web/web.exe"
 
 with tempfile.TemporaryDirectory(prefix="corridor-web-") as work:
     root = Path(work)
@@ -24,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix="corridor-web-") as work:
         assert result["ok"], result
         return result
 
-    server = subprocess.Popen(["python3", str(REPO / "scripts/serve.py"), work, "--port", "0"],
+    server = subprocess.Popen([str(SERVER), work, "--port", "0"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     try:
         assert select.select([server.stdout], [], [], 30)[0], "HTTP startup timed out"
