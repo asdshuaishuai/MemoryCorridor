@@ -17,7 +17,7 @@ jobs:
       - name: Install MoonBit toolchain
         shell: bash
         run: |
-          curl --fail --silent --show-error --location https://cli.moonbitlang.com/install/unix.sh | bash
+          curl --fail --silent --show-error --location https://cli.moonbitlang.com/install/unix.sh | bash -s -- "$(cat .moonbit-version)"
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
       - name: Sync the MoonBit registry (dependencies are fetched on demand)
         shell: bash
@@ -49,6 +49,7 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri https://cli.moonbitlang.com/install/powershell.ps1 -OutFile install.ps1
+          $env:MOONBIT_INSTALL_VERSION = (Get-Content .moonbit-version -Raw).Trim()
           ./install.ps1
           "$HOME\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Sync the MoonBit registry (dependencies are fetched on demand)

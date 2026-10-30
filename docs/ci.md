@@ -2,13 +2,16 @@
 
 `.github/workflows/verify.yml` has three jobs:
 
-- `linux` runs the complete `scripts/verify.sh` gate on Ubuntu, installs MoonBit
-  through the official Unix installer (the repository does not vendor the
-  toolchain), then builds the deterministic native release archive with
-  `scripts/release.py` and re-checks it with `scripts/release_e2e.py`. The
-  archive and checksum are uploaded as `memorycorridor-native-linux`.
-- `windows-native` installs MoonBit through the official Windows installer
-  (`https://cli.moonbitlang.com/install/powershell.ps1`), then runs
+- `linux` runs the complete `scripts/verify.sh` gate on Ubuntu, installs the
+  MoonBit toolchain version pinned in `.moonbit-version` through the official
+  Unix installer (the repository does not vendor the toolchain, but pins the
+  version so CI matches the locally verified gate), then builds the
+  deterministic native release archive with `scripts/release.py` and re-checks
+  it with `scripts/release_e2e.py`. The archive and checksum are uploaded as
+  `memorycorridor-native-linux`.
+- `windows-native` installs the same pinned toolchain through the official
+  Windows installer (`https://cli.moonbitlang.com/install/powershell.ps1` with
+  `MOONBIT_INSTALL_VERSION` read from `.moonbit-version`), then runs
   `moon check --target native --deny-warn`, `moon test --target native`,
   `moon build --target native cli mcp`, and the same deterministic release
   scripts with `python`. The archive and checksum are uploaded as
