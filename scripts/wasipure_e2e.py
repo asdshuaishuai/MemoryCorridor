@@ -223,6 +223,34 @@ def main():
         s.call("rebuild")
         s.call("verify")
         check("external page drift refused; rebuild after restore clears it")
+
+        # 大容器：二进制原件入 vault → pack 确定性双跑字节一致 → 宿主复制
+        # 到空 vault 的 imports/ → unpack 恢复 → 检索/读源 parity。二进制
+        # 字节经 read_bytes/write_bytes 走满 16 MiB 通道。
+        (root / "raw/小图.png").write_bytes(bytes([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 250]))
+        s.call("scan")
+        s.call("verify")
+        packed = s.call("pack", output="exports/快照.mcpack")
+        pack_a = (root / "exports" / "快照.mcpack").read_bytes()
+        assert len(pack_a) > 0
+        # 同批重放：pack 确定性 → 字节一致
+        replay = run_batch(MODULE, root, s.requests, Path(work))
+        pack_b = (root / "exports" / "快照.mcpack").read_bytes()
+        assert pack_a == pack_b, "pack must be byte-deterministic"
+
+        vault_b = Path(work) / "vault-b"
+        (vault_b / "imports").mkdir(parents=True)
+        (vault_b / "imports" / "快照.mcpack").write_bytes(pack_a)
+        b = PureSession(vault_b, Path(work))
+        b.call("unpack", file="imports/快照.mcpack")
+        b.call("rebuild")
+        hits = b.call("search", query="光合作用")["hits"]
+        assert hits and hits[0]["id"] == "concepts/能量"
+        src_a = s.call("read-source", id="raw/小图.png")
+        src_b = b.call("read-source", id="raw/小图.png")
+        assert src_a["registered_sha256"] == src_b["registered_sha256"]
+        assert src_a["bytes"] == src_b["bytes"] and src_a["bytes"] == 12
+        check("pack deterministic + unpack parity across vaults through the 16 MiB byte channel")
     print("wasipure direct-run e2e: boundary scenarios passed")
 
 
