@@ -1,6 +1,6 @@
 # 验证记录与未覆盖范围
 
-日期：2026-10-17，macOS/POSIX，MoonBit 2026-09-20 工具链。完整入口为 `NODE_BINARY=/path/to/node22-or-later ./scripts/verify.sh`。
+日期：2026-10-17，macOS/POSIX，MoonBit 2026-09-20 工具链。完整入口为 `NODE_BINARY=/path/to/node22-or-later ./scripts/verify.sh`；`NODE_BINARY` 仅用于 WASM 实例化 e2e（需要 JS 引擎宿主），浏览器检查是纯 Python 标准库实现，不需要 Node。
 
 > 本文是**当时那个时间点的记录**，不是活文档。其中的测试数与源码比例只对 2026-10-17 的树有效；当前门禁组成与比例以 `./scripts/verify.sh` 的实际输出和 `specs/engine/implementation-audit.md` 为准。因此本文不随 native 发布包分发。
 
@@ -26,7 +26,7 @@
 - 精简 Web 服务：HTTP 读取/搜索和直接 native 调用对照、固定 vault、参数/路径约束、`dedup`/`spread`/`provider` 检索字段对齐、body/来源漂移拒绝、登记后刷新及编译失败保留旧输出，见 [服务说明](web.md)。
 - 确定性 ZIP 与 Python 标准库/独立编码器交叉核对，全部解包发布中断点恢复、二进制/工单/草稿/视觉源一致性及敌意容器拒绝。
 - native 分发包回归会重复构建 tar.gz，核对字节级确定性、manifest 逐文件哈希/大小、许可与精简 Web/监听适配器的完整性，并验证旁路 SHA-256 文件。
-- `lint` 白盒回归覆盖 evidence 正文 UTF-8 范围漂移；native evidence 回归继续覆盖精确 raw 锚点错引、来源漂移和失效传播。
+- `lint` 白盒回归覆盖 evidence 正文 UTF-8 范围漂移，以及 schema 合法但引用页面不可解析的 evidence 记录（`evidence_reference_unresolvable`）；native evidence 回归继续覆盖精确 raw 锚点错引、来源漂移和失效传播。
 - 状态事件回归拒绝未知 `op`、未知字段、缺少必填字段和伪造内容寻址路径，并以完整 `refresh` 夹具覆盖事务中断后的回滚/前滚；provider、研究、导入和页面生命周期事件均通过真实流程重新核对。
 - CI 配置在 Ubuntu 重放完整 `verify.sh` 并产出 Linux native 分发包（`dist/` 归档 + 校验和上传为 artifact）；Windows 新增 native job（官方 PowerShell 安装器、`moon check/test/build`、分发包脚本）和既有 `clang-cl` 语法 job，但尚未从本仓执行，Windows native 运行时证据仍未取得。见 [CI 说明](ci.md)。
 - OKF v0.2/普通 Markdown 导入导出实际磁盘核对：未知 YAML 与原件保留、标准 sources 对象、断链审核、原始/编辑往返、二进制资源、部分导出重试、外部编辑冲突、编译失败和输入竞态均已验证。
@@ -53,6 +53,6 @@
 
 `core/records.mbt` 与 `agent/` 下每个 `@base.fail(...)` 都是一条命名分支。一个分支没有任何测试引用时，移除它全套件照绿。
 
-截至本文更新时：`core/records.mbt` 的 191 个分支与 48 个 lint 谓词**全部**有测试引用；`agent/` 层 156 个分支中 137 个有引用，剩余 19 个的触达路径与失败原因逐条登记在 [未触达的校验分支](unreachable-branches.md)。
+截至本文更新时：`core/records.mbt` 的 191 个分支与 49 个 lint 谓词**全部**有测试引用；`agent/` 层 156 个分支中 137 个有引用，剩余 19 个的触达路径与失败原因逐条登记在 [未触达的校验分支](unreachable-branches.md)。
 
 该文档同时记录了本会话沉淀的触达手法（纯记录层字段篡改、选择性拆除、改序列化）与操作层面的坑（变异中断后必须重编译、catalog 副本过期、用例位置约束、事件定位必须用业务字段等）。改动 `record_validation_e2e.py` 前先读它。

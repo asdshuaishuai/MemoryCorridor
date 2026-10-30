@@ -306,7 +306,16 @@ fn lint_evidence_record(
     Object(fields) if fields.contains("superseded_by") => return
     _ => ()
   }
-  let view = try { evidence_row_view(store, entries, row) } catch { _ => return }
+  // The record already passed validate_record, so a fault here is a
+  // cross-record one: the evidence points at a page the vault can no longer
+  // resolve. Swallowing it would keep durable history whose subject is gone.
+  let view = try { evidence_row_view(store, entries, row) } catch {
+    @base.Fault(message) => {
+      lint_add(issues, "evidence_reference_unresolvable", entry.id, entry.path, message,
+        "restore the referenced page and its catalog entry, or replace the evidence through the engine", "error")
+      return
+    }
+  }
   for claim in @base.array(@base.field(view, "claims")) {
     let source = @base.text(@base.field(claim, "source"))
     let page_stale = @base.boolean(@base.field(claim, "page_stale"))

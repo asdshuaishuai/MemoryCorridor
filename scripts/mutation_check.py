@@ -512,6 +512,19 @@ MUTATIONS = [
      '    if stop > total { @base.fail("source_range_invalid: 0 <= start < end <= " + total.to_string()) }',
      "read-source: metadata, verification, ranges",
      "read_source_e2e.py"),
+
+    ("lint must name an evidence record whose page reference is unresolvable",
+     "agent/lint.mbt",
+     '''  let view = try { evidence_row_view(store, entries, row) } catch {
+    @base.Fault(message) => {
+      lint_add(issues, "evidence_reference_unresolvable", entry.id, entry.path, message,
+        "restore the referenced page and its catalog entry, or replace the evidence through the engine", "error")
+      return
+    }
+  }''',
+     '''  let view = try { evidence_row_view(store, entries, row) } catch { _ => return }''',
+     "lint predicates:",
+     "lint_predicates_e2e.py"),
 ]
 
 

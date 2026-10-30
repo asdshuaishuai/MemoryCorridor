@@ -145,6 +145,21 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lint-") as temp:
     call(root, "rebuild")
     checked += 1
 
+    # A schema-valid evidence record whose page reference cannot be resolved is
+    # a cross-record fault only lint can see: validate_record passes because the
+    # record itself is well formed, so a silent catch here would keep durable
+    # history pointing at a vanished subject. The anchor page was just
+    # republished, so deleting its file isolates exactly this fault.
+    anchor_body = (root / "wiki/concepts/anchor.md").read_text(encoding="utf-8")
+    (root / "wiki/concepts/anchor.md").unlink()
+    rows = [row for row in call(root, "lint")["violations"]
+            if row["predicate"] == "evidence_reference_unresolvable"]
+    assert rows and "file_missing: wiki/concepts/anchor.md" in rows[0]["detail"], rows
+    # Restoring the exact bytes resolves the reference again.
+    (root / "wiki/concepts/anchor.md").write_text(anchor_body, encoding="utf-8")
+    assert "evidence_reference_unresolvable" not in predicates(root), sorted(predicates(root))
+    checked += 1
+
     # The same pair of faults on a raw source rather than a page: an unreadable
     # source is reported separately from a missing one, and pages citing it keep
     # their history while the source is marked stale.
