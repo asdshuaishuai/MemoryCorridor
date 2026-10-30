@@ -19,11 +19,15 @@
 - `windows-filesystem` keeps the standalone `clang-cl /D_WIN32 /Zs platform/fs.c`
   syntax check for the Windows filesystem adapter.
 
-Evidence status: the Linux job mirrors the gate that already passes locally on
-macOS/POSIX. The `windows-native` job has not been executed from this
-repository yet (GitHub Actions only runs after a push), so Windows native MoonBit
-runtime, transaction and release behavior are configured but unverified; the
-`tasks.md` cross-platform item stays open until a green Windows run is recorded.
+Evidence status: the Linux job went fully green in run 41050582660 (2026-10-30),
+producing the `memorycorridor-native-linux` archive artifact — it mirrors the
+gate that already passes locally on macOS/POSIX. The `windows-native` job now
+executes but fails at the native link step: `platform/socket.c` references
+Winsock symbols (`send`, `WSAStartup`, ...) that are left unresolved when
+linking `web.exe` (14 unresolved externals; likely a missing `ws2_32` link
+input). With no Windows environment available to verify a link-config fix, the
+job stays red and the `tasks.md` cross-platform item stays open until a green
+Windows run is recorded.
 The POSIX path in `platform/fs.c` and the Windows UTF-16/reparse-point/atomic
 replace/lock branches are both committed, and `scripts/platform_smoke.sh`
 executes the Windows branch only when a Windows compiler/sysroot is provided.

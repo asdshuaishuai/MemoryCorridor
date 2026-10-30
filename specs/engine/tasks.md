@@ -388,7 +388,7 @@
 - [x] 外部向量交换载荷：JSON 数组与 little-endian f32 Base64 双编码、长度/有限值/二选一校验；provider 注册、心跳、撤销、空间绑定、当前页面版本与 embedding 输入文本校验、持久 provider-job open/claim/heartbeat/complete/cancel/fail、租约抢占与超时失败、embedding 原子向量发布、search 候选校验和审计已通过 native e2e，provider 进程的实际推理仍在引擎外。
 - [x] 外部 Agent 编写协议：上下文版本令牌、结构化草稿整批校验、编译提交和真实磁盘竞态验证；见 [编写协议](authoring.md)。
 - [x] 精简 Web 服务及真实 HTTP/浏览器验收；见 [Web 规格](web.md)。
-- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部因依赖解析失败（工作流缺 `moon install` 步骤），随后补的 `moon install` 又被新版工具链移除无参数形式打破（运行 41046091111），本会话改为两个 moon job 仅 `moon update`、依赖按需拉取并以本机验证，并新增 `.moonbit-version` 把 CI 工具链固定在本机验证过的 `0.10.14+7d59c7ec9`（moon 0.1.20260920）以止住 latest 漂移，绿运行与 Windows 运行时/分发证据仍待推送后由 CI 取得。
+- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部因依赖解析失败（工作流缺 `moon install` 步骤），随后补的 `moon install` 又被新版工具链移除无参数形式打破（运行 41046091111），本会话改为两个 moon job 仅 `moon update`、依赖按需拉取并以本机验证，并新增 `.moonbit-version` 把 CI 工具链固定在本机验证过的 `0.10.14+7d59c7ec9`（moon 0.1.20260920）以止住 latest 漂移；Linux 绿运行与 `memorycorridor-native-linux` 分发包 artifact 已由运行 41050582660 取得（2026-10-30），Windows 运行时/分发证据仍缺——`windows-native` 现稳定执行到 native 链接，败于 `platform/socket.c` 的 Winsock 符号未解析（缺 ws2_32 链接）。
 - [x] 受限文学化 IR 一致性矩阵：缩进/Tab/波浪线/超长围栏、短闭合与脏闭合拒绝、信息串变体、空块、CRLF、EOF 辅助块、`replace_first_checked` 逐字节保留、目录/视图规范化往返与字段边界、native/WASM 同一尾随规则拒绝，以及 400 个随机文档 + 320 个确定性变异的无 panic/幂等检查；见 [验证记录](../../docs/verification.md)。
 - [x] 当前实现的 check 零警告、纯函数/磁盘/MCP/WASM 门禁与 >85% 有效源码占比核对。
 - [ ] 完整分期验收与跨平台压力：Windows/Linux 运行时证据和跨机器阈值仍未取得（见上一条），本机矩阵已覆盖但完整分期验收未完成。
@@ -722,6 +722,12 @@
   `web.exe` 链接：`platform/socket.c` 的 Winsock 符号（`__imp_send`/`__imp_WSAGetLastError`
   等 14 个）未解析，疑似 Windows 链接缺 ws2_32；无 Windows 环境实测，按约束不赌改，
   保留为待 Windows 证据的遗留项（非本次硬门槛）。
+- [x] **2026-10-30 运行 41050582660：linux job 首次全绿**——固定工具链 + `moon update`
+  按需依赖 + verify.sh 全门禁（含快照图浏览器检查）+ release 分发包构建校验 +
+  `memorycorridor-native-linux` artifact 上传（约 10.6 MB）全部通过，硬门槛达成；
+  `windows-filesystem` 亦绿。整条 run 的 failure 仅剩 `windows-native` 的 Winsock
+  链接错误（`web.exe`/`web.blackbox_test.exe` 各 14 个未解析符号），与 41048766040
+  的失败点一致、可复现，是纯 Windows 链接配置问题。
 - [x] **浏览器检查去 Node 化**：工具链约束改为尽量不引入外部运行时后，原 Node 版
   CDP 检查脚本重写为纯 Python 标准库的
   `scripts/reading_map_browser_cdp.py`（socket/json/sys/subprocess/time 等）：
