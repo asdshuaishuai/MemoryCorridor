@@ -797,5 +797,7 @@
   败于 native 链接——`platform/socket.c` 的 14 个 Winsock `__imp_*` 符号未解析
   （LNK1120，缺 ws2_32 链接），无 Windows 环境实测修复；「Linux/Windows CI 与多平台
   引擎分发」整项保持未勾选，Windows native 运行时/分发证据仍是遗留项。
+- [x] **2026-10-31 续四：MCP JSON-RPC 双面、租约锁接管、corridor-host 大容器**：`wasm/mcp.mbt` 与 `wasipure/mcp.mbt` 把 native MCP 传输的信封逻辑忠实移植进两个 wasm 面（同一 `service_run` 粘合）：initialize 握手门（未收尾前 tools/* 拒绝 `initialization_required`）、`notifications/initialized` 静默收尾解锁 tools/*（通知零字节输出，宿主与 `_start` 均不产生行）、`_meta.progressToken` 产生 started/completed `notifications/progress` 行（失败映射 progress 0 + "failed"）、重复 initialize 拒绝、未知工具 JSON-RPC error 信封、`tools/call` 结果 = content 文本 + structuredContent + isError。回执协议进入 MCP 面：`receipts` 成为工具字典的公开传输字段（`agent/schema.mbt` inputSchema），tools/call arguments 接收后在粘合层 set+strip（wasipure 走 `set_receipts` 真实验证；corridor 面经 corridor-host moon 导入编译、收据惰性剥离），纯 WASI MCP 的 init 完成真实回执回合（宿主代跑 moon check 后附 receipts 重发）。修两个真实缺陷：(1) wasmtime 对 CREAT|EXCL 撞已有锁文件返回 NOTDIR 而非 EXIST，`wasi_lock` 的 Absent 分支从未命中——纯 WASI 面互斥从未生效；(2) 文档承诺的租约过期接管未实现（过期锁永久阻塞）。重写 `wasi_lock`：EXCL 失败一律视为持锁冲突，互斥由锁文件读取裁决（不可解析或未过期拒绝，过期才单次接管重试）。e2e：`wasm_service_e2e.py` 增 MCP 场景（握手门/静默行序/进度令牌/error 信封/重复 initialize）与 corridor-host 大容器同等验证（3 MiB 原件 → 双输出名 pack 真实确定性双跑 → 空 vault unpack → 检索/读源 parity）；`wasipure_e2e.py` 增 `--mcp` 场景（wasmtime 直跑、回执回合）与租约锁接管场景（持锁拒绝、未知/未过期不可抢占、过期接管、批内 open→close 释放）；并修正 wasipure pack 确定性双跑的假绿（原重放被 `export_already_exists` 拒绝后重读同字节——现改输出名真实重跑）。
+
 - 本项目不包含桌面应用与专用桌面适配；此前原型及验收脚本已删除。
 - 完整 YAML/CommonMark、二进制原件抽取、模型生成的广泛质量/成本与全平台分发均未借局部测试标为完成；模型调用由外部调用方提供，MoonBit 核心不访问模型或网络。

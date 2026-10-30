@@ -43,6 +43,9 @@ fn stdin_line() -> String? {
 }
 
 pub fn _start() -> Unit {
+  // --mcp argv 切换 JSON-RPC 信封面：通知静默（不写任何字节），tools/call
+  // 携进度令牌时先写 notifications/progress 行再写回复行。
+  let mcp_mode = wasi_argv().contains("--mcp")
   let mut serving = true
   while serving {
     match stdin_line() {
@@ -50,6 +53,10 @@ pub fn _start() -> Unit {
       Some(text) => {
         if text == ":exit" {
           serving = false
+        } else if mcp_mode {
+          for line in mcp_execute_line(text) {
+            try { wasi_write_whole(1, @utf8.encode(line + "\n")) } catch { _ => () }
+          }
         } else {
           let response = service_execute_text(text)
           try { wasi_write_whole(1, @utf8.encode(response + "\n")) } catch { _ => () }

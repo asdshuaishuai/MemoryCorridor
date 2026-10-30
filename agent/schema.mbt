@@ -6,6 +6,7 @@ pub fn input_schema(t : Tool) -> Json {
   let properties : Map[String, Json] = Map([])
   properties["vault"] = { "type": "string", "description": "Vault root; required by session-open and legacy one-shot calls, omitted after session-open" }
   properties["progress"] = { "type": "boolean", "description": "CLI transport hint; emit structured progress events before the terminal response" }
+  properties["receipts"] = { "type": "array", "items": { "type": "object" }, "description": "Transport field; compile receipts [{path, sha256, ok}] proving the caller ran moon check itself (required by hosts without an in-process compiler)" }
   let required : Array[String] = if t.name == "session-open" { ["vault"] } else { [] }
   for name in t.fields {
     let ty = if ["pages", "items", "queries", "capabilities", "sources", "conditions",

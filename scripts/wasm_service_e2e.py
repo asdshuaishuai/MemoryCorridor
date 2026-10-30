@@ -176,6 +176,102 @@ def main():
             s.call("verify")
             check("external page drift refused; rebuild after restore clears it")
 
+            # MCP stdio 直跑：同一 corridor.wasm 以 JSON-RPC 信封服务。握手
+            # initialize → notifications/initialized（静默，由下一行的 id 顺序
+            # 证明）→ tools/list 93 工具 → tools/call；进度令牌产生
+            # notifications/progress 行；信封行为与 native MCP 传输一致。
+            mcp = subprocess.Popen(
+                [sys.executable, str(HOST), "--module", str(MODULE), "--root", str(root),
+                 "--mcp"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, bufsize=1)
+            def mcp_send(rpc):
+                mcp.stdin.write(json.dumps(rpc, ensure_ascii=False) + "\n")
+                mcp.stdin.flush()
+            def mcp_read():
+                assert select.select([mcp.stdout], [], [], 30)[0], "mcp reply timed out"
+                line = mcp.stdout.readline()
+                assert line, "mcp host exited"
+                return json.loads(line)
+            try:
+                mcp_send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": {"name": "e2e"}}})
+                init = mcp_read()
+                assert init["result"]["protocolVersion"] == "2024-11-05"
+                # 握手未收尾前 tools/* 必须拒绝
+                mcp_send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+                early = mcp_read()
+                assert early["error"]["data"]["error_code"] == "initialization_required"
+                # 通知（无 id）不产生响应行：下一个可读行必须是 id=3 的回复
+                mcp_send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                mcp_send({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+                tools = mcp_read()
+                assert tools["id"] == 3
+                assert len(tools["result"]["tools"]) == 93
+                # 进度令牌：tools/call 产生 started/completed 通知行 + 回复行
+                mcp_send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                    "name": "corridor_status", "arguments": {"vault": str(root)},
+                    "_meta": {"progressToken": "t1"}}})
+                started = mcp_read()
+                assert started["method"] == "notifications/progress"
+                assert started["params"]["progressToken"] == "t1"
+                assert started["params"]["progress"] == 0
+                done = mcp_read()
+                assert done["method"] == "notifications/progress"
+                assert done["params"]["progress"] == 1 and done["params"]["message"] == "completed"
+                call_status = mcp_read()
+                assert call_status["id"] == 4
+                assert call_status["result"]["isError"] is False
+                assert call_status["result"]["structuredContent"]["result"]["index_cache"] == "valid"
+                # 未知工具 → JSON-RPC error 信封（工具名翻译失败在 dispatch 前）
+                mcp_send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+                    "name": "corridor_nope", "arguments": {"vault": str(root)}}})
+                unknown = mcp_read()
+                assert unknown["error"]["data"]["error_code"] == "unknown_tool"
+                # 重复 initialize → already_initialized
+                mcp_send({"jsonrpc": "2.0", "id": 6, "method": "initialize", "params": {
+                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": {"name": "e2e"}}})
+                again = mcp_read()
+                assert again["error"]["data"]["error_code"] == "already_initialized"
+                check("MCP stdio transport over the same corridor.wasm: handshake gate, silent notifications, progress notices, error envelopes")
+            finally:
+                mcp.terminate()
+                err = mcp.stderr.read()
+                assert "Traceback" not in err, err[-500:]
+
+            # corridor-host 面大容器同等验证：多 MiB 原件 → pack 确定性双跑
+            # 字节一致 → 宿主复制到空 vault 的 imports/ → unpack 恢复 →
+            # 检索与读源（sha256、字节数）parity。
+            big_bytes = bytes([137, 80, 78, 71, 13, 10, 26, 10]) + bytes(3 * 1024 * 1024) + b"corridor-host-pack"
+            (root / "raw/大容器.png").write_bytes(big_bytes)
+            s.call("scan")
+            s.call("rebuild")
+            s.call("verify")
+            # pack 拒绝覆盖已有导出，因此确定性双跑用两个输出名
+            s.call("pack", output="exports/大容器.mcpack")
+            pack_one = (root / "exports" / "大容器.mcpack").read_bytes()
+            assert len(pack_one) >= len(big_bytes)
+            s.call("pack", output="exports/大容器二.mcpack")
+            assert (root / "exports" / "大容器二.mcpack").read_bytes() == pack_one
+            host_b = Path(work) / "vault-host-b"
+            (host_b / "imports").mkdir(parents=True)
+            (host_b / "imports" / "大容器.mcpack").write_bytes(pack_one)
+            other = Service(host_b)
+            try:
+                other.call("unpack", file="imports/大容器.mcpack")
+                other.call("rebuild")
+                hits = other.call("search", query="光合作用")["hits"]
+                assert hits and hits[0]["id"] == "concepts/能量"
+                src_a = s.call("read-source", id="raw/大容器.png")
+                src_b = other.call("read-source", id="raw/大容器.png")
+                assert src_a["registered_sha256"] == src_b["registered_sha256"]
+                assert src_a["bytes"] == src_b["bytes"] == len(big_bytes)
+            finally:
+                other.close()
+            check("corridor-host face packs and unpacks a multi-megabyte container with byte parity")
+
             # A raw payload larger than the 1 MiB initial read buffer forces
             # the host_call_buffer retry protocol to grow to the exact size;
             # digest and verify re-read the whole file through the same path.

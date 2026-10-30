@@ -366,9 +366,6 @@ def serve(module_path, root, http_port=None, mcp_mode=False):
         return 0
 
     stdin = sys.stdin.buffer
-    mcp_line = None
-    if mcp_mode:
-        mcp_line = exports["mcp_execute_line"]
     while True:
         line = stdin.readline()
         if not line:
@@ -376,11 +373,25 @@ def serve(module_path, root, http_port=None, mcp_mode=False):
         request = line.rstrip(b"\n")
         if request == b":exit":
             break
-        if mcp_line is not None:
-            reply = mcp_line(store, request.decode("utf-8", "replace"))
-            if reply:
-                sys.stdout.buffer.write(reply.encode("utf-8") + b"\n")
+        if mcp_mode:
+            # MCP 面：文本经 scratch/input_load 装载，mcp_execute_line 返回
+            # output_ptr 处的回复行（与 stdio 面同一字节通道）。
+            exports["input_reset"](store)
+            ptr = exports["scratch"](store, len(request))
+            mem_write(ptr, request)
+            if exports["input_load"](store, ptr, len(request)) != 0:
+                sys.stdout.buffer.write(b'{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"input_overflow"}}\n')
                 sys.stdout.buffer.flush()
+                continue
+            count = exports["mcp_execute_line"](store)
+            if count is None or count < 0:
+                sys.stdout.buffer.write(b'{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"service_failed"}}\n')
+            elif count > 0:
+                out = exports["output_ptr"](store)
+                data = bytes(holder["memory"].read(store, out, out + count))
+                sys.stdout.buffer.write(data + b"\n")
+            # count == 0：通知（notifications/*）保持静默，不产生任何输出行。
+            sys.stdout.buffer.flush()
             continue
         # Segmented request load: the module appends chunks, so text-carrying
         # ops (backfill, drafts) reach the same 16 MiB ceiling as single files.

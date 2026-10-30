@@ -242,13 +242,41 @@ pub fn wasi_lock() -> Unit raise @base.Fault {
   let now = wasi_time_ns()
   let expiry = now + LEASE_NS
   let token = @base.canonical(@base.parse("{ \"lease_until_ns\": " + expiry.to_string() + " }"))
-  match wasi_open(".corridor-lock", OFLAG_CREAT | OFLAG_EXCL, false) {
-    Opened(fd) => {
-      wasi_write_whole(fd, @utf8.encode(token))
-      wasi_close(fd)
+  for _ in 0..<2 {
+    // CREAT|EXCL 撞上已存在的锁文件时 wasmtime 返回的 errno 并不恒定
+    // （实证为 NOTDIR 而非 EXIST），因此任何 open 失败都视为「已有人持锁」，
+    // 互斥由接下来的租约读取裁决：读不出或未过期 → vault_locked。
+    let opened : WasiOpen = try wasi_open(".corridor-lock", OFLAG_CREAT | OFLAG_EXCL, false) catch { _ => Absent }
+    match opened {
+      Opened(fd) => {
+        wasi_write_whole(fd, @utf8.encode(token))
+        wasi_close(fd)
+        return
+      }
+      Absent => {
+        // 只接管可证明过期的租约：从锁文件读持有者的到期时刻并与当前
+        // 单调时钟比较。读不出或未过期一律拒绝（未知持有人不可抢占），
+        // 接管也只重试一次，避免与并发接管方互转。
+        let expired = match wasi_read_bytes(".corridor-lock") {
+          Some(bytes) => {
+            let text = try @utf8.decode(bytes) catch { _ => "" }
+            let parsed : Json = try @base.parse(text) catch { _ => Json::null() }
+            match parsed {
+              Object(fields) => match fields.get("lease_until_ns") {
+                Some(Number(value, ..)) => value.to_uint64() < now
+                _ => false
+              }
+              _ => false
+            }
+          }
+          None => false
+        }
+        if !expired { @base.fail("vault_locked: another writer is active") }
+        wasi_unlock()
+      }
     }
-    Absent => @base.fail("vault_locked: another writer is active")
   }
+  @base.fail("vault_locked: another writer is active")
 }
 
 pub fn wasi_unlock() -> Unit raise @base.Fault {

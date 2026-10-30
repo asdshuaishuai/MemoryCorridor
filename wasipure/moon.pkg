@@ -14,6 +14,7 @@ options(
     "wasi.mbt": ["wasm", "native"],
     "storage.mbt": ["wasm", "native"],
     "service.mbt": ["wasm", "native"],
+    "mcp.mbt": ["wasm"],
     "main.mbt": ["wasm"],
   },
   link: {

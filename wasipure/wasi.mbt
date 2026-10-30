@@ -68,11 +68,45 @@ fn clock_time_get_ffi(clock_id : Int, precision : UInt64, time : Int) -> UInt = 
 #cfg(target="native")
 fn clock_time_get_ffi(_clock_id : Int, _precision : UInt64, _time : Int) -> UInt { 0 }
 
-// ---- argv（--serve 模式解析）----
+// ---- argv（--serve / --mcp 模式解析）----
 #cfg(target="wasm")
 fn args_sizes_get_ffi(argc : Int, argv_buf_size : Int) -> UInt = "wasi_snapshot_preview1" "args_sizes_get"
 #cfg(target="wasm")
 fn args_get_ffi(argv : Int, argv_buf : Int) -> UInt = "wasi_snapshot_preview1" "args_get"
+
+// Read the argv vector: sizes first, then argv pointers + the packed buffer.
+#cfg(target="wasm")
+pub fn wasi_argv() -> Array[String] {
+  let (count_buf, count_addr) = wasi_malloc(4)
+  let (size_buf, size_addr) = wasi_malloc(4)
+  ignore(count_buf)
+  ignore(size_buf)
+  if args_sizes_get_ffi(count_addr, size_addr) != 0 { return [] }
+  let count = load32(count_addr)
+  let total = load32(size_addr)
+  if count <= 0 || total <= 0 { return [] }
+  let (vec_buf, vec_addr) = wasi_malloc(count * 4)
+  ignore(vec_buf)
+  let (str_buf, str_addr) = wasi_malloc(total)
+  ignore(str_buf)
+  if args_get_ffi(vec_addr, str_addr) != 0 { return [] }
+  let out : Array[String] = []
+  for i in 0..<count {
+    let p = load32(vec_addr + i * 4)
+    let chars : Array[Byte] = []
+    let mut j = 0
+    while true {
+      let b = load8_wasip1(p + j)
+      if b == 0 { break }
+      chars.push(b.to_byte())
+      j += 1
+    }
+    out.push(try @utf8.decode(Bytes::from_array(chars)) catch { _ => "" })
+  }
+  out
+}
+#cfg(target="native")
+pub fn wasi_argv() -> Array[String] { [] }
 
 #cfg(target="wasm")
 #owned(bytes)

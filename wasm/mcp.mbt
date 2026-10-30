@@ -12,6 +12,32 @@ fn mcp_error(id : Json, code : Int, message : String) -> Json {
     "data": @base.fault_data(message) } }
 }
 
+fn mcp_progress_token(request : Json) -> Json? {
+  let rpc_name = try { @base.text(@base.field(request, "method")) } catch { _ => "" }
+  if rpc_name != "tools/call" { return None }
+  match request {
+    Object(fields) => if fields.get("id") is None { None } else {
+      let params = fields.get("params").unwrap_or(Json::object(Map([])))
+      match params {
+        Object(param_fields) => match param_fields.get("_meta") {
+          Some(Object(meta)) => match meta.get("progressToken") {
+            Some(String(_) | Number(_, ..)) as value => value
+            _ => None
+          }
+          _ => None
+        }
+        _ => None
+      }
+    }
+    _ => None
+  }
+}
+
+fn mcp_progress_notice(token : Json, value : Json, message : String) -> Json {
+  { "jsonrpc": "2.0", "method": "notifications/progress",
+    "params": { "progressToken": token, "progress": value, "total": 1, "message": message } }
+}
+
 fn mcp_reply(session : ServiceState, request : Json, ready : Bool, initialized : Bool) -> Json? {
   let id = match request { Object(fields) => fields.get("id"); _ => None }
   let rid = id.unwrap_or(Json::null())
@@ -57,8 +83,18 @@ fn mcp_reply(session : ServiceState, request : Json, ready : Bool, initialized :
         for t in tools { if @agent.tool_name(t) == name { op = t.name; break } }
         if op == "" { raise @base.Fault("unknown_tool: " + name) }
         let t = @agent.tool(op)
-        @base.keys(args, ["vault", "progress"] + t.fields)
-        let request = match args { Object(fields) => { fields["op"] = op.to_json(); Json::object(fields) }; _ => raise @base.Fault("arguments_object_required") }
+        @base.keys(args, ["vault", "progress", "receipts"] + t.fields)
+        // Receipts are a transport field and inert here: compilation goes
+        // through the corridor-host moon import, so strip before dispatch
+        // (the engine rejects unknown fields).
+        let request = match args {
+          Object(fields) => {
+            fields["op"] = op.to_json()
+            fields.remove("receipts")
+            Json::object(fields)
+          }
+          _ => raise @base.Fault("arguments_object_required")
+        }
         let (value, failed) = try (service_run(session, request), false) catch {
           @base.Fault(message) => {
             let data = @base.fault_data(message)
@@ -85,17 +121,25 @@ fn mcp_reply(session : ServiceState, request : Json, ready : Bool, initialized :
   }
 }
 
-/// One JSON-RPC request line in, one reply line out. Notifications produce
-/// an empty string so the host writes nothing. Handshake state persists for
-/// the whole module instance.
-pub fn mcp_execute_line(text : String) -> String {
+/// One JSON-RPC request line in, the protocol's reply lines out: a
+/// tools/call carrying _meta.progressToken also yields
+/// notifications/progress lines (started first, completed/failed after the
+/// reply is decided), and a notification yields no line at all (empty
+/// output, zero length). Handshake state persists for the whole module
+/// instance: initialize pins `initialized`, the follow-up silent
+/// notifications/initialized notice unlocks `ready` and with it tools/*.
+pub fn mcp_execute_line() -> Int {
+  let text = try @utf8.decode(Bytes::from_array(incoming.val)) catch {
+    _ => "invalid_utf8_request"
+  }
   let request : Json = try {
     @base.parse(text)
   } catch {
     _ => Json::null()
   }
   if request is Null {
-    return @base.canonical(mcp_error(Json::null(), -32700, "parse_error"))
+    outgoing.val = @utf8.encode(@base.canonical(mcp_error(Json::null(), -32700, "parse_error")))
+    return outgoing.val.length()
   }
   let valid = match request {
     Object(fields) => fields.get("jsonrpc") == Some("2.0".to_json()) &&
@@ -104,17 +148,59 @@ pub fn mcp_execute_line(text : String) -> String {
     _ => false
   }
   if !valid {
-    return @base.canonical(mcp_error(Json::null(), -32600, "invalid_request"))
+    outgoing.val = @utf8.encode(@base.canonical(mcp_error(Json::null(), -32600, "invalid_request")))
+    return outgoing.val.length()
   }
-  match mcp_reply(mcp_session.val, request, mcp_ready.val, mcp_initialized.val) {
+  let rpc_method = try { @base.text(@base.field(request, "method")) } catch { _ => "" }
+  let token = mcp_progress_token(request)
+  let lines : Array[String] = []
+  match token {
+    Some(value) => lines.push(@base.canonical(mcp_progress_notice(value, 0, "started")))
+    None => ()
+  }
+  let reply = mcp_reply(mcp_session.val, request, mcp_ready.val, mcp_initialized.val)
+  match reply {
+    Some(value) =>
+      if (try @base.field(value, "result") catch { _ => Json::null() }) != Json::null() && rpc_method == "initialize" {
+        mcp_initialized.val = true
+      }
+    None =>
+      // notifications/initialized 是握手收尾：回复仍为空，但解锁 tools/*。
+      if mcp_initialized.val && rpc_method == "notifications/initialized" {
+        let valid_notice = try {
+          @base.keys(request, ["jsonrpc", "method", "params"])
+          true
+        } catch {
+          _ => false
+        }
+        if valid_notice { mcp_ready.val = true }
+      }
+  }
+  match token {
     Some(value) => {
-      if (try @base.field(value, "result") catch { _ => Json::null() }) != Json::null() {
-        if (try @base.field(request, "method") catch { _ => Json::null() }) == "initialize".to_json() {
-          mcp_initialized.val = true
+      let failed = match reply {
+        None => true
+        Some(result) => {
+          let error_value = try @base.field(result, "error") catch { _ => Json::null() }
+          if error_value != Json::null() {
+            true
+          } else {
+            let result_value = try @base.field(result, "result") catch { _ => Json::null() }
+            match result_value {
+              Object(fields) => fields.get("isError").unwrap_or(false.to_json()) == true.to_json()
+              _ => false
+            }
+          }
         }
       }
-      @base.canonical(value)
+      lines.push(@base.canonical(mcp_progress_notice(value, if failed { 0 } else { 1 }, if failed { "failed" } else { "completed" })))
     }
-    None => ""
+    None => ()
   }
+  match reply {
+    Some(value) => lines.push(@base.canonical(value))
+    None => ()
+  }
+  outgoing.val = @utf8.encode(lines.join("\n"))
+  outgoing.val.length()
 }
