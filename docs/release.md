@@ -15,15 +15,15 @@ architecture, size, and SHA-256 of every payload file (the manifest describes it
 the adjacent `.sha256` file covers the archive itself.
 
 The package is built for the host where the command runs. Cross-compilation is
-not implied: a Windows or Linux package requires a MoonBit toolchain and native
-compiler for that target. Use `--skip-build` only when the matching binaries
+not implied: a Linux package requires a MoonBit toolchain and native compiler
+for that target. Use `--skip-build` only when the matching binaries
 already exist under `_build/<target>/debug/build/`.
 
-CI produces per-host artifacts from the same script: the Ubuntu job uploads
-`memorycorridor-native-linux` and the Windows job (configured but not yet run
-from this repository) uploads `memorycorridor-native-windows`; each archive's
-manifest records its own platform and architecture. Building both on one host
-would require cross toolchains and is not provided.
+CI produces the Linux artifact from the same script: the Ubuntu job uploads
+`memorycorridor-native-linux` (first green run 41050582660, 2026-10-30).
+Windows packaging was removed with the Windows platform branches when the
+project moved to WASM-runtime delivery (`docs/wasm.md`); each archive's
+manifest records its own platform and architecture.
 
 ```sh
 python3 scripts/release.py --output dist

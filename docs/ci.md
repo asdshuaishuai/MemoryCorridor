@@ -1,6 +1,6 @@
 # Continuous verification
 
-`.github/workflows/verify.yml` has three jobs:
+`.github/workflows/verify.yml` has a single job:
 
 - `linux` runs the complete `scripts/verify.sh` gate on Ubuntu, installs the
   MoonBit toolchain version pinned in `.moonbit-version` through the official
@@ -8,26 +8,15 @@
   version so CI matches the locally verified gate), then builds the
   deterministic native release archive with `scripts/release.py` and re-checks
   it with `scripts/release_e2e.py`. The archive and checksum are uploaded as
-  `memorycorridor-native-linux`.
-- `windows-native` installs the same pinned toolchain through the official
-  Windows installer (`https://cli.moonbitlang.com/install/powershell.ps1` with
-  `MOONBIT_INSTALL_VERSION` read from `.moonbit-version`), then runs
-  `moon check --target native --deny-warn`, `moon test --target native`,
-  `moon build --target native cli mcp`, and the same deterministic release
-  scripts with `python`. The archive and checksum are uploaded as
-  `memorycorridor-native-windows`.
-- `windows-filesystem` keeps the standalone `clang-cl /D_WIN32 /Zs platform/fs.c`
-  syntax check for the Windows filesystem adapter.
+  `memorycorridor-native-linux`. The gate includes the wasm service e2e
+  (`scripts/wasm_service_e2e.py`), which bootstraps a wasmtime venv on the
+  runner.
 
-Evidence status: the Linux job went fully green in run 41050582660 (2026-10-30),
-producing the `memorycorridor-native-linux` archive artifact — it mirrors the
-gate that already passes locally on macOS/POSIX. The `windows-native` job now
-executes but fails at the native link step: `platform/socket.c` references
-Winsock symbols (`send`, `WSAStartup`, ...) that are left unresolved when
-linking `web.exe` (14 unresolved externals; likely a missing `ws2_32` link
-input). With no Windows environment available to verify a link-config fix, the
-job stays red and the `tasks.md` cross-platform item stays open until a green
-Windows run is recorded.
-The POSIX path in `platform/fs.c` and the Windows UTF-16/reparse-point/atomic
-replace/lock branches are both committed, and `scripts/platform_smoke.sh`
-executes the Windows branch only when a Windows compiler/sysroot is provided.
+Cross-platform delivery is the wasm service runtime's job: the engine module
+runs under any WASM runtime with a thin host (see `docs/wasm.md`), so the
+repository no longer carries Windows CI jobs or Windows branches in
+`platform/fs.c` / `platform/socket.c`. The former `windows-native` job (it
+failed at native link with unresolved Winsock symbols) and the
+`windows-filesystem` clang-cl syntax check were removed together with those
+branches; git history keeps both, and the first green Linux run remains
+41050582660 (2026-10-30).

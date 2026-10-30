@@ -4,7 +4,7 @@
 
 ## CLI
 
-运行 `_build/native/debug/build/cli/cli.exe`；stdin 每行一个 JSON 请求，stdout 恰好一个终态 JSON。编译器日志走 stderr；EOF 或 `:exit` 退出。首选会话模式是一个进程绑定一个 vault：先发送 `session-open`，随后请求可省略 `vault`，`session-close` 释放会话锁，跨 vault 请求会被拒绝。为兼容旧宿主，未显式打开时首个带 `vault` 的请求会绑定该根目录；后续 legacy 请求仍须携带同一 `vault`，每次操作单独持有 OS 写锁，不能切换到其他 vault。请求上限 2 MiB，单文件上限 16 MiB。
+运行 `_build/native/debug/build/cli/cli.exe`；stdin 每行一个 JSON 请求，stdout 恰好一个终态 JSON。编译器日志走 stderr；EOF 或 `:exit` 退出。首选会话模式是一个进程绑定一个 vault：先发送 `session-open`，随后请求可省略 `vault`，`session-close` 释放会话锁，跨 vault 请求会被拒绝。为兼容旧宿主，未显式打开时首个带 `vault` 的请求会绑定该根目录；后续 legacy 请求仍须携带同一 `vault`，每次操作单独持有 OS 写锁，不能切换到其他 vault。请求上限 2 MiB，单文件上限 16 MiB。wasm 服务面（见 docs/wasm.md）的请求经宿主分段装载达同一 16 MiB 上限，超限回复 `input_overflow` 且不回显 request_id（与 native 对超长请求的行为一致）。
 
 ```json
 {"op":"session-open","vault":"/absolute/my-vault"}

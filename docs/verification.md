@@ -28,7 +28,7 @@
 - native 分发包回归会重复构建 tar.gz，核对字节级确定性、manifest 逐文件哈希/大小、许可与精简 Web/监听适配器的完整性，并验证旁路 SHA-256 文件。
 - `lint` 白盒回归覆盖 evidence 正文 UTF-8 范围漂移，以及 schema 合法但引用页面不可解析的 evidence 记录（`evidence_reference_unresolvable`）；native evidence 回归继续覆盖精确 raw 锚点错引、来源漂移和失效传播。
 - 状态事件回归拒绝未知 `op`、未知字段、缺少必填字段和伪造内容寻址路径，并以完整 `refresh` 夹具覆盖事务中断后的回滚/前滚；provider、研究、导入和页面生命周期事件均通过真实流程重新核对。
-- CI 配置在 Ubuntu 重放完整 `verify.sh` 并产出 Linux native 分发包（`dist/` 归档 + 校验和上传为 artifact）；Windows 新增 native job（官方 PowerShell 安装器、`moon check/test/build`、分发包脚本）和既有 `clang-cl` 语法 job，但尚未从本仓执行，Windows native 运行时证据仍未取得。见 [CI 说明](ci.md)。
+- CI 配置在 Ubuntu 重放完整 `verify.sh` 并产出 Linux native 分发包（`dist/` 归档 + 校验和上传为 artifact）；首个绿运行 41050582660（2026-10-30）。Windows native job 与 `platform/fs.c`/`platform/socket.c` 的 Windows 分支已随后来的 WASM 为核心转向移除（当时 windows-native 稳定败于 Winsock 链接），Windows native 运行时证据不再作为交付目标。见 [CI 说明](ci.md)。
 - OKF v0.2/普通 Markdown 导入导出实际磁盘核对：未知 YAML 与原件保留、标准 sources 对象、断链审核、原始/编辑往返、二进制资源、部分导出重试、外部编辑冲突、编译失败和输入竞态均已验证。
 - 两种 WASM 实际实例化、零 imports、UTF-8/中文/非 BMP 字符、长页查询摘要、360 字节边界、向量、非法输入和字典一致性。
 - WASM classic/WASM-GC 快照会话实际验证创建/恢复路径与正文哈希、宿主编译回调、索引最后发布、编译失败、重放和外部冲突；不把内存会话写成 native 磁盘等价物。
@@ -37,13 +37,13 @@
 - 规模诊断脚本已用真实 16/64/128 页长页 vault 测量关键词、暴力向量、混合检索、ranked/even/similar 配额对比及 1/2/4/8 进程锁竞争，结果见 [规模基线](../specs/engine/scale.md) 和 [本机报告](scale-benchmark.json)。这是趋势基线，不是跨平台性能或并发 SLA。
 - 敌意 native 门禁覆盖未知字段、路径穿越、检索预算/限制、向量维度、重复 frontmatter、无效视觉声明、原件 symlink 和超长请求；每次拒绝都核对 vault 快照，见 [敌意输入](../specs/engine/adversarial.md)。
 - 按产品实现的非空非注释行检查 MoonBit >85%，平台/MCP/SDK/监听器/Web 传输及内嵌 JS/CSS 均计入；当时 native 门禁包含 96 项 MoonBit 测试，源码比例约 87.31%（source audit 口径）；这两个数字随后已增长，见上方的时点说明。
-- `scripts/platform_smoke.sh` 已纳入门禁：当前 POSIX 文件适配 C 语法检查通过；Windows 分支只有在调用方提供 `WINDOWS_CC` 和 Windows sysroot 时才执行，默认明确显示 skipped。
+- `scripts/platform_smoke.sh` 已纳入门禁：POSIX 文件适配 C 语法检查通过；Windows 分支已随 WASM 为核心转向移除，不再有 WINDOWS_CC 路径。
 
 实际浏览器检查另见 [视觉记录](visual-mbtmd.md)，富文本截图保留在 docs/reading-rich-wide.png 和 docs/reading-rich-mobile.png。`verify.sh` 经 scripts/reading_fixture.py `--with-map` 在有 Chrome 时自动运行纯 Python 标准库的 headless CDP 检查（scripts/reading_map_browser_cdp.py，2026-10-30 起以 `--window-size=1280,800` 固定视口，替代原先随环境漂移的默认窗口——Linux 下字体度量差异曾使溢出断言在 800px 级默认宽度上翻转），覆盖快照图渲染、边/节点/共享来源虚线、节点点击路由、水平不溢出（失败时报告最宽的越界元素）与 console 零错误；无 Chrome 二进制时显式跳过。Markdown/HTML、格式化切换、代码高亮、离线图片、隔离、深链和手机布局由浏览器工具执行的记录覆盖，不声称全部进入自动门禁。
 
 精简 Web 服务再次通过同一浏览器脚本（使用分配的 loopback 端口），宽屏与手机检查通过，运行时错误 0，无外部依赖请求，见 [Web 浏览器记录](web-browser-check.json)、[宽屏截图](web-wide.png)和[手机截图](web-mobile.png)。绕过服务读取前的引擎验证，会使正文漂移后的 `/api/status` 断言失败；恢复后真实 HTTP 测试通过。
 
-小样报告不能充当任意资料的质量保证。未验证的范围包括：多领域模型生成质量/成本、跨平台规模阈值和高并发排队服务、Windows/Linux native 分发、完整 CommonMark/YAML/Unicode 语言分词、浏览器中的原位知识写入与实时排名、大包/压缩容器和 WASM 内核内置持久事务。Node WASM 文件快照适配器的 PID 锁、死亡锁回收、原子替换、重启恢复和顺序冲突已由 `wasm_session_e2e.mjs` 覆盖；Web Locks + localStorage 适配器的哈希、CAS 冲突和无锁拒绝由 `wasm_web_storage_e2e.mjs` 覆盖。Windows native 分支已写入 `platform/fs.c`，但当前环境缺少 Windows sysroot，未纳入通过证据。OKF/Markdown 往返和普通容器路径已由独立磁盘测试覆盖；向量计划提供页面前缀，实际模型推理由外部调用方提供。
+小样报告不能充当任意资料的质量保证。未验证的范围包括：多领域模型生成质量/成本、跨平台规模阈值和高并发排队服务、完整 CommonMark/YAML/Unicode 语言分词、浏览器中的原位知识写入与实时排名、大包/压缩容器和 WASM 内核内置持久事务。Node WASM 文件快照适配器的 PID 锁、死亡锁回收、原子替换、重启恢复和顺序冲突已由 `wasm_session_e2e.mjs` 覆盖；Web Locks + localStorage 适配器的哈希、CAS 冲突和无锁拒绝由 `wasm_web_storage_e2e.mjs` 覆盖。Windows native 分支已从 `platform/fs.c`/`platform/socket.c` 移除（跨平台由 WASM 运行时承担）；OKF/Markdown 往返和普通容器路径已由独立磁盘测试覆盖；向量计划提供页面前缀，实际模型推理由外部调用方提供。
 
 2026-10-16 按用户指示移除本次桌面集成 worktree、分支、桌面专用适配/测试/报告与相关分期任务；原应用 checkout 未修改。此前桌面测试数字不作为本独立引擎当前门禁记录。
 

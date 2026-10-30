@@ -29,7 +29,7 @@ JSON 接口保留 native 的 `{ok,result}` / `{ok:false,error}` 信封。除 `/a
 
 参数约束与 Python 版一致：`/api/page` 只接受一个非空 `id`；`/api/search` 的 `q` 必填（可与空 `q` 的 `query_vector`/`vector_candidates` 同用），每个参数最多出现一次，查询字段最多 12 个；`limit`/`budget`/`hops` 按十进制整数解析；`query_vector`/`vector_candidates` 必须是 JSON 对象。空间、维度、候选页面、模型隔离及 `limit`(1..100)/`budget`(1..65536)/`hops`(0..2)/`dedup`/`spread`/provider 的合法性仍由 MoonBit 引擎校验，Web 层不做第二套检索逻辑；非法取值以 409 返回。
 
-当前边界：无 TLS、无访问控制（loopback 专用）；串行逐请求处理（一次一个连接，每个连接单请求，响应固定 `Connection: close`），无每请求超时——浏览器或本机工具并发打开多条连接时会排队，恶意慢客户端可占住服务；HTTP 解析是面向本服务的最小实现（请求行/Host/头与 Content-Length 上限、绝对形式 target 与 16KiB 长度拒绝），不是通用 HTTP 服务器；`platform/socket.c` 的 Winsock 分支按 POSIX 镜像编写并标注，尚未在 Windows 环境验证。
+当前边界：无 TLS、无访问控制（loopback 专用）；串行逐请求处理（一次一个连接，每个连接单请求，响应固定 `Connection: close`），无每请求超时——浏览器或本机工具并发打开多条连接时会排队，恶意慢客户端可占住服务；HTTP 解析是面向本服务的最小实现（请求行/Host/头与 Content-Length 上限、绝对形式 target 与 16KiB 长度拒绝），不是通用 HTTP 服务器；`platform/socket.c` 为 POSIX only（原 Winsock 分支已随 Windows 平台收敛移除），跨平台由 WASM 运行时承担。
 
 Markdown、HTML、图片、代码高亮与格式化沿用 [文学化阅读器](visual-mbtmd.md)。页面里的搜索框筛选当前快照；`/api/search` 使用引擎排名，两者语义分别保留。修改原始资料或正文后，用 CLI/MCP 显式登记，或另开已有 watcher：
 
