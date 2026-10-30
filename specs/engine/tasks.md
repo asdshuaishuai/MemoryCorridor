@@ -388,7 +388,7 @@
 - [x] 外部向量交换载荷：JSON 数组与 little-endian f32 Base64 双编码、长度/有限值/二选一校验；provider 注册、心跳、撤销、空间绑定、当前页面版本与 embedding 输入文本校验、持久 provider-job open/claim/heartbeat/complete/cancel/fail、租约抢占与超时失败、embedding 原子向量发布、search 候选校验和审计已通过 native e2e，provider 进程的实际推理仍在引擎外。
 - [x] 外部 Agent 编写协议：上下文版本令牌、结构化草稿整批校验、编译提交和真实磁盘竞态验证；见 [编写协议](authoring.md)。
 - [x] 精简 Web 服务及真实 HTTP/浏览器验收；见 [Web 规格](web.md)。
-- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部因依赖解析失败（工作流缺 `moon install` 步骤），随后补的 `moon install` 又被新版工具链移除无参数形式打破（运行 41046091111），本会话改为两个 moon job 仅 `moon update`、依赖按需拉取并以本机验证，并新增 `.moonbit-version` 把 CI 工具链固定在本机验证过的 `0.10.14+7d59c7ec9`（moon 0.1.20260920）以止住 latest 漂移；Linux 绿运行与 `memorycorridor-native-linux` 分发包 artifact 已由运行 41050582660 取得（2026-10-30），Windows 运行时/分发证据仍缺——`windows-native` 现稳定执行到 native 链接，败于 `platform/socket.c` 的 Winsock 符号未解析（缺 ws2_32 链接）。
+- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部失败后，两个 moon job 改为仅 `moon update` 按需拉取，并以 `.moonbit-version` 固定在本机验证过的 `0.10.14+7d59c7ec9`（moon 0.1.20260920）止住 latest 漂移；Linux 运行与 artifact 证据已取得——首个绿 linux job 为运行 41050582660（2026-10-30），本文档提交上的[运行 41054173804](https://github.com/asdshuaishuai/MemoryCorridor/actions/runs/41054173804) 复现同一结论并产出 `memorycorridor-native-linux` 分发包 artifact；Windows 差距仍在：`windows-native` 为 failure，稳定败于 native 链接的 Winsock 未解析符号（`platform/socket.c` 14 个 `__imp_*`，缺 ws2_32 链接），Windows 运行时/分发证据未取得，整项保持未勾选。
 - [x] 受限文学化 IR 一致性矩阵：缩进/Tab/波浪线/超长围栏、短闭合与脏闭合拒绝、信息串变体、空块、CRLF、EOF 辅助块、`replace_first_checked` 逐字节保留、目录/视图规范化往返与字段边界、native/WASM 同一尾随规则拒绝，以及 400 个随机文档 + 320 个确定性变异的无 panic/幂等检查；见 [验证记录](../../docs/verification.md)。
 - [x] 当前实现的 check 零警告、纯函数/磁盘/MCP/WASM 门禁与 >85% 有效源码占比核对。
 - [ ] 完整分期验收与跨平台压力：Windows/Linux 运行时证据和跨机器阈值仍未取得（见上一条），本机矩阵已覆盖但完整分期验收未完成。
@@ -777,5 +777,18 @@
   文档对账：README 快速入门、docs/web.md 重写（无 TLS、loopback、串行逐请求、无每请求超时、
   Winsock 未验证）、docs/release.md、specs/engine/design.md 与 web.md、本审计「精简 Web」行
   与第 7 行占比（重跑 source_audit 实测 0.9028770854613551）。
+- [x] **2026-10-30 CI 首绿落账（[运行 41054173804](https://github.com/asdshuaishuai/MemoryCorridor/actions/runs/41054173804)）**：
+  本会话修复已全部落地——CI 依赖修复（两个 moon job 仅 `moon update` 按需拉取 +
+  `.moonbit-version` 固定工具链）、快照图浏览器检查去 Node 化（纯 Python CDP 脚本，
+  固定 1280x800 视口并自报越界元素）、lint 新谓词 `evidence_reference_unresolvable`
+  （49 个谓词全部被测试引用，变异 75 → 76）、精简 Web 服务 MoonBit 化（`serve.py` 删除，
+  `web` 包 + `platform/socket.c`）。该运行触发于本文档提交（4d87722），结论：
+  linux=success——`./scripts/verify.sh` 全量门禁 + release 分发包构建校验通过，
+  `memorycorridor-native-linux` artifact（10,625,826 字节 ≈ 10.6 MB）已产出；
+  `windows-filesystem`=success；`windows-native`=failure。首个绿 linux job 为上一条的
+  运行 41050582660，本条以当前提交上的运行落账。Windows 现状：`windows-native` 仍稳定
+  败于 native 链接——`platform/socket.c` 的 14 个 Winsock `__imp_*` 符号未解析
+  （LNK1120，缺 ws2_32 链接），无 Windows 环境实测修复；「Linux/Windows CI 与多平台
+  引擎分发」整项保持未勾选，Windows native 运行时/分发证据仍是遗留项。
 - 本项目不包含桌面应用与专用桌面适配；此前原型及验收脚本已删除。
 - 完整 YAML/CommonMark、二进制原件抽取、模型生成的广泛质量/成本与全平台分发均未借局部测试标为完成；模型调用由外部调用方提供，MoonBit 核心不访问模型或网络。
