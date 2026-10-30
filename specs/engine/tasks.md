@@ -388,7 +388,7 @@
 - [x] 外部向量交换载荷：JSON 数组与 little-endian f32 Base64 双编码、长度/有限值/二选一校验；provider 注册、心跳、撤销、空间绑定、当前页面版本与 embedding 输入文本校验、持久 provider-job open/claim/heartbeat/complete/cancel/fail、租约抢占与超时失败、embedding 原子向量发布、search 候选校验和审计已通过 native e2e，provider 进程的实际推理仍在引擎外。
 - [x] 外部 Agent 编写协议：上下文版本令牌、结构化草稿整批校验、编译提交和真实磁盘竞态验证；见 [编写协议](authoring.md)。
 - [x] 精简 Web 服务及真实 HTTP/浏览器验收；见 [Web 规格](web.md)。
-- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部因依赖解析失败（工作流缺 `moon install` 步骤），本会话已修复两个 moon job 的依赖安装步骤并以全新目录模拟验证通过，绿运行与 Windows 运行时/分发证据仍待推送后由 CI 取得。
+- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部因依赖解析失败（工作流缺 `moon install` 步骤），随后补的 `moon install` 又被新版工具链移除无参数形式打破（运行 41046091111），本会话改为两个 moon job 仅 `moon update`、依赖按需拉取并以本机验证，绿运行与 Windows 运行时/分发证据仍待推送后由 CI 取得。
 - [x] 受限文学化 IR 一致性矩阵：缩进/Tab/波浪线/超长围栏、短闭合与脏闭合拒绝、信息串变体、空块、CRLF、EOF 辅助块、`replace_first_checked` 逐字节保留、目录/视图规范化往返与字段边界、native/WASM 同一尾随规则拒绝，以及 400 个随机文档 + 320 个确定性变异的无 panic/幂等检查；见 [验证记录](../../docs/verification.md)。
 - [x] 当前实现的 check 零警告、纯函数/磁盘/MCP/WASM 门禁与 >85% 有效源码占比核对。
 - [ ] 完整分期验收与跨平台压力：Windows/Linux 运行时证据和跨机器阈值仍未取得（见上一条），本机矩阵已覆盖但完整分期验收未完成。
@@ -694,6 +694,14 @@
   `moon update` + `moon install` + `moon check`，确认克隆后缺索引/缺依赖的状态能自愈。
   绿运行与 Linux/Windows 分发 artifact 仍待推送后由 CI 取得——此前 26 次运行
   **从未产出过任何 artifact**，旧文档「Ubuntu job 产出 Linux 分发包」的写法与事实相反。
+- [x] **2026-10-30 修复运行 41046091111：最新 moon 工具链移除无参数 `moon install`（改版后
+  `install <SOURCE>` 为必选参数，用于全局安装二进制包），两个 moon job 的
+  「Sync the MoonBit registry and install dependencies」步骤直接 exit 2**。修复：两个 job
+  改为仅 `moon update`（注册表索引同步仍是必需的），`moon.mod` 声明的依赖由
+  `moon check/test/build` 按需拉取到 `.mooncakes/`——本机把 `.mooncakes/` 移走后
+  `moon update` + `moon check --target native --deny-warn core` 实测自动解析并重新下载
+  `moonbitstack/moonyaml@0.1.1`；README 首次构建代码块、README/implementation-audit/tasks
+  的 CI 现状表述同步。Windows 侧同一根因同一修法，但无 Windows 环境实测。
 - [x] **浏览器检查去 Node 化**：工具链约束改为尽量不引入外部运行时后，原 Node 版
   CDP 检查脚本重写为纯 Python 标准库的
   `scripts/reading_map_browser_cdp.py`（socket/json/sys/subprocess/time 等）：

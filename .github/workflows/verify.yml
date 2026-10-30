@@ -19,11 +19,9 @@ jobs:
         run: |
           curl --fail --silent --show-error --location https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
-      - name: Sync the MoonBit registry and install dependencies
+      - name: Sync the MoonBit registry (dependencies are fetched on demand)
         shell: bash
-        run: |
-          moon update
-          moon install
+        run: moon update
       - name: Verify native, WASM, Web and protocol boundaries
         shell: bash
         run: NODE_BINARY=node ./scripts/verify.sh
@@ -53,11 +51,9 @@ jobs:
           Invoke-WebRequest -Uri https://cli.moonbitlang.com/install/powershell.ps1 -OutFile install.ps1
           ./install.ps1
           "$HOME\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Sync the MoonBit registry and install dependencies
+      - name: Sync the MoonBit registry (dependencies are fetched on demand)
         shell: pwsh
-        run: |
-          moon update
-          moon install
+        run: moon update
       - name: Check, test and build the native engine on Windows
         shell: pwsh
         run: |
