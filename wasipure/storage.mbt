@@ -6,8 +6,7 @@
 // The lease lock replaces flock (absent from WASI P1): a `.corridor-lock`
 // lockfile holds a monotonic-clock expiry; takeover after expiry is allowed.
 // `check` cannot spawn the compiler under pure WASI and reports
-// `wasi_compile_check_requires_host` — wiring the continuation protocol is
-// the next slice.
+// `compile_required` — see the receipt protocol below.
 
 const LEASE_NS : UInt64 = 60_000_000_000UL // 60 s
 
