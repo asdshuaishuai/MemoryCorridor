@@ -29,7 +29,7 @@ fn wasi_components(path : String) -> String raise @base.Fault {
 
 // Open a path under the root. Missing anything maps to Missing (None reads);
 // everything else maps to Refused.
-enum WasiOpen {
+priv enum WasiOpen {
   Opened(Int)
   Absent
 }
@@ -48,24 +48,21 @@ fn wasi_open(rel : String, oflags : Int, directory : Bool) -> WasiOpen raise @ba
   let (out, out_ptr) = wasi_malloc(4)
   let err = path_open_ffi(ensure_root(), 0, ptr, encoded.length(), flags | oflags,
     rights, dir_rights, 0, out_ptr)
-  if err.to_int() == WASI_EOENT { return Absent }
+  let value = load32(out_ptr)
+  ignore(out)
+  if err.reinterpret_as_int() == WASI_EOENT { return Absent }
   if err != 0 { raise @base.Fault("wasi_open_refused: errno " + err.to_string() + ": " + rel) }
-  Opened(load32(out_ptr))
+  Opened(value)
 }
 
 fn wasi_close(fd : Int) -> Unit {
   let _ = fd_close_ffi(fd)
 }
 
-fn wasi_is_dir(fd : Int) -> Bool {
-  let (buf, buf_ptr) = wasi_malloc(64)
-  if fd_filestat_get_ffi(fd, buf_ptr) != 0 { return false }
-  load8_wasip1(buf_ptr + 56) == FILETYPE_DIRECTORY
-}
-
 fn wasi_file_size(fd : Int) -> Int {
   let (buf, buf_ptr) = wasi_malloc(64)
   if fd_filestat_get_ffi(fd, buf_ptr) != 0 { return -1 }
+  ignore(buf)
   let mut size : UInt64 = 0UL
   for i in 0..<8 { size = size | (load8_wasip1(buf_ptr + 24 + i).to_uint64() << (i * 8)) } // little-endian
   if size > 16777216UL { -2 } else { size.to_int() }
@@ -76,6 +73,9 @@ fn wasi_read_whole(fd : Int) -> Bytes {
   let (buf, buf_ptr) = wasi_malloc(65536)
   let (iovs, iovs_ptr) = wasi_iov(buf)
   let (nr, nr_ptr) = wasi_malloc(4)
+  ignore(iovs)
+  ignore(nr)
+  ignore(buf)
   while true {
     if fd_read_ffi(fd, iovs_ptr, 1, nr_ptr) != 0 { break }
     let n = load32(nr_ptr)
@@ -89,6 +89,8 @@ fn wasi_read_whole(fd : Int) -> Bytes {
 fn wasi_write_whole(fd : Int, bytes : Bytes) -> Unit raise @base.Fault {
   let (iovs, iovs_ptr) = wasi_iov(bytes)
   let (nw, nw_ptr) = wasi_malloc(4)
+  ignore(iovs)
+  ignore(nw)
   let mut written = 0
   let total = bytes.length()
   while written < total {
@@ -98,8 +100,9 @@ fn wasi_write_whole(fd : Int, bytes : Bytes) -> Unit raise @base.Fault {
     written += n
     if written < total {
       // advance the iovec to the remaining bytes
-      store32(iovs_ptr, bytes2ptr(bytes) + written)
-      store32(iovs_ptr + 4, total - written)
+      ignore(iovs)
+      let _ = store32(iovs_ptr, bytes2ptr(bytes) + written)
+      let _ = store32(iovs_ptr + 4, total - written)
     }
   }
   let _ = fd_sync_ffi(fd)
@@ -132,7 +135,12 @@ pub fn wasi_digest(path : String) -> String? raise @base.Fault {
 }
 
 pub fn wasi_write_bytes(path : String, bytes : Bytes) -> Unit raise @base.Fault {
-  // Atomic like platform/fs.c: write a sibling temp file, then rename over.
+  // Atomic like platform/fs.c: create the parent chain, write a sibling temp
+  // file, then rename over.
+  match path.rev_split_once("/") {
+    Some((parent, _)) => wasi_mkdirs(parent.to_owned())
+    None => ()
+  }
   let tmp = path + ".corridor-tmp"
   match wasi_open(tmp, OFLAG_CREAT, false) {
     Absent => raise @base.Fault("wasi_write_refused: " + path)
@@ -141,19 +149,12 @@ pub fn wasi_write_bytes(path : String, bytes : Bytes) -> Unit raise @base.Fault 
       wasi_close(fd)
     }
   }
-  let rel = wasi_components_for_rename(path)
-  let _ = rel
   let (encoded_tmp, tmp_ptr) = { let e = @utf8.encode(tmp); (e, bytes2ptr(e)) }
   let (encoded, path_ptr) = { let e = @utf8.encode(path); (e, bytes2ptr(e)) }
   let root = ensure_root()
   if path_rename_ffi(root, tmp_ptr, encoded_tmp.length(), root, path_ptr, encoded.length()) != 0 {
     raise @base.Fault("wasi_rename_failed: " + path)
   }
-}
-
-// Rename needs raw parts; kept as a helper so the tuple above stays local.
-fn wasi_components_for_rename(path : String) -> String raise @base.Fault {
-  wasi_components(path)
 }
 
 pub fn wasi_write(path : String, text : String) -> Unit raise @base.Fault {
@@ -196,6 +197,8 @@ pub fn wasi_files(directory : String) -> Array[String] raise @base.Fault {
       let result : Array[String] = []
       let (buf, buf_ptr) = wasi_malloc(4096)
       let (nr, nr_ptr) = wasi_malloc(4)
+      ignore(buf)
+      ignore(nr)
       let mut cookie : UInt64 = 0UL
       let mut more = true
       while more {
@@ -255,7 +258,33 @@ pub fn wasi_unlock() -> Unit raise @base.Fault {
   let _ = path_unlink_file_ffi(ensure_root(), bytes2ptr(encoded), encoded.length())
 }
 
+// Compile verification without a spawned compiler: the calling side runs
+// `moon check --deny-warn --target-dir .corridor/compiler <path>` itself and
+// re-sends the op with receipts:[{path, sha256, ok}]. A receipt matches only
+// against the CURRENT bytes of the file (sha256 computed here), so a stale
+// receipt can never vouch for edited content. Without a matching receipt the
+// fault names the file and its sha256 (`compile_required`) so the caller knows
+// exactly what to compile.
+let receipts : Ref[Json] = @ref.new([]) // no receipts: check reports compile_required
+
+pub fn set_receipts(value : Json) -> Unit {
+  receipts.val = value
+}
+
 pub fn wasi_check(path : String) -> Unit raise @base.Fault {
   let _ = wasi_components(path)
-  raise @base.Fault("wasi_compile_check_requires_host: pure-WASI mode cannot spawn moon; wire the compile continuation")
+  wasi_mkdirs(".corridor/compiler")
+  let bytes = match wasi_read_bytes(path) {
+    Some(bytes) => bytes
+    None => raise @base.Fault("moon_check_failed: file missing: " + path)
+  }
+  let sha = @base.sha256_hex(bytes)
+  for receipt in @base.array(receipts.val) {
+    @base.keys(receipt, ["path", "sha256", "ok"])
+    if @base.text(@base.field(receipt, "path")) == path && @base.text(@base.field(receipt, "sha256")) == sha {
+      if @base.boolean(@base.field(receipt, "ok")) { return }
+      raise @base.Fault("moon_check_failed: inspect stderr; install matching MoonBit toolchain")
+    }
+  }
+  raise @base.Fault("compile_required: " + path + " " + sha)
 }

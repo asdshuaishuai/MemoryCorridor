@@ -26,13 +26,14 @@ LAYERS = {
     "index": 3,
     "agent": 4,
     "wasm": 4,
+    "wasipure": 4,
     "platform": 5,
     "nativehost": 5,
     "cli": 6,
     "mcp": 6,
     "web": 6,
 }
-SAME_LAYER_ALLOWED = {("wasm", "agent"), ("nativehost", "platform")}
+SAME_LAYER_ALLOWED = {("wasm", "agent"), ("wasipure", "agent"), ("nativehost", "platform")}
 REQUIRED_LICENSES = {
     "moonbitstack/moonyaml": ROOT / "licenses/moonyaml-Apache-2.0.txt",
     "memorycorridor/vendor/reader": ROOT / "vendor/reader/provenance.json",

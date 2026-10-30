@@ -1,0 +1,22 @@
+import {
+  "memorycorridor/base",
+  "memorycorridor/agent",
+  "memorycorridor/vault",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/ref",
+}
+options(
+  // The pure-WASI service face: imports only wasi_snapshot_preview1, so a
+  // plain `wasmtime run --dir=<vault>` hosts it with no custom host module.
+  // Under native every WASI import compiles as an inert stub so
+  // `moon check --target native --deny-warn` stays green.
+  targets: {
+    "wasi.mbt": ["wasm", "native"],
+    "storage.mbt": ["wasm", "native"],
+    "service.mbt": ["wasm", "native"],
+    "main.mbt": ["wasm"],
+  },
+  link: {
+    "wasm": { "exports": ["_start"], "export-memory-name": "memory" },
+  },
+)
