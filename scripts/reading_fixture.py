@@ -2,8 +2,9 @@
 """Create a real vault for the repeatable rich-reader browser checks.
 
 With --with-map the fixture also renders the graph-enabled view and runs the
-headless-Chrome CDP check (scripts/reading_map_browser_cdp.mjs) when a Chrome
-binary is available; otherwise it prints an explicit skip line.
+headless-Chrome CDP check (scripts/reading_map_browser_cdp.py, pure Python
+standard library) when a Chrome binary is available; otherwise it prints an
+explicit skip line.
 """
 import base64
 import json
@@ -150,7 +151,7 @@ if with_map:
         if chrome is None:
             print('map reader browser check: skipped (no Chrome binary found; set CHROME_BINARY)')
         else:
-            run = subprocess.run(['node', str(REPO / 'scripts/reading_map_browser_cdp.mjs'),
+            run = subprocess.run([sys.executable, str(REPO / 'scripts/reading_map_browser_cdp.py'),
                                   map_artifact.as_uri(), chrome], capture_output=True, text=True, timeout=120)
             if run.returncode != 0:
                 raise SystemExit('map reader browser check failed:\n' + run.stdout + run.stderr)

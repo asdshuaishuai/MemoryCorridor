@@ -44,6 +44,6 @@ open /tmp/corridor-demo/.corridor/viewer.html
 
 同日富文本复验使用 `scripts/reading_fixture.py` 创建真实 vault，执行 `scripts/reading_browser.js`：Markdown 标题/列表/表格、HTML 片段和独立 HTML 样式/表格、本地图片、MoonBit/Python 高亮、JS/JSON 格式化与原始排版切换、中文标题深链刷新、宿主隔离及 390px 布局均通过。运行时错误为 0，无 CDN 请求；截图为 [富文本宽屏](reading-rich-wide.png) 和 [富文本手机](reading-rich-mobile.png)。
 
-2026-10-18 快照图复验：`python3 scripts/reading_fixture.py <dir> --with-map` 渲染启用 `graph` 的视图并运行 `scripts/reading_map_browser_cdp.mjs`（本机 Chrome headless + DevTools 协议，无 Playwright 依赖）。断言快照图节点/边存在、共同来源虚线边存在、有入链节点是路由链接、点击后 hash 更新且只显示一篇正文、无横向溢出、运行时错误为 0；该检查已纳入 `verify.sh`，缺少 Chrome 时显式跳过（`CHROME_BINARY` 可指定）。
+2026-10-18 快照图复验：`python3 scripts/reading_fixture.py <dir> --with-map` 渲染启用 `graph` 的视图并运行 `scripts/reading_map_browser_cdp.py`（本机 Chrome headless + DevTools 协议的纯 Python 标准库实现，无 Playwright / Node 依赖）。断言快照图节点/边存在、共同来源虚线边存在、有入链节点是路由链接、点击后 hash 更新且只显示一篇正文、无横向溢出、运行时错误为 0；该检查已纳入 `verify.sh`，缺少 Chrome 时显式跳过（`CHROME_BINARY` 可指定）。
 
 精简 Web 服务使用相同页面源和 renderer，启动方式见 [Web 服务](web.md)。本轮已在该服务上重跑以上浏览器检查，宽屏/手机均通过，记录见 [检查结果](web-browser-check.json)及[宽屏](web-wide.png)/[手机](web-mobile.png)截图。Web 页面直接使用本次 native 编译输出，没有另写前端页面。
