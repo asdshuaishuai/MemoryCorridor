@@ -23,7 +23,18 @@ const imageSourceEntry = {
 for (const target of ['wasm', 'wasm-gc']) {
   const bytes = await readFile(new URL(`../_build/${target}/debug/build/wasm/wasm.wasm`, import.meta.url));
   const module = new WebAssembly.Module(bytes);
-  assert.deepEqual(WebAssembly.Module.imports(module), []);
+  const imports = WebAssembly.Module.imports(module);
+  if (target === 'wasm') {
+    // The service-capable target imports exactly the corridor-host surface;
+    // every import must come from that module so the host contract stays closed.
+    assert.deepEqual(imports.map(i => `${i.module}.${i.name}`).sort(), [
+      'corridor-host.storage_check', 'corridor-host.storage_list', 'corridor-host.storage_lock',
+      'corridor-host.storage_mkdir', 'corridor-host.storage_read', 'corridor-host.storage_remove',
+      'corridor-host.storage_unlock', 'corridor-host.storage_write',
+    ]);
+  } else {
+    assert.deepEqual(imports, [], 'the pure wasm-gc face must stay import-free');
+  }
   const engine = await loadCorridor(bytes);
   assert(engine.evaluate({op:'tools'}).ok);
   assert(engine.evaluate({op:'page',text:'---\ntype: concept\ntitle: 测试\nsources: ["raw/a.md"]\n---\n正文中文😀'}).ok);
@@ -125,4 +136,4 @@ for (const target of ['wasm', 'wasm-gc']) {
   results.push({tools:engine.evaluate({op:'tools'}),search,unicode,context});
 }
 assert.deepEqual(results[0], results[1]);
-console.log('classic WASM and WASM-GC: integer UTF-8 ABI, zero imports, Unicode, query-aware excerpts, vectors, visual snapshot rendering, failures and dictionary parity passed');
+console.log('classic WASM and WASM-GC: integer UTF-8 ABI, closed corridor-host import surface on the service target, Unicode, query-aware excerpts, vectors, visual snapshot rendering, failures and dictionary parity passed');

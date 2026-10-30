@@ -48,5 +48,6 @@ moon build --target wasm-gc wasm
 "${NODE_BINARY:-node}" scripts/wasm_e2e.mjs
 "${NODE_BINARY:-node}" scripts/wasm_session_e2e.mjs
 "${NODE_BINARY:-node}" scripts/wasm_web_storage_e2e.mjs
+"${WASM_PYTHON:-python3}" scripts/wasm_service_e2e.py
 python3 scripts/source_audit.py
 python3 scripts/mutation_check.py

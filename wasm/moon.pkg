@@ -5,11 +5,18 @@ import {
   "memorycorridor/index",
   "memorycorridor/agent",
   "memorycorridor/visual",
+  "memorycorridor/vault",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/ref",
 }
-options(link: {
-  "wasm": { "exports": ["input_reset", "input_push", "execute", "output_byte"], "export-memory-name": "memory" },
-  "wasm-gc": { "exports": ["input_reset", "input_push", "execute", "output_byte"] },
-})
+options(
+  // The service face needs linear-memory pointers, so host.mbt/service.mbt are
+  // active on the wasm target and compile as inert stubs under native (the
+  // native CLI/MCP path is nativehost); the pure 15-op face stays dual-target.
+  targets: { "host.mbt": ["wasm", "native"], "service.mbt": ["wasm", "native"] },
+  link: {
+    "wasm": { "exports": ["input_reset", "input_push", "execute", "output_byte", "scratch", "input_load", "output_ptr", "service_execute"], "export-memory-name": "memory" },
+    "wasm-gc": { "exports": ["input_reset", "input_push", "execute", "output_byte"] },
+  },
+)

@@ -59,10 +59,15 @@ allowed = {"base": [], "core": ["base"], "decl": ["base", "core"],
            "nativehost": ["base", "agent", "platform", "vault"],
            "cli": ["base", "agent", "nativehost"], "mcp": ["base", "agent", "nativehost"],
            "web": ["base", "nativehost", "platform"],
-           "wasm": ["base", "core", "decl", "index", "agent", "visual"], "pack": ["base"], "interop": ["base"]}
+           "wasm": ["base", "core", "decl", "index", "agent", "visual", "vault"], "pack": ["base"], "interop": ["base"]}
 for package, dependencies in allowed.items():
     imports = re.findall(r'"memorycorridor/([^"]+)"', (ROOT / package / "moon.pkg").read_text())
     assert set(imports) <= set(dependencies), (package, imports)
     if package not in ["platform", "nativehost"]:
         for p in (ROOT / package).glob("*.mbt"):
-            assert 'extern "' not in p.read_text(), p
+            text = p.read_text()
+            # Native C FFI stays exclusive to the platform/nativehost adapters.
+            assert 'extern "c"' not in text, p
+            # The wasm package may use inline-wasm helpers for its host ABI.
+            if package != "wasm":
+                assert 'extern "wasm"' not in text, p

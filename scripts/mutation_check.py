@@ -513,6 +513,37 @@ MUTATIONS = [
      "read-source: metadata, verification, ranges",
      "read_source_e2e.py"),
 
+    # The wasm service boundary (wasm/host.mbt + wasm/service.mbt) is guarded
+    # by scripts/wasm_service_e2e.py driving a rebuilt wasm module; there is no
+    # MoonBit behavioural test for it.
+    ("a missing file must read as absent over the wasm host boundary",
+     "wasm/host.mbt",
+     '    if status == -3 { return None }',
+     '    if status == -1 { return None }',
+     "wasm service e2e:",
+     "wasm_service_e2e.py"),
+
+    ("a refused read must stay refused over the wasm host boundary",
+     "wasm/host.mbt",
+     '    if status == -1 { raise @base.Fault(refused) }',
+     '    if status == -1 { return None }',
+     "wasm service e2e:",
+     "wasm_service_e2e.py"),
+
+    ("the host read retry must grow the buffer to the exact size",
+     "wasm/host.mbt",
+     '      if needed <= cap { raise @base.Fault("host_protocol_invalid: " + path) }\n      cap = needed\n      continue',
+     '      if needed <= cap { raise @base.Fault("host_protocol_invalid: " + path) }\n      cap = 2097152\n      continue',
+     "wasm service e2e:",
+     "wasm_service_e2e.py"),
+
+    ("closing the wasm session must release the vault lock",
+     "wasm/service.mbt",
+     '    if session.held.val { host_unlock() }\n    session.root.val = None',
+     '    session.root.val = None',
+     "wasm service e2e:",
+     "wasm_service_e2e.py"),
+
     ("lint must name an evidence record whose page reference is unresolvable",
      "agent/lint.mbt",
      '''  let view = try { evidence_row_view(store, entries, row) } catch {
@@ -579,12 +610,18 @@ def run_e2e(script):
     """Rebuild, then run an end-to-end script against the fresh binaries.
 
     Skipping the rebuild silently tests the previous binary, which makes every
-    e2e-based mutation look caught when nothing was caught at all.
+    e2e-based mutation look caught when nothing was caught at all. The wasm
+    service module is rebuilt too: scripts/wasm_service_e2e.py instantiates it,
+    so a wasm-boundary mutation would otherwise hide behind a stale module.
     """
-    build = subprocess.run(["moon", "build", "--target", "native", "cli", "mcp"], cwd=REPO,
+    build = subprocess.run(["moon", "build", "--target", "native", "cli", "mcp", "web"], cwd=REPO,
                            capture_output=True, text=True, timeout=900)
     if build.returncode != 0:
         return build.stdout + build.stderr, True
+    wasm = subprocess.run(["moon", "build", "--target", "wasm", "wasm"], cwd=REPO,
+                          capture_output=True, text=True, timeout=900)
+    if wasm.returncode != 0:
+        return wasm.stdout + wasm.stderr, True
     result = subprocess.run([sys.executable, str(REPO / "scripts" / script)], cwd=REPO,
                             capture_output=True, text=True, timeout=900)
     return result.stdout + result.stderr, result.returncode != 0
@@ -597,7 +634,8 @@ def rebuild_clean():
     are pristine but the binaries still carry the last mutation, and the next
     `moon test` reports a failure that does not exist.
     """
-    for args in (["moon", "build", "--target", "native", "cli", "mcp"],
+    for args in (["moon", "build", "--target", "native", "cli", "mcp", "web"],
+                 ["moon", "build", "--target", "wasm", "wasm"],
                  ["moon", "test", "--target", "native", "--build-only"]):
         result = subprocess.run(args, cwd=REPO, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:

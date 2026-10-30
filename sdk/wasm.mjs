@@ -1,6 +1,16 @@
-/** Stateless pure kernels only; disk transactions and literate compilation stay in the native host. */
+/**
+ * Stateless pure kernels only; disk transactions and literate compilation stay
+ * in a host (native adapter or hosts/wasm-host.py). The corridor-host stubs
+ * keep the service-capable wasm target instantiable here; the pure face never
+ * calls them.
+ */
+const corridorHostStubs = Object.fromEntries(
+  ['storage_read', 'storage_write', 'storage_mkdir', 'storage_remove',
+   'storage_list', 'storage_check', 'storage_lock', 'storage_unlock']
+    .map(name => [name, () => -1]));
+
 export async function loadCorridor(bytes) {
-  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const { instance } = await WebAssembly.instantiate(bytes, { 'corridor-host': corridorHostStubs });
   const api = instance.exports;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder('utf-8', { fatal: true });
