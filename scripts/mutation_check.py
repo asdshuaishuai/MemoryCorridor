@@ -556,6 +556,36 @@ MUTATIONS = [
      '''  let view = try { evidence_row_view(store, entries, row) } catch { _ => return }''',
      "lint predicates:",
      "lint_predicates_e2e.py"),
+
+    # The wasipure boundary (pure-WASI storage + receipt protocol) is guarded
+    # by scripts/wasipure_e2e.py driving the rebuilt wasipure module.
+    ("a wasi receipt must match the current bytes, not just the path",
+     "wasipure/storage.mbt",
+     '    if @base.text(@base.field(receipt, "path")) == path && @base.text(@base.field(receipt, "sha256")) == sha {',
+     '    if @base.text(@base.field(receipt, "path")) == path {',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("a wasi receipt with ok false must fail compile verification",
+     "wasipure/storage.mbt",
+     '      if @base.boolean(@base.field(receipt, "ok")) { return }',
+     '      return',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("wasi readdir stride must follow the wasmtime dirent emission",
+     "wasipure/storage.mbt",
+     '          offset += 24 + namlen',
+     '          offset += 21 + namlen',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("wasi write must create the parent chain before the temp file",
+     "wasipure/storage.mbt",
+     '  match path.rev_split_once("/") {\n    Some((parent, _)) => wasi_mkdirs(parent.to_owned())\n    None => ()\n  }',
+     '  None => ()',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
 ]
 
 
@@ -622,6 +652,10 @@ def run_e2e(script):
                           capture_output=True, text=True, timeout=900)
     if wasm.returncode != 0:
         return wasm.stdout + wasm.stderr, True
+    wasipure = subprocess.run(["moon", "build", "--target", "wasm", "wasipure"], cwd=REPO,
+                              capture_output=True, text=True, timeout=900)
+    if wasipure.returncode != 0:
+        return wasipure.stdout + wasipure.stderr, True
     result = subprocess.run([sys.executable, str(REPO / "scripts" / script)], cwd=REPO,
                             capture_output=True, text=True, timeout=900)
     return result.stdout + result.stderr, result.returncode != 0
@@ -636,6 +670,7 @@ def rebuild_clean():
     """
     for args in (["moon", "build", "--target", "native", "cli", "mcp", "web"],
                  ["moon", "build", "--target", "wasm", "wasm"],
+                 ["moon", "build", "--target", "wasm", "wasipure"],
                  ["moon", "test", "--target", "native", "--build-only"]):
         result = subprocess.run(args, cwd=REPO, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:

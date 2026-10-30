@@ -88,14 +88,16 @@ class PureSession:
         self.receipts = {}  # path → sha256 verified by a real moon check
         self.compile_round_trips = 0
 
-    def call(self, op, *, error=None, **args):
+    def call(self, op, *, error=None, receipts=None, auto_receipt=True, **args):
         request = {"op": op, "vault": str(self.root), "request_id": len(CHECKS), **args}
-        if self.receipts:
+        if receipts is not None:
+            request["receipts"] = receipts
+        elif self.receipts:
             request["receipts"] = [{"path": p, "sha256": s, "ok": True} for p, s in sorted(self.receipts.items())]
         self.requests.append(request)
         responses = run_batch(MODULE, self.root, self.requests, self.work)
         last = responses[-1]
-        while True:
+        while auto_receipt:
             # compile_required surfaces two ways: a top-level error envelope,
             # or (for diagnostic ops like lint) an ok:true response with the
             # fault embedded as a catalog_compile violation detail.
@@ -148,6 +150,28 @@ def main():
         assert lint["status"] == "clean" and lint["errors"] == 0, f"lint={json.dumps(lint, ensure_ascii=False)[:600]}"
         s.call("init", error="vault_already_initialized")
         check("init through the compile_required receipt protocol; empty-vault invariants")
+
+        # A forged receipt (path matches, sha256 does not) must be rejected:
+        # wasi_check recomputes sha256 from the CURRENT bytes; lint surfaces
+        # the refusal as an ok:true response with a catalog_compile violation.
+        forged = s.call("lint", auto_receipt=False, receipts=[
+            {"path": "index.mbt.md", "sha256": "0" * 64, "ok": True}])
+        details = [v.get("detail", "") for v in forged.get("violations", [])]
+        assert any(d.startswith("compile_required: index.mbt.md") for d in details), forged
+        check("forged receipt rejected: sha256 recomputed from current bytes")
+
+        # An ok:false receipt (a failed moon check) must not pass verification:
+        # resend with the REAL sha256 but ok:false and expect the refusal to
+        # persist (compile_required embedded in lint violations).
+        lint0 = s.call("lint", auto_receipt=False, receipts=[])
+        details0 = [v.get("detail", "") for v in lint0.get("violations", [])]
+        assert any(d.startswith("compile_required: index.mbt.md") for d in details0), lint0
+        sha = details0[0].split()[2]
+        refused = s.call("lint", auto_receipt=False, receipts=[
+            {"path": "index.mbt.md", "sha256": sha, "ok": False}])
+        refused_details = [v.get("detail", "") for v in refused.get("violations", [])]
+        assert any(d.startswith("moon_check_failed") for d in refused_details), refused
+        check("ok:false receipt fails compile verification")
 
         # Intake loop across stateless batches (idempotent replay per batch).
         (root / "raw/甲.md").write_text("# 光合作用\n叶绿体转换光能。\n", encoding="utf-8")
