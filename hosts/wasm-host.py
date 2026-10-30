@@ -227,7 +227,7 @@ class Storage:
         return (0, b"")
 
 
-def serve(module_path, root):
+def serve(module_path, root, http_port=None):
     from wasmtime import Engine, Store, Module, Linker, Func, FuncType, ValType
 
     storage = Storage(root)
@@ -272,8 +272,59 @@ def serve(module_path, root):
             return status
         return call
 
+    conns = {}
+    conn_ids = iter(range(1000, 100000))
+    listener = None
+    if http_port is not None:
+        import socket as socket_mod
+        listener = socket_mod.socket()
+        listener.setsockopt(socket_mod.SOL_SOCKET, socket_mod.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", http_port))
+        listener.listen(8)
+
+    def sock_accept(_listen_handle, opened_ptr):
+        if listener is None:
+            return -1
+        try:
+            conn, _addr = listener.accept()
+        except OSError:
+            return -1
+        handle = next(conn_ids)
+        conns[handle] = conn
+        mem_write(opened_ptr, handle.to_bytes(4, "little"))
+        return handle
+
+    def sock_recv(handle, buf_ptr, cap):
+        try:
+            data = conns[handle].recv(cap)
+        except (OSError, KeyError):
+            return -1
+        if data:
+            mem_write(buf_ptr, data)
+        return len(data)
+
+    def sock_send(handle, buf_ptr, length):
+        try:
+            conns[handle].sendall(mem_read(buf_ptr, length))
+        except (OSError, KeyError):
+            return -1
+        return length
+
+    def sock_close(handle):
+        conn = conns.pop(handle, None)
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        return 0
+
     i32 = ValType.i32()
     defs = [
+        ("sock_accept", [i32, i32], sock_accept),
+        ("sock_recv", [i32, i32, i32], sock_recv),
+        ("sock_send", [i32, i32, i32], sock_send),
+        ("sock_close", [i32], sock_close),
         ("storage_read", [i32] * 4, buffered(storage.read)),
         ("storage_write", [i32] * 4, lambda p, pl, d, dl: plain(lambda rel: storage.write(rel, mem_read(d, dl)))(p, pl)),
         ("storage_mkdir", [i32] * 2, plain(storage.mkdir)),
@@ -290,6 +341,29 @@ def serve(module_path, root):
     instance = linker.instantiate(store, module)
     exports = instance.exports(store)
     holder["memory"] = exports["memory"]
+
+    if http_port is not None:
+        # HTTP 直跑面：宿主 accept 循环 + 模块 web_handle_connection。
+        # HOST 头校验由模块内部按 port 完成；串行逐连接（与 native web 一致）。
+        print(f"wasipure http serving on 127.0.0.1:{http_port}", flush=True)
+        web = exports["web_handle_connection"]
+        while True:
+            try:
+                conn, _addr = listener.accept()
+            except OSError:
+                break
+            handle = next(conn_ids)
+            conns[handle] = conn
+            try:
+                web(store, handle, http_port, 0)
+            except Exception as exc:
+                print("connection error:", exc, flush=True)
+            conns.pop(handle, None)
+            try:
+                conn.close()
+            except OSError:
+                pass
+        return 0
 
     stdin = sys.stdin.buffer
     while True:
@@ -322,8 +396,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--module", required=True, help="path to the corridor .wasm module")
     parser.add_argument("--root", required=True, help="vault directory the module operates on")
+    parser.add_argument("--serve", type=int, default=None, metavar="PORT",
+                        help="serve the eight read-only HTTP routes on 127.0.0.1:PORT")
     args = parser.parse_args()
-    sys.exit(serve(args.module, args.root))
+    sys.exit(serve(args.module, args.root, args.serve))
 
 
 if __name__ == "__main__":

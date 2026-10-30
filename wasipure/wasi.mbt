@@ -67,6 +67,13 @@ fn path_rename_ffi(_fd : Int, _old_path : Int, _old_len : Int, _new_fd : Int, _n
 fn clock_time_get_ffi(clock_id : Int, precision : UInt64, time : Int) -> UInt = "wasi_snapshot_preview1" "clock_time_get"
 #cfg(target="native")
 fn clock_time_get_ffi(_clock_id : Int, _precision : UInt64, _time : Int) -> UInt { 0 }
+
+// ---- argv（--serve 模式解析）----
+#cfg(target="wasm")
+fn args_sizes_get_ffi(argc : Int, argv_buf_size : Int) -> UInt = "wasi_snapshot_preview1" "args_sizes_get"
+#cfg(target="wasm")
+fn args_get_ffi(argv : Int, argv_buf : Int) -> UInt = "wasi_snapshot_preview1" "args_get"
+
 #cfg(target="wasm")
 #owned(bytes)
 extern "wasm" fn bytes2ptr(bytes : Bytes) -> Int = #|(func (param i32) (result i32) local.get 0)

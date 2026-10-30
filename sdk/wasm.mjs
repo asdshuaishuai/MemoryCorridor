@@ -6,7 +6,8 @@
  */
 const corridorHostStubs = Object.fromEntries(
   ['storage_read', 'storage_write', 'storage_mkdir', 'storage_remove',
-   'storage_list', 'storage_check', 'storage_lock', 'storage_unlock']
+   'storage_list', 'storage_check', 'storage_lock', 'storage_unlock',
+   'sock_recv', 'sock_send']
     .map(name => [name, () => -1]));
 
 export async function loadCorridor(bytes) {

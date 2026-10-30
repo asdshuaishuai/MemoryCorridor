@@ -28,6 +28,7 @@ for (const target of ['wasm', 'wasm-gc']) {
     // The service-capable target imports exactly the corridor-host surface;
     // every import must come from that module so the host contract stays closed.
     assert.deepEqual(imports.map(i => `${i.module}.${i.name}`).sort(), [
+      'corridor-host.sock_recv', 'corridor-host.sock_send',
       'corridor-host.storage_check', 'corridor-host.storage_list', 'corridor-host.storage_lock',
       'corridor-host.storage_mkdir', 'corridor-host.storage_read', 'corridor-host.storage_remove',
       'corridor-host.storage_unlock', 'corridor-host.storage_write',

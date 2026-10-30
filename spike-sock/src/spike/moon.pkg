@@ -1,0 +1,4 @@
+import { "moonbitlang/core/encoding/utf8" }
+options(link: {
+  "wasm": { "exports": ["_start"], "export-memory-name": "memory" },
+})
