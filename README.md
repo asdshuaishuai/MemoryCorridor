@@ -27,13 +27,15 @@
 - `embedding-plan` 按模型空间和页面哈希返回增量向量任务；外部调用方生成后提交，核心使用默认暴力搜索或替换后端。provider 支持注册、心跳、撤销、空间绑定和持久 job open/complete/cancel/fail；embedding job 完成时原子发布 `vectors/`，失败终态保留原因，实际模型进程仍由宿主运行。向量提交和查询支持可读的 `values` JSON 数组，以及 little-endian f32 Base64 的 `values_b64` 载荷。见 [向量供给](specs/engine/embedding.md)。
 - 精简 Web 服务直接提供编译后的阅读页及 status/pages/page/search/tree/topics/lint JSON 接口，固定启动时指定的 vault；search 的预算、图扩展、去重/配额策略、向量与 provider 参数与 native 引擎对齐；`lint` 可在正文漂移或缓存损坏时返回只读诊断。见 [Web 服务说明](docs/web.md)。
 - `scripts/release.py` 生成包含 CLI/MCP、精简 Web/监听适配器、协议文档、许可、逐文件清单和 SHA-256 的确定性 native 分发包；它只打包当前主机已构建的目标，不宣称跨平台交叉编译。见 [分发说明](docs/release.md)。
-- `.github/workflows/verify.yml` 在 Ubuntu 执行完整验证，在 Windows 检查文件系统适配器语法；Windows 的 native MoonBit 运行时证据仍需目标工具链。见 [CI 说明](docs/ci.md)。
+- `.github/workflows/verify.yml` 有三个 job：Ubuntu 跑 `./scripts/verify.sh` 全量验证并构建上传 `memorycorridor-native-linux` 分发包，`windows-native` 在 Windows 做原生 check/test/build 并上传 `memorycorridor-native-windows`，`windows-filesystem` 用 clang-cl 检查 `platform/fs.c` 语法。CI 迄今的运行中，两个构建 job 都因注册表依赖解析失败（`moonbitstack/moonyaml` 未找到）退出；加入 `moon update`/`moon install` 步骤后尚待首个绿运行。见 [CI 说明](docs/ci.md)。
 - `scripts/scale_benchmark.py` 可在真实临时 vault 上测量不同规模的关键词/暴力向量/混合检索和 vault 锁竞争；结果是本机诊断基线，不是跨平台 SLA。见 [规模说明](specs/engine/scale.md)。
 - OKF v0.2 与普通 Markdown 可从 `imports/*` 导入、向 `exports/*` 导出；原始文件、未知元数据和断链审核记录保留，导出拒绝覆盖冲突。见 [互操作设计](specs/engine/interop.md)。
 
-需要已安装 MoonBit 工具链；当前验证 macOS/POSIX。首次构建：
+需要已安装 MoonBit 工具链；当前验证 macOS/POSIX。首次构建（克隆后先同步注册表索引并安装 `moon.mod` 声明的依赖）：
 
 ```sh
+moon update
+moon install
 moon build --target native cli mcp
 mkdir -p /tmp/my-vault
 _build/native/debug/build/cli/cli.exe
@@ -46,16 +48,16 @@ _build/native/debug/build/cli/cli.exe
 {"op":"list-tools"}
 ```
 
-将资料放进 `/tmp/my-vault/raw/` 后调用 scan，通过 context / analysis-submit / staging / commit 完成摄入。参数、页面格式、监听和失败恢复详见 [协议与工单](docs/protocol.md)。外部模型与二进制文档抽取由宿主提供。
+将资料放进 `/tmp/my-vault/raw/` 后调用 scan，通过 context / analysis-submit / draft-submit / commit 完成摄入（draft-submit 把结构化页面写入 staging，commit 校验并发布）。参数、页面格式、监听和失败恢复详见 [协议与工单](docs/protocol.md)。外部模型与二进制文档抽取由宿主提供。
 
 运行精简 Web 服务：
 
 ```sh
 python3 scripts/make_demo.py /tmp/corridor-demo
-python3 scripts/serve.py /tmp/corridor-demo --port 8768
+_build/native/debug/build/web/web.exe /tmp/corridor-demo --port 8768
 ```
 
-浏览器打开 `http://127.0.0.1:8768/`。也可直接离线打开 `.corridor/viewer.html`。页面源仍是 vault 中的 `views/library.mbt.md`，没有独立前端项目。demo 同时包含主题层、记忆笔记（其中一条绑定了 raw 来源）和一个开放的研究工单，可直接试 `topics`、`memory-prefetch`（可用 `page` 指定某一页作种子）、`inbox`、`memory-list` 和 `read-source`：
+浏览器打开 `http://127.0.0.1:8768/`。也可直接离线打开 `.corridor/viewer.html`。页面源仍是 vault 中的 `views/library.mbt.md`，没有独立前端项目。demo 同时包含四份概念页与一份主题综述页、七条记忆笔记（其中一条绑定 raw 来源，`dating-a`/`dating-b` 构成同条件冲突组，`reworded-a`/`reworded-b` 是仅标点不同的合并候选）、一个开放的研究工单，以及该工单冻结后新增材料造成的 baseline-drift，可直接试 `topics`、`memory-prefetch`（可用 `page` 指定某一页作种子）、`inbox`、`memory-list`、`memory-conflicts`、`memory-candidates` 和 `read-source`：
 
 ```sh
 _build/native/debug/build/cli/cli.exe <<'EOF'
@@ -63,11 +65,13 @@ _build/native/debug/build/cli/cli.exe <<'EOF'
 {"op":"memory-prefetch","vault":"/tmp/corridor-demo","page":"overview"}
 {"op":"inbox","vault":"/tmp/corridor-demo"}
 {"op":"memory-list","vault":"/tmp/corridor-demo"}
+{"op":"memory-conflicts","vault":"/tmp/corridor-demo"}
+{"op":"memory-candidates","vault":"/tmp/corridor-demo"}
 {"op":"read-source","vault":"/tmp/corridor-demo","id":"raw/项目方案.md","start":0,"end":19}
 EOF
 ```
 
-验证入口为 `./scripts/verify.sh`（WASM-GC 需要 Node.js 22+，可通过 NODE_BINARY 指定）。已验证纯函数测试、真实磁盘/编译器/进程锁与恢复、MCP 生命周期和字典/schema 对账、WASM 双产物，以及实际浏览器中的宽屏/手机 Web 交互。源码占比由 `scripts/source_audit.py` 检查，计入 C/Python/JavaScript 适配及内嵌 JS/CSS，排除测试、文档、生成样例和用户数据，门槛为 MoonBit >85%。
+验证入口为 `./scripts/verify.sh`（仅 WASM 实例化 e2e 需要 Node.js 22+ 作为 JS 引擎宿主，可通过 NODE_BINARY 指定；浏览器检查是纯 Python 标准库实现，不再需要 Node）。已验证纯函数测试、真实磁盘/编译器/进程锁与恢复、MCP 生命周期和字典/schema 对账、WASM 双产物，以及实际浏览器中的宽屏/手机 Web 交互。源码占比由 `scripts/source_audit.py` 检查，计入 C/Python/JavaScript 适配及内嵌 JS/CSS，排除测试、文档、生成样例和用户数据，门槛为 MoonBit >85%。
 
 [富文本宽屏截图](docs/reading-rich-wide.png) · [富文本手机截图](docs/reading-rich-mobile.png) · [真实项目检索小样报告](docs/quality-report.json) · [WASM 边界](docs/wasm.md)
 

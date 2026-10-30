@@ -388,7 +388,7 @@
 - [x] 外部向量交换载荷：JSON 数组与 little-endian f32 Base64 双编码、长度/有限值/二选一校验；provider 注册、心跳、撤销、空间绑定、当前页面版本与 embedding 输入文本校验、持久 provider-job open/claim/heartbeat/complete/cancel/fail、租约抢占与超时失败、embedding 原子向量发布、search 候选校验和审计已通过 native e2e，provider 进程的实际推理仍在引擎外。
 - [x] 外部 Agent 编写协议：上下文版本令牌、结构化草稿整批校验、编译提交和真实磁盘竞态验证；见 [编写协议](authoring.md)。
 - [x] 精简 Web 服务及真实 HTTP/浏览器验收；见 [Web 规格](web.md)。
-- [ ] Linux/Windows CI 与多平台引擎分发：Ubuntu job 运行完整门禁并产出 Linux native 分发包/校验和；Windows job（官方 PowerShell 安装器 + native check/test/build + 分发包）与 `clang-cl` 语法 job 已配置，但尚未从本仓执行，缺少 Windows 运行时与分发证据。
+- [ ] Linux/Windows CI 与多平台引擎分发：三个 job 已配置（Ubuntu 完整门禁并产出 Linux native 分发包/校验和、`windows-native`（官方 PowerShell 安装器 + native check/test/build + 分发包脚本）、`clang-cl` 对 `platform/fs.c` 的语法检查）；历史 26 次运行全部因依赖解析失败（工作流缺 `moon install` 步骤），本会话已修复两个 moon job 的依赖安装步骤并以全新目录模拟验证通过，绿运行与 Windows 运行时/分发证据仍待推送后由 CI 取得。
 - [x] 受限文学化 IR 一致性矩阵：缩进/Tab/波浪线/超长围栏、短闭合与脏闭合拒绝、信息串变体、空块、CRLF、EOF 辅助块、`replace_first_checked` 逐字节保留、目录/视图规范化往返与字段边界、native/WASM 同一尾随规则拒绝，以及 400 个随机文档 + 320 个确定性变异的无 panic/幂等检查；见 [验证记录](../../docs/verification.md)。
 - [x] 当前实现的 check 零警告、纯函数/磁盘/MCP/WASM 门禁与 >85% 有效源码占比核对。
 - [ ] 完整分期验收与跨平台压力：Windows/Linux 运行时证据和跨机器阈值仍未取得（见上一条），本机矩阵已覆盖但完整分期验收未完成。
@@ -664,7 +664,7 @@
   触达成本显著高于已补的 12 个。这是实测结论，不是又一次「我觉得够了」。
 - [x] **`agent/` 层 156 个 `@base.fail` 分支的系统扫描**：会话开始时 79 个无任何测试引用。
   已补 66 个，剩余 19 个的触达路径与失败原因逐条登记在
-  [未触达的校验分支](../docs/unreachable-branches.md)——按性质分三类：
+  [未触达的校验分支](../../docs/unreachable-branches.md)——按性质分三类：
   被更早检查遮蔽（7）、竞态类（7）、结构上不可达（5）。
   **判定口径是实际构造攻击并观察引擎真实响应，不是"读了代码觉得不行"。**
   本会话里这个区别很要紧：有十几次"读了代码觉得不可达"的结论，实际一试就通。
@@ -684,5 +684,64 @@
   快照）；用例位置有约束（`scan` 只在早期能登记订单；`overview`/`evidence` 类
   必须放在页面还干净处）；定位事件必须用业务字段不能用目录顺序；
   `another_order_active` 是订单簿的隐形约束。
+- [x] **2026-10-29 修复 CI 依赖解析——GitHub Actions 26 次运行全部失败的根因是工作流缺依赖安装步骤**。
+  26 次运行全部 `failure`：`verify.sh` 首条命令是 `moon check`，而工作流从未执行过
+  `moon update` + `moon install`，依赖解析必败。修复：Ubuntu job 在工具链安装之后、
+  verify 步骤之前新增「Sync the MoonBit registry and install dependencies」（bash）；
+  `windows-native` job 在 PowerShell 安装器之后新增同名步骤（pwsh）；
+  `clang-cl` job 只做 `platform/fs.c` 纯 C 语法检查、不涉 moon 依赖，确认无需改动。
+- [x] **以全新目录模拟验证依赖修复通过**：在干净目录按工作流同序执行
+  `moon update` + `moon install` + `moon check`，确认克隆后缺索引/缺依赖的状态能自愈。
+  绿运行与 Linux/Windows 分发 artifact 仍待推送后由 CI 取得——此前 26 次运行
+  **从未产出过任何 artifact**，旧文档「Ubuntu job 产出 Linux 分发包」的写法与事实相反。
+- [x] **浏览器检查去 Node 化**：工具链约束改为尽量不引入外部运行时后，原 Node 版
+  CDP 检查脚本重写为纯 Python 标准库的
+  `scripts/reading_map_browser_cdp.py`（socket/json/sys/subprocess/time 等）：
+  Chrome 以 `--remote-debugging-port=0` + 临时 profile 启动、从 stderr 解析 DevTools
+  端口；`/json/version` 按响应头 + Content-Length 读响应体——Chrome 忽略
+  `Connection: close` 并保持连接，按 EOF 读响应体会一直超时，首轮误报
+  `chrome debugging endpoint unavailable` 即此因；WebSocket 握手与 Sec-WebSocket-Key
+  校验、客户端帧掩码、文本帧读写、CDP 消息往返、console 错误收集、map 渲染/路由断言、
+  超时与临时 profile 清理全部自实现，语义与原 .mjs 一致，本机 Chrome 154 实测
+  通过（9 项断言全 ok + console.error 反例 FAIL，exit 码正确，profile 无残留），
+  随后删除原脚本；`reading_fixture.py` 直接以 `sys.executable` 调用新脚本，
+  原 `resolve_node()` 探测与 Node 22+ 前置要求一并移除。
+- [x] README.md 首次构建代码块补上 `moon update` + `moon install`（并注明克隆后需先同步索引
+  安装依赖），验证入口一句收窄为仅 WASM 实例化 e2e 需要 Node 22+（JS 引擎宿主），
+  浏览器检查不再要求 Node，30/49/58 行未动；`docs/verification.md` 第 3 行同步注明
+  `NODE_BINARY` 仅用于 WASM e2e（`verify.sh` 在 48-50 行消费它）。
+- [x] **lint 谓词补到 49 个且全部被测试引用**：新增 `evidence_reference_unresolvable`
+  （schema 合法但引用页面不可解析的 evidence 记录），`lint_predicates_e2e.py` 触达
+  **25 个**并全部还原（复跑输出 `lint predicates: 25 reached by editing files and restored`），
+  变异总数 75 → 76。此前审计文档写「48 个谓词中 10 个触达」，两个数字都已过时。
+- [x] **文档对账修正 `specs/engine/implementation-audit.md` 的三处失真**：
+  ① 分支可达性一段是旧结论残留——「191 个分支中 164 触达、约 33 外部不可达」与
+  `docs/unreachable-branches.md`（191/191 全部被引用、登记 0 个；19 个不可达分支在
+  `agent/` 层：被更早检查遮蔽 7、竞态类 7、结构上不可达 5）、`docs/verification.md`、
+  乃至本清单上方「实测推翻 `*_event_identity` 不可达」的记录直接矛盾，
+  且 164+33=197 > 191，算术不成立——旧段把早已被推翻的死路推理又搬了回来；
+  ② CI 表述与事实相反（写成已产出 Linux 分发 artifact），已改为三 job 已配置、
+  依赖安装修复并经全新目录模拟验证、绿运行与分发 artifact 待推送后取得；
+  ③ 更新时间写成未来日期 2026-11-14（改 2026-10-29），且 `../docs/*` 相对链接从
+  `specs/engine/` 出发解析到不存在的 `specs/docs/`，改为 `../../docs/`；
+  本清单 `unreachable-branches.md` 的同类断链一并修正。
+- [x] **精简 Web 服务去 Python 化：`serve.py` 改为 MoonBit 原生 `web` 包**：新增
+  `platform/socket.c` + `platform/socket.mbt`（POSIX socket/bind/listen/accept/recv/send/close
+  完整实现，`SIGPIPE` 忽略 + `EINTR` 重试；Winsock 分支按 POSIX 镜像并在注释标注未验证，
+  Windows 语法检查随 `platform_smoke.sh` 纳入）；`web/main.mbt` 实现最小 HTTP/1.x
+  （请求行/Host/头/查询解析，urlsplit 方案与 `parse_qs(strict, keep_blank, max 12)` 语义镜像，
+  16KiB target、100 头、131KiB 头块上限），八条只读路由经 `nativehost` 进程内派发，
+  每请求独立会话「打开-校验-派发-释放」vault 锁，不长期持有；启动序 verify →（缺声明时）
+  view-init → render-view，失败打印诊断退出；响应固定 `Connection: close` 逐请求处理。
+  `scripts/serve.py` 删除；`web_e2e.py` 改为驱动 `_build/.../web/web.exe`，
+  **全部既有断言原样保留并实跑通过**（native parity、编译页、路由/参数边界、
+  未知路由 404、缺参 400、POST 405、Host 隔离 403、绝对形式 target 403、路径穿越 404、
+  正文漂移 lint/status/page//、无效页面声明不覆盖旧输出）；
+  `release.py` 载荷以 `bin/memorycorridor-web` 取代 serve.py，`release_e2e.py` 通过；
+  `source_audit.py` 计入 `web` 包并移除 serve.py 适配项，`dep_audit.py` 增补
+  `web: 层6 → base/nativehost/platform`；verify.sh 构建行加 `web`。
+  文档对账：README 快速入门、docs/web.md 重写（无 TLS、loopback、串行逐请求、无每请求超时、
+  Winsock 未验证）、docs/release.md、specs/engine/design.md 与 web.md、本审计「精简 Web」行
+  与第 7 行占比（重跑 source_audit 实测 0.9028770854613551）。
 - 本项目不包含桌面应用与专用桌面适配；此前原型及验收脚本已删除。
 - 完整 YAML/CommonMark、二进制原件抽取、模型生成的广泛质量/成本与全平台分发均未借局部测试标为完成；模型调用由外部调用方提供，MoonBit 核心不访问模型或网络。
