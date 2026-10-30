@@ -711,6 +711,17 @@
   安装该版本得到 moon 0.1.20260920/914d7da（与本机一致），冷启动 `moon update` +
   `moon check --target native --deny-warn` 通过（exit 0）。遗留：全仓迁移到 `Json(value)`
   需在新工具链下本地验证后另行推进，届时再升 `.moonbit-version`。
+- [x] **2026-10-30 运行 41048766040：固定工具链后 linux job 深入到 verify.sh 尾段
+  （check/test/build、30 个 e2e、record/lint 分支探针全过），仅快照图浏览器检查的
+  「no horizontal overflow」在 CI 首次执行即失败（8/9 断言过）**。根因：CDP 检查启动
+  Chrome 未指定窗口尺寸，溢出断言随环境默认视口与字体度量漂移——本机默认视口
+  innerWidth=756 时 scrollWidth=741，仅以一个滚动条宽度（15px）余量通过，Linux 字体
+  更宽即翻转。修复：检查固定 `--window-size=1280,800` 桌面视口，溢出失败时在断言标签
+  内报告 scrollWidth/innerWidth 与最宽越界元素（本机注入 2000px div 实测诊断输出正确）；
+  本机重跑 `reading_fixture.py --with-map` 9/9 通过。同一运行 `windows-native` 败于
+  `web.exe` 链接：`platform/socket.c` 的 Winsock 符号（`__imp_send`/`__imp_WSAGetLastError`
+  等 14 个）未解析，疑似 Windows 链接缺 ws2_32；无 Windows 环境实测，按约束不赌改，
+  保留为待 Windows 证据的遗留项（非本次硬门槛）。
 - [x] **浏览器检查去 Node 化**：工具链约束改为尽量不引入外部运行时后，原 Node 版
   CDP 检查脚本重写为纯 Python 标准库的
   `scripts/reading_map_browser_cdp.py`（socket/json/sys/subprocess/time 等）：

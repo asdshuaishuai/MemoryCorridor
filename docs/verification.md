@@ -39,7 +39,7 @@
 - 按产品实现的非空非注释行检查 MoonBit >85%，平台/MCP/SDK/监听器/Web 传输及内嵌 JS/CSS 均计入；当时 native 门禁包含 96 项 MoonBit 测试，源码比例约 87.31%（source audit 口径）；这两个数字随后已增长，见上方的时点说明。
 - `scripts/platform_smoke.sh` 已纳入门禁：当前 POSIX 文件适配 C 语法检查通过；Windows 分支只有在调用方提供 `WINDOWS_CC` 和 Windows sysroot 时才执行，默认明确显示 skipped。
 
-实际浏览器检查另见 [视觉记录](visual-mbtmd.md)，富文本截图保留在 docs/reading-rich-wide.png 和 docs/reading-rich-mobile.png。使用 scripts/reading_fixture.py 创建真实 vault，再执行 scripts/reading_browser.js，覆盖 Markdown/HTML、格式化切换、代码高亮、离线图片、隔离、深链和手机布局。它是浏览器工具执行的验证记录，不声称 verify.sh 自动启动浏览器。
+实际浏览器检查另见 [视觉记录](visual-mbtmd.md)，富文本截图保留在 docs/reading-rich-wide.png 和 docs/reading-rich-mobile.png。`verify.sh` 经 scripts/reading_fixture.py `--with-map` 在有 Chrome 时自动运行纯 Python 标准库的 headless CDP 检查（scripts/reading_map_browser_cdp.py，2026-10-30 起以 `--window-size=1280,800` 固定视口，替代原先随环境漂移的默认窗口——Linux 下字体度量差异曾使溢出断言在 800px 级默认宽度上翻转），覆盖快照图渲染、边/节点/共享来源虚线、节点点击路由、水平不溢出（失败时报告最宽的越界元素）与 console 零错误；无 Chrome 二进制时显式跳过。Markdown/HTML、格式化切换、代码高亮、离线图片、隔离、深链和手机布局由浏览器工具执行的记录覆盖，不声称全部进入自动门禁。
 
 精简 Web 服务再次通过同一浏览器脚本（使用分配的 loopback 端口），宽屏与手机检查通过，运行时错误 0，无外部依赖请求，见 [Web 浏览器记录](web-browser-check.json)、[宽屏截图](web-wide.png)和[手机截图](web-mobile.png)。绕过服务读取前的引擎验证，会使正文漂移后的 `/api/status` 断言失败；恢复后真实 HTTP 测试通过。
 

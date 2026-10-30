@@ -244,6 +244,7 @@ def main():
     profile = tempfile.mkdtemp(prefix='corridor-cdp-profile-')
     process = subprocess.Popen(
         [chrome_path, '--headless=new', '--disable-gpu', '--no-first-run',
+         '--window-size=1280,800',
          '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     state = {'port': None}
@@ -323,8 +324,26 @@ def main():
         check(routed['hash'] == routed['href'],
               'graph click updates the hash (' + str(routed['href']) + ' -> ' + str(routed['hash']) + ')')
         check(routed['visible'] == 1, 'graph routing shows one article (' + str(routed['visible']) + ')')
-        check(evaluate('document.documentElement.scrollWidth <= innerWidth'),
-              'no horizontal overflow at current viewport')
+        overflow_free = evaluate('document.documentElement.scrollWidth <= innerWidth')
+        if overflow_free:
+            check(True, 'no horizontal overflow at current viewport')
+        else:
+            detail = evaluate('''(() => {
+  const limit = window.innerWidth;
+  const wide = [...document.querySelectorAll('body *')]
+    .map(el => ({ el, right: el.getBoundingClientRect().right }))
+    .filter(x => x.right > limit + 1)
+    .sort((a, b) => b.right - a.right).slice(0, 3)
+    .map(x => {
+      const el = x.el;
+      const cls = typeof el.className === 'string' ? el.className : (el.className.baseVal || '');
+      return el.tagName.toLowerCase() + (cls ? '.' + cls.trim().split(/\\s+/).join('.') : '')
+        + '→' + Math.round(x.right) + 'px';
+    });
+  return 'scrollWidth=' + document.documentElement.scrollWidth + ' innerWidth=' + limit
+    + (wide.length ? ' widest: ' + wide.join(', ') : ' (no single element past the edge)');
+})()''')
+            check(False, 'no horizontal overflow at current viewport (' + str(detail) + ')')
         check(len(session.console_errors) == 0,
               'no console errors (' + '; '.join(session.console_errors) + ')')
 
