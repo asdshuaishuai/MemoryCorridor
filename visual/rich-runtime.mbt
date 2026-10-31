@@ -130,7 +130,7 @@ fn rich_runtime() -> String {
   #|  else if (format==='image') { preview=document.createElement('img'); preview.alt=path; const asset=snapshot.sources.find(s=>s.path===path); if (asset?.image) preview.src=asset.image; }
   #|  else { preview=document.createElement('pre'); const code=document.createElement('code'); code.className='hljs language-'+language(format); code.innerHTML=paint(source,language(format)); preview.append(code); }
   #|  const details=document.createElement('details'); details.className='original';
-  #|  const summary=document.createElement('summary'); summary.textContent='查看原文'; details.append(summary,original);
+  #|  const summary=document.createElement('summary'); summary.textContent='查看原文'; original.hidden=false; details.append(summary,original);
   #|  rendered.replaceChildren(preview); section.append(details);
   #|  for (const code of rendered.querySelectorAll('pre > code')) codeActions(code);
   #|  for (const table of rendered.querySelectorAll('table')) { const wrap=document.createElement('div'); wrap.className='table-scroll'; table.before(wrap); wrap.append(table); }

@@ -77,16 +77,51 @@ priv struct ParagraphSlice {
 
 fn paragraph_slices(body : String) -> Array[ParagraphSlice] {
   let result : Array[ParagraphSlice] = []
+  // Block-level code regions are atomic: a blank line inside a fenced or
+  // indented code block must not split the block into separate paragraphs
+  // (it would corrupt dedup hashes, byte offsets and the excerpt window).
+  let lines = body.split("\n").map(x => x.to_owned()).to_array()
+  let mask = @core.code_line_mask(lines)
   let mut char_offset = 0
-  for part in body.split("\n\n") {
-    let text = part.to_owned()
-    if !text.is_empty() {
-      let start_byte = @base.utf8_size(body[:char_offset].to_owned())
-      result.push({ text, start_byte, end_byte: start_byte + @base.utf8_size(text) })
-    }
-    char_offset = char_offset + part.length()
-    if char_offset < body.length() { char_offset = char_offset + 2 }
+  let mut buffer : Array[String] = []
+  let mut buffer_start = 0
+  let mut in_code = false
+  let flush = fn() -> Unit {
+    if buffer.is_empty() { return }
+    let text = buffer.join("\n")
+    let start_byte = @base.utf8_size(body[:buffer_start].to_owned())
+    result.push({ text, start_byte, end_byte: start_byte + @base.utf8_size(text) })
+    buffer = []
   }
+  for i = 0; i < lines.length(); i = i + 1 {
+    let line = lines[i]
+    let is_blank = line.trim().is_empty()
+    if mask[i] {
+      if !in_code {
+        flush()
+        in_code = true
+        buffer_start = char_offset
+        buffer = [line]
+      } else {
+        buffer.push(line)
+      }
+    } else {
+      if in_code {
+        flush()
+        in_code = false
+      }
+      if is_blank {
+        flush()
+      } else if buffer.is_empty() {
+        buffer_start = char_offset
+        buffer = [line]
+      } else {
+        buffer.push(line)
+      }
+    }
+    char_offset = char_offset + line.length() + 1
+  }
+  flush()
   result
 }
 

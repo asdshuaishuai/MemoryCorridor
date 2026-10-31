@@ -261,3 +261,35 @@ test "even spread divides the remaining budget across candidates" {
     assert_true(actual <= budget)
   }
 }
+
+// A blank line inside a fenced (or indented) code block must not split the
+// block: dedup hashes, byte offsets and the excerpt window treat the whole
+// block as one atomic paragraph slice.
+test "code block with blank line stays one paragraph slice" {
+  let body = "before\n\n```\nfirst\n\nthird\n```\n\nafter"
+  let page = candidate("甲", body)
+  let result = assemble_context([page], "before", 100000)
+  let blocks = @base.array(@base.field(result, "blocks"))
+  assert_eq(blocks.length(), 1)
+  let text = @base.text(@base.field(blocks[0], "text"))
+  assert_true(text.contains("```"))
+  assert_true(text.contains("after"))
+  // Byte offsets independently reconstruct the exact slice text.
+  let start = number(blocks[0], "body_start")
+  let end = number(blocks[0], "body_end")
+  assert_eq(text, "[甲] 甲\n" + byte_range(page.page.body, start, end))
+}
+
+// Indented code behaves the same way, and the mask classifies every line.
+test "indented code block and fence mask atomicity" {
+  let body = "intro\n\n    line one\n\n    line two\n\noutro"
+  let page = candidate("乙", body)
+  let result = assemble_context([page], "intro", 100000)
+  let blocks = @base.array(@base.field(result, "blocks"))
+  assert_eq(blocks.length(), 1)
+  let lines = body.split("\n").map(x => x.to_owned()).to_array()
+  let mask = @core.code_line_mask(lines)
+  assert_eq(mask.length(), lines.length())
+  assert_true(mask[2] && mask[3] && mask[4])
+  assert_true(!mask[0] && !mask[1] && !mask[6])
+}

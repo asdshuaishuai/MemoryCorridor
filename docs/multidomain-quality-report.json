@@ -72,7 +72,7 @@
       ],
       "recall_at_3": true,
       "source_attached": true,
-      "context_used": 367
+      "context_used": 365
     },
     {
       "query": "vector backend",

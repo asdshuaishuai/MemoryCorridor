@@ -123,6 +123,10 @@ for (const target of ['wasm', 'wasm-gc']) {
   assert.equal(rendered.ok, true, JSON.stringify(rendered));
   assert.match(rendered.result.html, /<!doctype html>/i);
   assert.match(rendered.result.html, /WASM 阅读/);
+  // The static CommonMark baseline renders the body as HTML without scripts;
+  // the raw bytes stay available (hidden) for the browser's 查看原文 toggle.
+  assert.match(rendered.result.html, /<p>浏览器快照正文。<\/p>/);
+  assert.match(rendered.result.html, /class='original-code' hidden/);
   assert.equal(rendered.result.pages, 1);
   assert.equal(rendered.result.sources, 1);
   const imageRendered = engine.evaluate({op:'render-view', text:viewText, pages:[],

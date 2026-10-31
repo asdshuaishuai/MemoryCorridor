@@ -51,13 +51,16 @@ pub fn parse_page(text : String) -> Page raise @base.Fault {
   { title, kind, sources, tags, body, links: wikilinks(body) }
 }
 
-pub fn wikilinks(body : String) -> Array[String] raise @base.Fault {
-  let result : Array[String] = []
+// Single source of truth for block-level CommonMark code regions: a line is
+// masked when it belongs to a fenced block (marker line included) or an
+// indented code block (interior blank lines included). Wikilink scanning and
+// the context paragraph splitter share this classification so a blank line
+// inside a code block can never split a paragraph or expose link syntax.
+pub fn code_line_mask(lines : Array[String]) -> Array[Bool] {
+  let mask : Array[Bool] = []
   let mut fence = ""
   let mut fence_length = 0
   let mut indented_code = false
-  let mut code_ticks = 0
-  let lines = body.split("\n").map(x => x.to_owned()).to_array()
   for line_index = 0; line_index < lines.length(); line_index = line_index + 1 {
     let line = lines[line_index]
     // A fenced block may start with at most three spaces/tabs. Its closing
@@ -81,28 +84,48 @@ pub fn wikilinks(body : String) -> Array[String] raise @base.Fault {
         if fence == "" {
           fence = marker
           fence_length = run
-          code_ticks = 0
+          mask.push(true)
           continue
         }
         if marker == fence && run >= fence_length && line[prefix_end+run:].trim().is_empty() {
           fence = ""
           fence_length = 0
+          mask.push(true)
           continue
         }
       }
     }
-    if fence != "" { continue }
+    if fence != "" {
+      mask.push(true)
+      continue
+    }
     // Four-column indentation is a Markdown code block. Blank lines belong
     // to the block; the next non-indented line resumes normal scanning.
     if indent >= 4 {
       indented_code = true
-      code_ticks = 0
+      mask.push(true)
       continue
     }
     if indented_code {
-      if line.trim().is_empty() { continue }
+      if line.trim().is_empty() {
+        mask.push(true)
+        continue
+      }
       indented_code = false
     }
+    mask.push(false)
+  }
+  mask
+}
+
+pub fn wikilinks(body : String) -> Array[String] raise @base.Fault {
+  let result : Array[String] = []
+  let mut code_ticks = 0
+  let lines = body.split("\n").map(x => x.to_owned()).to_array()
+  let mask = code_line_mask(lines)
+  for line_index = 0; line_index < lines.length(); line_index = line_index + 1 {
+    let line = lines[line_index]
+    if mask[line_index] { continue }
     // CommonMark code spans are delimited by runs of backticks. Keep the run
     // length across lines so a span cannot expose links in its middle.
     let mut i = 0

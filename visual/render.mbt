@@ -34,9 +34,14 @@ fn enabled(view : View, feature : String) -> Bool {
   view.features.contains(feature)
 }
 
-fn body_html(body : String, format : String, path : String) -> String {
+fn body_html(body : String, format : String, path : String, page_ids : Array[String]) -> String {
+  // Static CommonMark-subset baseline renders without scripts; the browser
+  // hydrate replaces .rendered content wholesale and moves the (previously
+  // hidden) original into the 查看原文 details toggle.
+  let original = "<pre class='original-code' hidden>" + escape(body) + "</pre>"
+  let static_html = if format == "markdown" { render_markdown(body, page_ids) } else { "" }
   "<section class='rich-document' data-format='" + escape(format) + "' data-path='" + escape(path) +
-    "'><div class='rendered'><pre class='original-code'>" + escape(body) + "</pre></div></section>"
+    "'><div class='rendered'>" + static_html + original + "</div></section>"
 }
 
 // Deterministic snapshot map: node order is (id, title) and positions are a
@@ -164,16 +169,17 @@ pub fn render(view : View, pages : Array[Reading], sources : Array[Source], fing
     "<li data-item='" + escape(r.entry.id) + "'>" + link("p", r.entry.id, r.page.title) +
       "<small>" + escape(r.entry.kind) + (if r.entry.stale { " · 待重编译" } else { "" }) + "</small></li>"
   }).join("")
+  let page_ids : Array[String] = pages.map(r => r.entry.id)
   let articles = pages.map(r => {
     let evidence = r.entry.sources.map(s => if source_links { link("r", s, s) } else { escape(s) }).join(" · ")
     let stale = if r.entry.stale { "<p class='warning' role='status'>来源已失效，此页等待重编译，不参与搜索。</p>" } else { "" }
     "<article class='reading' id='" + anchor("p", r.entry.id) + "'" + hidden + " data-id='" + escape(r.entry.id) + "'>" +
     "<p class='eyebrow'>" + escape(r.entry.kind) + " / " + escape(r.entry.id) + "</p><h1>" + escape(r.page.title) + "</h1>" +
-    stale + "<div class='prose'>" + body_html(r.page.body, "markdown", r.entry.path) + "</div><footer>来源证据<br>" + evidence + "</footer></article>"
+    stale + "<div class='prose'>" + body_html(r.page.body, "markdown", r.entry.path, page_ids) + "</div><footer>来源证据<br>" + evidence + "</footer></article>"
   }).join("")
   let originals = sources.map(s => {
     "<article class='reading' id='" + anchor("r", s.id) + "'" + hidden + "><p class='eyebrow'>原始资料</p><h1>" +
-    escape(s.id) + "</h1><div class='prose'>" + body_html(s.text, s.format, s.path) + "</div><small>SHA-256 " + escape(s.sha256) + "</small></article>"
+    escape(s.id) + "</h1><div class='prose'>" + body_html(s.text, s.format, s.path, []) + "</div><small>SHA-256 " + escape(s.sha256) + "</small></article>"
   }).join("")
   let search_controls = if enabled(view, "search") {
     "<label for='query'>在知识库中搜索</label><input id='query' type='search' placeholder='输入关键词…' autocomplete='off'><p id='count' aria-live='polite'></p><p id='no-results' hidden>没有匹配页面，试试其他关键词。</p>"
