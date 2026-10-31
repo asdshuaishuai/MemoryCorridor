@@ -29,6 +29,17 @@ import sys
 MAX_FILE = 16 * 1024 * 1024  # platform/native.mbt refuses anything larger
 RETRY_BASE = 8  # wasm/host.mbt status protocol: -(needed+8) means retry
 MOON = os.environ.get("MOON_BINARY", "moon")
+# --mcp 面在 input_load 溢出时由宿主直写回复（模块的 canonical 路径被绕
+# 过），字节形态必须与模块侧 @base.canonical(mcp_error(null, -32700,
+# "input_overflow")) 逐字节一致：键按 UTF-16 码元序排序（error,id,jsonrpc），
+# data 携 @base.fault_data 的 error_code 与 hint（UTF-8 编码）。
+CANONICAL_INPUT_OVERFLOW = (
+    '{"error":{"code":-32700,'
+    '"data":{"error_code":"input_overflow",'
+    '"hint":"根据 error_code 修正请求；必要时先读取 status 或 context"},'
+    '"message":"input_overflow"},'
+    '"id":null,"jsonrpc":"2.0"}\n'
+).encode("utf-8")
 
 
 class Refused(Exception):
@@ -380,7 +391,7 @@ def serve(module_path, root, http_port=None, mcp_mode=False):
             ptr = exports["scratch"](store, len(request))
             mem_write(ptr, request)
             if exports["input_load"](store, ptr, len(request)) != 0:
-                sys.stdout.buffer.write(b'{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"input_overflow"}}\n')
+                sys.stdout.buffer.write(CANONICAL_INPUT_OVERFLOW)
                 sys.stdout.buffer.flush()
                 continue
             count = exports["mcp_execute_line"](store)

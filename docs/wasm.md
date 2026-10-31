@@ -24,7 +24,7 @@ python3 hosts/wasm-host.py --module _build/wasm/debug/build/wasm/wasm.wasm --roo
 
 状态协议：结果缓冲导入（read/list）返回 `>=0` 写入字节数、`-(needed+8)` 要求更大缓冲、`-3` 文件不存在（读为 None）、`-1` 拒绝（模块抛出与 native 相同的固定消息，例如缺失中间目录的预写探测读为 None 而非拒绝）。导入面是封闭契约：`scripts/wasm_e2e.mjs` 断言 wasm 目标恰好导入这 8 个函数、wasm-gc 目标保持零导入。引擎代码（base→agent）在该面零改动——agent 层本就以 `@vault.Storage` 参数化，引擎内没有时钟（所有 `at` 都是请求输入）。native 目标下该面编译为惰性 stub，仅用于通过 `moon check --deny-warn`。
 
-边界：服务面当前仅 classic wasm 目标（指针协议依赖线性内存）；请求经 `input_load` 分段装载达 16 MiB（与单文件上限一致，宿主按 1 MiB 分块追加，纯面保持 2 MiB），超限以 `input_overflow` 信封拒绝且无法回显 request_id（与 native 对超长请求的行为一致）；宿主与 native 一样运行在类 Unix 上（flock 与 moon 子进程是 POSIX 设施）——跨平台适配交由「任意 WASM 运行时 + 各自薄宿主」承担，这是本项目的分发策略。
+边界：服务面当前仅 classic wasm 目标（指针协议依赖线性内存）；请求经 `input_load` 分段装载达 16 MiB（与单文件上限一致，宿主按 1 MiB 分块追加，纯面保持 2 MiB），超限以 `input_overflow` 信封拒绝且无法回显 request_id（与 native 对超长请求的行为一致）；`--mcp` 面沿用同一 `input_load` 通道与 16 MiB 上限，超限由宿主直写与模块 canonical 形态逐字节一致的 `input_overflow` 信封，而 native `mcp.exe` 与纯 WASI `--mcp` 面的行上限是 2 MiB（canonical `parse_error`）——逐面限额见 docs/protocol.md「MCP」；宿主与 native 一样运行在类 Unix 上（flock 与 moon 子进程是 POSIX 设施）——跨平台适配交由「任意 WASM 运行时 + 各自薄宿主」承担，这是本项目的分发策略。
 
 `sdk/wasm.mjs` 导出 `loadCorridor(bytes)`，加载后 `evaluate(request)` 返回 `{ok,result}` / `{ok:false,error}`。例如 `{op:"page",text:"..."}`；`catalog` 同样接 text，`tools` 无参数；`search` 接 `documents` 和 `query`（Document 含经验证的 title/body terms）；`vectors` 接 space/values/records。原始内核不检查磁盘或向量对应的正文版本，宿主须先提供验证后的数据。
 

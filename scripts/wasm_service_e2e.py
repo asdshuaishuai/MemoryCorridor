@@ -235,7 +235,26 @@ def main():
                     "clientInfo": {"name": "e2e"}}})
                 again = mcp_read()
                 assert again["error"]["data"]["error_code"] == "already_initialized"
-                check("MCP stdio transport over the same corridor.wasm: handshake gate, silent notifications, progress notices, error envelopes")
+                # 行上限：--mcp 面经 input_load 达 16 MiB，超限由宿主直写
+                # 回复（模块 canonical 路径被绕过）。信封必须与模块侧
+                # canonical 形态逐字节一致：键序 error,id,jsonrpc，data 携
+                # error_code/hint，id 为 null，不回显 request_id。
+                mcp.stdin.write(json.dumps(
+                    {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+                        "name": "corridor_status",
+                        "arguments": {"vault": str(root), "pad": "x" * (16 * 1024 * 1024)}}},
+                    ensure_ascii=False) + "\n")
+                mcp.stdin.flush()
+                assert select.select([mcp.stdout], [], [], 30)[0], "overflow reply timed out"
+                overflow_raw = mcp.stdout.readline()
+                overflow_expected = (
+                    '{"error":{"code":-32700,'
+                    '"data":{"error_code":"input_overflow",'
+                    '"hint":"根据 error_code 修正请求；必要时先读取 status 或 context"},'
+                    '"message":"input_overflow"},'
+                    '"id":null,"jsonrpc":"2.0"}\n')
+                assert overflow_raw == overflow_expected, overflow_raw[:200]
+                check("MCP stdio transport over the same corridor.wasm: handshake gate, silent notifications, progress notices, error envelopes, canonical 16 MiB overflow envelope")
             finally:
                 mcp.terminate()
                 err = mcp.stderr.read()

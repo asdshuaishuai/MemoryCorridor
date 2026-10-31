@@ -246,6 +246,12 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
         assert method_error["error"]["code"] == -32601
         assert method_error["error"]["data"]["error_code"] == "method_not_found"
         assert "error" in call("tools/call", {"name": "corridor_status", "arguments": {"vault": work, "unexpected": True}})
+        # receipts 是 schema 声明的传输字段：native 面与两个 wasm 面一致地
+        # 接受并剥除（自身子进程编译，回执不进引擎）——上面未声明字段仍拒绝。
+        transported = call("tools/call", {"name": "corridor_session_close", "arguments": {
+            "vault": work, "receipts": [{"path": "index.mbt.md", "sha256": "0" * 64, "ok": True}]}})["result"]
+        assert not transported["isError"], transported
+        assert transported["structuredContent"]["result"] == {"closed": True}
         # No notification reply may appear before the next ping response.
         p.stdin.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":999}}\n')
         p.stdin.flush()

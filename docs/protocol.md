@@ -143,6 +143,8 @@ tags: ["研究"]
 
 启动 `_build/native/debug/build/mcp/mcp.exe`。使用换行 JSON-RPC 2.0 stdio；支持 `initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call`。工具前缀 `corridor_`，连字符改为下划线，例如 `corridor_read_page`。`corridor_session_open` 要求 vault，其余工具可在已打开会话中省略 vault；工具列表/schema 与 CLI 来自同一字典。当前支持协议版本 2024-11-05 / 2025-03-26 / 2025-06-18。
 
+三个 MCP 面的传输语义逐面对照：`tools/call` 的 `arguments.receipts` 是 schema 声明的传输字段（编译回执，纯 WASI 面的 `compile_required` 协议依赖它），三个面都接受并剥除——native 面由自身子进程编译，回执不进入引擎；请求行上限逐面不同：native `mcp.exe` 与纯 WASI 面（`wasipure --mcp`）为 2 MiB，超限回复 canonical `parse_error` 信封；corridor wasm 面（`hosts/wasm-host.py --mcp`）经 `input_load` 分段装载达 16 MiB，超限由宿主直写与模块 canonical 形态逐字节一致的 `input_overflow` 信封（含 `data.error_code`/`hint`，无法回显 request_id）。
+
 工具执行失败使用 MCP `isError:true`，结构化结果含 `error_code` 与 `hint`；JSON-RPC 格式或参数错误使用带 `error.data` 的 error 响应。通知不产生响应。`structuredContent` 为 `{result:...}`。进度通知只在调用提供 `_meta.progressToken` 时发送；事件表示同步执行的边界，不承诺运行中取消或后台调度。
 
 ## 分发

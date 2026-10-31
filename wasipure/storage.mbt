@@ -4,7 +4,8 @@
 // ENOENT (including a missing intermediate directory) reads as absent;
 // ELOOP/ENOTDIR are refused — the same posture hosts/wasm-host.py uses.
 // The lease lock replaces flock (absent from WASI P1): a `.corridor-lock`
-// lockfile holds a monotonic-clock expiry; takeover after expiry is allowed.
+// lockfile holds a wall-clock (realtime) expiry; takeover after expiry is
+// allowed, so a crashed holder never wedges the vault for fresh processes.
 // `check` cannot spawn the compiler under pure WASI and reports
 // `compile_required` — see the receipt protocol below.
 
@@ -67,19 +68,44 @@ fn wasi_file_size(fd : Int) -> Int {
   if size > 16777216UL { -2 } else { size.to_int() }
 }
 
+// The 64 KiB read window and its control block live for the module lifetime:
+// freshly allocating them per call made every rejected session-open (EXCL
+// miss → read the lockfile → refuse) leak ~68 KB of scratch the wasm GC
+// kept reachable, so a retry storm against a locked vault OOM'd the module
+// after ~62k requests.
+let read_window : Ref[Bytes?] = @ref.new(None)
+let read_control : Ref[Bytes?] = @ref.new(None)
+
 fn wasi_read_whole(fd : Int) -> Bytes {
   let out : Array[Byte] = []
-  let (buf, buf_ptr) = wasi_malloc(65536)
-  let (iovs, iovs_ptr) = wasi_iov(buf)
+  let buf = match read_window.val {
+    Some(buf) => buf
+    None => {
+      let buf = Bytes::new(65536)
+      read_window.val = Some(buf)
+      buf
+    }
+  }
+  let buf_base = bytes2ptr(buf)
+  let iovs = match read_control.val {
+    Some(iovs) => iovs
+    None => {
+      let iovs = wasi_iov(buf).0
+      read_control.val = Some(iovs)
+      iovs
+    }
+  }
+  let iovs_ptr = bytes2ptr(iovs)
   let (nr, nr_ptr) = wasi_malloc(4)
-  ignore(iovs)
   ignore(nr)
-  ignore(buf)
+  // Every chunk lands in the same window from its start: the iovec is built
+  // once and never re-pointed, so a file larger than the window still reads
+  // through it chunk by chunk.
   while true {
     if fd_read_ffi(fd, iovs_ptr, 1, nr_ptr) != 0 { break }
     let n = load32(nr_ptr)
     if n <= 0 { break }
-    for i in 0..<n { out.push(load8_wasip1(buf_ptr + i).to_byte()) }
+    for i in 0..<n { out.push(load8_wasip1(buf_base + i).to_byte()) }
     if n < 65536 { break }
   }
   Bytes::from_array(out)
@@ -235,9 +261,40 @@ pub fn wasi_files(directory : String) -> Array[String] raise @base.Fault {
   }
 }
 
-// Lease lock: acquire an exclusive lockfile with a monotonic expiry; a lease
-// older than 60 s can be taken over. The clock is a platform facility, so
-// engine determinism (no wall-clock in engine logic) is untouched.
+// A lease is expired only when it names a representable expiry that is not
+// in the future: negative or >2^64 doubles saturate inside to_uint64()
+// (negative → 0, huge → u64::MAX), which would let a corrupted or forged
+// negative lockfile authorize an instant takeover — refuse them like any
+// other unreadable holder. An expiry exactly at `now` counts as expired.
+fn lease_expired(value : Double, now : UInt64) -> Bool {
+  if value < 0.0 { return false }
+  if value >= 18446744073709551616.0 { return false }
+  value.to_uint64() <= now
+}
+
+// Read the current lockfile and decide whether its lease has expired; an
+// unreadable or malformed holder never expires (unknown holders cannot be
+// preempted).
+fn lease_lock_expired() -> Bool raise @base.Fault {
+  match wasi_read_bytes(".corridor-lock") {
+    Some(bytes) => {
+      let text = try @utf8.decode(bytes) catch { _ => "" }
+      let parsed : Json = try @base.parse(text) catch { _ => Json::null() }
+      match parsed {
+        Object(fields) => match fields.get("lease_until_ns") {
+          Some(Number(value, ..)) => lease_expired(value, wasi_time_ns())
+          _ => false
+        }
+        _ => false
+      }
+    }
+    None => false
+  }
+}
+
+// Lease lock: acquire an exclusive lockfile holding a wall-clock expiry; a
+// lease older than 60 s can be taken over. The clock is a platform facility,
+// so engine determinism (no wall-clock in engine logic) is untouched.
 pub fn wasi_lock() -> Unit raise @base.Fault {
   let now = wasi_time_ns()
   let expiry = now + LEASE_NS
@@ -255,23 +312,11 @@ pub fn wasi_lock() -> Unit raise @base.Fault {
       }
       Absent => {
         // 只接管可证明过期的租约：从锁文件读持有者的到期时刻并与当前
-        // 单调时钟比较。读不出或未过期一律拒绝（未知持有人不可抢占），
-        // 接管也只重试一次，避免与并发接管方互转。
-        let expired = match wasi_read_bytes(".corridor-lock") {
-          Some(bytes) => {
-            let text = try @utf8.decode(bytes) catch { _ => "" }
-            let parsed : Json = try @base.parse(text) catch { _ => Json::null() }
-            match parsed {
-              Object(fields) => match fields.get("lease_until_ns") {
-                Some(Number(value, ..)) => value.to_uint64() < now
-                _ => false
-              }
-              _ => false
-            }
-          }
-          None => false
-        }
-        if !expired { @base.fail("vault_locked: another writer is active") }
+        // 墙钟比较，删除前一刻再复核一次——并发接管方可能已在这两次
+        // 读取之间换上新租约（check-then-act 窗口被收窄；WASI P1 没有
+        // 原子比较删除，窗口无法彻底消除，新租约只能由 EXCL 创建成功
+        // 的一方写入）。
+        if !lease_lock_expired() { @base.fail("vault_locked: another writer is active") }
         wasi_unlock()
       }
     }

@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 REPO = Path(__file__).resolve().parents[1]
 MODULE = REPO / "_build/wasm/debug/build/wasipure/wasipure.wasm"
@@ -315,6 +316,21 @@ def main():
         assert release[-1]["ok"], release[-1]
         assert not (lock_root / ".corridor-lock").exists()
         check("lease lock: rival refused while held, unknown/unexpired holder not preemptible, expired lease taken over, release clears the lockfile")
+        # 崩溃遗留的真实量级租约：锁到期以墙钟（epoch ns）记录，裁决与
+        # 接管者自身进程时钟无关。持有者崩溃后遗留「未来 60 s」的租约
+        # 拒绝接管；已过期一个小时的 epoch 量级租约可被新进程接管。
+        wall_now = time.time_ns()
+        (lock_root / ".corridor-lock").write_text(
+            json.dumps({"lease_until_ns": wall_now + 60_000_000_000}), encoding="utf-8")
+        rival.call("session-open", error="vault_locked")
+        (lock_root / ".corridor-lock").write_text(
+            json.dumps({"lease_until_ns": wall_now - 3_600_000_000_000}), encoding="utf-8")
+        crash_takeover = run_batch(MODULE, lock_root, [
+            {"op": "session-open", "vault": str(lock_root)}], Path(work))
+        assert crash_takeover[-1]["ok"], crash_takeover[-1]
+        token = json.loads((lock_root / ".corridor-lock").read_text(encoding="utf-8"))
+        assert token["lease_until_ns"] > wall_now + 30_000_000_000, token
+        check("lease lock uses wall-clock epochs: crash-leftover future lease refused, expired epoch-ns lease taken over by a fresh process")
 
         # --mcp 纯 WASI JSON-RPC 信封面：同一 _start、同一 service_run。
         # 握手门（initialize 前 tools/* 拒绝）、通知静默（由行序证明）、

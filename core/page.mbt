@@ -82,10 +82,19 @@ pub fn code_line_mask(lines : Array[String]) -> Array[Bool] {
       while prefix_end + run < line.length() && line[prefix_end+run] == line[prefix_end] { run = run + 1 }
       if run >= 3 {
         if fence == "" {
-          fence = marker
-          fence_length = run
-          mask.push(true)
-          continue
+          // CommonMark: the info string after a backtick fence may not
+          // contain backticks, so such a line is ordinary text, not a fence
+          // (the renderer's fence_open applies the same rejection). Fall
+          // through to the normal classification below.
+          if !(marker == "`" && line[prefix_end+run:].contains("`")) {
+            fence = marker
+            fence_length = run
+            // A pending indented-code latch must not survive the fence: blank
+            // lines after the closing fence resume normal paragraph scanning.
+            indented_code = false
+            mask.push(true)
+            continue
+          }
         }
         if marker == fence && run >= fence_length && line[prefix_end+run:].trim().is_empty() {
           fence = ""
@@ -99,9 +108,11 @@ pub fn code_line_mask(lines : Array[String]) -> Array[Bool] {
       mask.push(true)
       continue
     }
-    // Four-column indentation is a Markdown code block. Blank lines belong
-    // to the block; the next non-indented line resumes normal scanning.
-    if indent >= 4 {
+    // Four-column indentation is a Markdown code block — but a whitespace-only
+    // line is a blank line no matter its indentation and never opens one.
+    // Blank lines inside an open block belong to it; the next non-indented
+    // line resumes normal scanning.
+    if indent >= 4 && !line.trim().is_empty() {
       indented_code = true
       mask.push(true)
       continue

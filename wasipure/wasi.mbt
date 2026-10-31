@@ -170,9 +170,12 @@ fn wasi_root_fd() -> Int raise @base.Fault {
 
 #cfg(target="wasm")
 fn wasi_time_ns() -> UInt64 raise @base.Fault {
+  // Clock 0 (realtime): the lease lockfile must stay meaningful across
+  // processes, and a per-process monotonic clock restarts near zero, so a
+  // crash-leftover lease could never expire for a freshly started reader.
   let (buf, buf_ptr) = wasi_malloc(8)
-  let err = clock_time_get_ffi(1, 1_000_000UL, buf_ptr)
-  ignore(buf) // clock 1 = monotonic
+  let err = clock_time_get_ffi(0, 1_000_000UL, buf_ptr)
+  ignore(buf)
   if err != 0 { raise @base.Fault("wasi_clock_failed") }
   let mut value : UInt64 = 0UL
   for i in 0..<8 { value = value | (load8_wasip1(buf_ptr + i).to_uint64() << (i * 8)) } // little-endian
@@ -180,6 +183,6 @@ fn wasi_time_ns() -> UInt64 raise @base.Fault {
 }
 #cfg(target="native")
 fn wasi_time_ns() -> UInt64 raise @base.Fault {
-  let _ = clock_time_get_ffi(1, 1_000_000UL, 0)
+  let _ = clock_time_get_ffi(0, 1_000_000UL, 0)
   raise @base.Fault("wasi_clock_failed: pure-WASI storage requires the wasm artifact")
 }

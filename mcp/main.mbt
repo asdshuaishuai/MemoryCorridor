@@ -73,8 +73,18 @@ fn reply(session : @nativehost.SessionState, request : Json, ready : Bool, initi
         for t in tools { if @agent.tool_name(t) == name { op = t.name; break } }
         if op == "" { raise @base.Fault("unknown_tool: " + name) }
         let t = @agent.tool(op)
-        @base.keys(args, ["vault", "progress"] + t.fields)
-        let request = match args { Object(fields) => { fields["op"] = op.to_json(); Json::object(fields) }; _ => raise @base.Fault("arguments_object_required") }
+        @base.keys(args, ["vault", "progress", "receipts"] + t.fields)
+        // Receipts are a transport field and inert on this face: the native
+        // platform spawns moon check itself, so strip before dispatch (the
+        // engine rejects unknown fields).
+        let request = match args {
+          Object(fields) => {
+            fields["op"] = op.to_json()
+            fields.remove("receipts")
+            Json::object(fields)
+          }
+          _ => raise @base.Fault("arguments_object_required")
+        }
         let (value, failed) = try (@nativehost.execute(session, request), false) catch {
           @base.Fault(message) => {
             let data = @base.fault_data(message)

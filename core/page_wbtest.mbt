@@ -5,6 +5,29 @@ test "frontmatter subset and wikilink code exclusion" {
   assert_eq(page.tags, ["中文"])
 }
 
+test "mask rejects backtick fences whose info string has a backtick" {
+  // CommonMark: the info string after a backtick fence may not contain
+  // backticks, so the line stays text and cannot swallow later prose.
+  assert_eq(code_line_mask(["``` a`b", "prose after", "more prose"]), [false, false, false])
+  // Tilde fences may keep backticks in their info string.
+  assert_eq(code_line_mask(["~~~ a`b", "prose", "~~~"]), [true, true, true])
+  // Wikilink scanning shares the mask and sees past such a line.
+  assert_eq(wikilinks("``` a`b\n[[concepts/real]]\nmore prose"), ["concepts/real"])
+}
+
+test "mask never opens indented code on a whitespace-only line" {
+  assert_eq(code_line_mask(["    ", ""]), [false, false])
+  assert_eq(code_line_mask(["\t", "text"]), [false, false])
+  // Interior blanks of a real block still belong to it.
+  assert_eq(code_line_mask(["    code", "", "    more", "", "text"]),
+    [true, true, true, true, false])
+}
+
+test "mask clears the indented-code latch when a fence opens" {
+  assert_eq(code_line_mask(["    a", "```", "x", "```", "", "    b"]),
+    [true, true, true, true, false, true])
+}
+
 test "wikilink anchors validate and keep page-only dependencies" {
   let page = parse_page("---\ntype: concept\ntitle: 锚点\nsources: [\"raw/a.md\"]\n---\n[[concepts/b#核心概念|跳转]] [[concepts/b#中文 标题]]\n```mbt\n[[concepts/ignored#标题]]\n```")
   assert_eq(page.links, ["concepts/b"])
