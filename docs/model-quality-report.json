@@ -1,0 +1,617 @@
+{
+  "date": "2026-11-01",
+  "dataset": "owned 龙泉青瓷 craft corpus; assistant-model-generated pages frozen as fixtures",
+  "pages_sha256": "abe8489c170693ae082bf426d7371b1d8caefa029e0c890db8802ae6a912f9e4",
+  "question_count": 6,
+  "strategies": {
+    "A_无锚点": {
+      "strategy": "A 无锚点",
+      "pages": 8,
+      "generated_body_bytes": 573,
+      "context_input_bytes": 4260,
+      "evidence_items": 0,
+      "evidence": {
+        "claims": 0,
+        "coverage": {
+          "pages": [
+            {
+              "body_bytes": 117,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "concepts/二次素烧",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 73,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "concepts/窑变",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 114,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "concepts/粉青",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 144,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "entity/哥窑",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/56fea62c7bafb39254a2742297763f5e2da9aaffbb1d629319dcd032b3819f97",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/94ab80642ca38dc2ab4b52c3904f43c7b08dcf5e8e8c0d399ed497269f15c7f9",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/e0e8424ea91e5fa165b8f7a9578efbc4feb7d09a7a359273b8108744bcea3bad",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 125,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "synthesis/青瓷工艺链",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            }
+          ],
+          "sources": [
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 0,
+              "direct_pages": [
+                "concepts/二次素烧",
+                "sources/56fea62c7bafb39254a2742297763f5e2da9aaffbb1d629319dcd032b3819f97",
+                "synthesis/青瓷工艺链"
+              ],
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [],
+              "provenance": "none",
+              "source": "raw/工序.md",
+              "stale_direct_pages": [],
+              "support": "linked",
+              "valid_claims": 0
+            },
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 0,
+              "direct_pages": [
+                "concepts/窑变",
+                "sources/94ab80642ca38dc2ab4b52c3904f43c7b08dcf5e8e8c0d399ed497269f15c7f9"
+              ],
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [],
+              "provenance": "none",
+              "source": "raw/窑变.md",
+              "stale_direct_pages": [],
+              "support": "linked",
+              "valid_claims": 0
+            },
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 0,
+              "direct_pages": [
+                "concepts/粉青",
+                "entity/哥窑",
+                "sources/e0e8424ea91e5fa165b8f7a9578efbc4feb7d09a7a359273b8108744bcea3bad"
+              ],
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [],
+              "provenance": "none",
+              "source": "raw/窑口.md",
+              "stale_direct_pages": [],
+              "support": "linked",
+              "valid_claims": 0
+            },
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 0,
+              "direct_pages": [],
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [],
+              "provenance": "none",
+              "source": "raw/釉料.md",
+              "stale_direct_pages": [],
+              "support": "unreferenced",
+              "valid_claims": 0
+            }
+          ]
+        },
+        "exact_source_claims": 0,
+        "invalid": 0,
+        "invalid_claims": 0,
+        "invalid_source_claims": 0,
+        "legacy_source_claims": 0,
+        "records": 0,
+        "valid": 0,
+        "valid_claims": 0
+      },
+      "quality_debts": {
+        "missing_evidence": 5,
+        "orphan_page": 2,
+        "sparse_tag": 1,
+        "unreferenced_source": 1
+      },
+      "review_debt": {
+        "pending": 9,
+        "resolved": 0,
+        "total": 9
+      },
+      "recall_at_3": 0.8333333333333334,
+      "source_attachment_rate": 0.5,
+      "search": [
+        {
+          "query": "粉青釉 呈色",
+          "hits": [
+            "concepts/粉青",
+            "concepts/窑变",
+            "synthesis/青瓷工艺链"
+          ],
+          "recall_at_3": true,
+          "source_attached": false
+        },
+        {
+          "query": "哥窑 辨识特征",
+          "hits": [
+            "entity/哥窑",
+            "sources/94ab80642ca38dc2ab4b52c3904f43c7b08dcf5e8e8c0d399ed497269f15c7f9",
+            "sources/e0e8424ea91e5fa165b8f7a9578efbc4feb7d09a7a359273b8108744bcea3bad"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "素烧 温度",
+          "hits": [
+            "concepts/二次素烧",
+            "synthesis/青瓷工艺链",
+            "concepts/窑变"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "厚釉 上釉 次数",
+          "hits": [
+            "concepts/二次素烧",
+            "concepts/粉青",
+            "concepts/窑变"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "梅子青 龙窑 缓冷",
+          "hits": [
+            "entity/哥窑",
+            "sources/94ab80642ca38dc2ab4b52c3904f43c7b08dcf5e8e8c0d399ed497269f15c7f9",
+            "sources/e0e8424ea91e5fa165b8f7a9578efbc4feb7d09a7a359273b8108744bcea3bad"
+          ],
+          "recall_at_3": false,
+          "source_attached": false
+        },
+        {
+          "query": "釉灰 炼制",
+          "hits": [
+            "concepts/窑变",
+            "concepts/粉青",
+            "concepts/二次素烧"
+          ],
+          "recall_at_3": true,
+          "source_attached": false
+        }
+      ]
+    },
+    "B_精确锚点": {
+      "strategy": "B 精确锚点",
+      "pages": 9,
+      "generated_body_bytes": 739,
+      "context_input_bytes": 3436,
+      "evidence_items": 8,
+      "evidence": {
+        "claims": 8,
+        "coverage": {
+          "pages": [
+            {
+              "body_bytes": 114,
+              "claims": 2,
+              "complete": false,
+              "coverage_basis_points": 9736,
+              "covered_bytes": 111,
+              "exact_source_claims": 2,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "concepts/二次素烧",
+              "provenance": "exact",
+              "stale": false,
+              "valid_claims": 2
+            },
+            {
+              "body_bytes": 73,
+              "claims": 1,
+              "complete": false,
+              "coverage_basis_points": 9863,
+              "covered_bytes": 72,
+              "exact_source_claims": 1,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "concepts/窑变",
+              "provenance": "exact",
+              "stale": false,
+              "valid_claims": 1
+            },
+            {
+              "body_bytes": 227,
+              "claims": 2,
+              "complete": false,
+              "coverage_basis_points": 5286,
+              "covered_bytes": 120,
+              "exact_source_claims": 2,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "concepts/粉青",
+              "provenance": "exact",
+              "stale": false,
+              "valid_claims": 2
+            },
+            {
+              "body_bytes": 114,
+              "claims": 2,
+              "complete": false,
+              "coverage_basis_points": 9736,
+              "covered_bytes": 111,
+              "exact_source_claims": 2,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "entity/哥窑",
+              "provenance": "exact",
+              "stale": false,
+              "valid_claims": 2
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/4e2471f7331ae67ab0cf6b61eef9706df67bee997bc7ebedc151326831b39d8c",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/56fea62c7bafb39254a2742297763f5e2da9aaffbb1d629319dcd032b3819f97",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/94ab80642ca38dc2ab4b52c3904f43c7b08dcf5e8e8c0d399ed497269f15c7f9",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 133,
+              "claims": 0,
+              "complete": false,
+              "coverage_basis_points": 0,
+              "covered_bytes": 0,
+              "exact_source_claims": 0,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "sources/e0e8424ea91e5fa165b8f7a9578efbc4feb7d09a7a359273b8108744bcea3bad",
+              "provenance": "none",
+              "stale": false,
+              "valid_claims": 0
+            },
+            {
+              "body_bytes": 211,
+              "claims": 1,
+              "complete": false,
+              "coverage_basis_points": 3838,
+              "covered_bytes": 81,
+              "exact_source_claims": 1,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "overlap_claims": 0,
+              "page": "synthesis/青瓷工艺链",
+              "provenance": "exact",
+              "stale": false,
+              "valid_claims": 1
+            }
+          ],
+          "sources": [
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 3,
+              "direct_pages": [
+                "concepts/二次素烧",
+                "sources/56fea62c7bafb39254a2742297763f5e2da9aaffbb1d629319dcd032b3819f97",
+                "synthesis/青瓷工艺链"
+              ],
+              "exact_source_claims": 3,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [
+                "concepts/二次素烧",
+                "synthesis/青瓷工艺链"
+              ],
+              "provenance": "exact",
+              "source": "raw/工序.md",
+              "stale_direct_pages": [],
+              "support": "evidenced",
+              "valid_claims": 3
+            },
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 1,
+              "direct_pages": [
+                "concepts/窑变",
+                "sources/94ab80642ca38dc2ab4b52c3904f43c7b08dcf5e8e8c0d399ed497269f15c7f9"
+              ],
+              "exact_source_claims": 1,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [
+                "concepts/窑变"
+              ],
+              "provenance": "exact",
+              "source": "raw/窑变.md",
+              "stale_direct_pages": [],
+              "support": "evidenced",
+              "valid_claims": 1
+            },
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 2,
+              "direct_pages": [
+                "concepts/粉青",
+                "entity/哥窑",
+                "sources/e0e8424ea91e5fa165b8f7a9578efbc4feb7d09a7a359273b8108744bcea3bad",
+                "synthesis/青瓷工艺链"
+              ],
+              "exact_source_claims": 2,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [
+                "entity/哥窑"
+              ],
+              "provenance": "exact",
+              "source": "raw/窑口.md",
+              "stale_direct_pages": [],
+              "support": "evidenced",
+              "valid_claims": 2
+            },
+            {
+              "active": true,
+              "basis": "provenance_v1",
+              "claims": 2,
+              "direct_pages": [
+                "concepts/粉青",
+                "sources/4e2471f7331ae67ab0cf6b61eef9706df67bee997bc7ebedc151326831b39d8c",
+                "synthesis/青瓷工艺链"
+              ],
+              "exact_source_claims": 2,
+              "invalid_source_claims": 0,
+              "legacy_source_claims": 0,
+              "pages": [
+                "concepts/粉青"
+              ],
+              "provenance": "exact",
+              "source": "raw/釉料.md",
+              "stale_direct_pages": [],
+              "support": "evidenced",
+              "valid_claims": 2
+            }
+          ]
+        },
+        "exact_source_claims": 8,
+        "invalid": 0,
+        "invalid_claims": 0,
+        "invalid_source_claims": 0,
+        "legacy_source_claims": 0,
+        "records": 5,
+        "valid": 5,
+        "valid_claims": 8
+      },
+      "quality_debts": {
+        "evidence_coverage_gap": 5,
+        "orphan_page": 2,
+        "sparse_tag": 2
+      },
+      "review_debt": {
+        "pending": 9,
+        "resolved": 0,
+        "total": 9
+      },
+      "recall_at_3": 1.0,
+      "source_attachment_rate": 1.0,
+      "search": [
+        {
+          "query": "粉青釉 呈色",
+          "hits": [
+            "concepts/粉青",
+            "synthesis/青瓷工艺链",
+            "concepts/窑变"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "哥窑 辨识特征",
+          "hits": [
+            "entity/哥窑",
+            "concepts/粉青",
+            "synthesis/青瓷工艺链"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "素烧 温度",
+          "hits": [
+            "concepts/二次素烧",
+            "synthesis/青瓷工艺链",
+            "concepts/窑变"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "厚釉 上釉 次数",
+          "hits": [
+            "concepts/二次素烧",
+            "concepts/窑变",
+            "synthesis/青瓷工艺链"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "梅子青 龙窑 缓冷",
+          "hits": [
+            "synthesis/青瓷工艺链",
+            "concepts/粉青",
+            "entity/哥窑"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        },
+        {
+          "query": "釉灰 炼制",
+          "hits": [
+            "concepts/粉青",
+            "concepts/窑变",
+            "sources/4e2471f7331ae67ab0cf6b61eef9706df67bee997bc7ebedc151326831b39d8c"
+          ],
+          "recall_at_3": true,
+          "source_attached": true
+        }
+      ]
+    }
+  },
+  "scope": "model pages were generated in-session and replayed deterministically; engine metrics (provenance, HumanGate debts, recall, token estimates) are deterministic measurements; no semantic entailment claim"
+}
