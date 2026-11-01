@@ -98,7 +98,9 @@ pub fn search_vectors(
   ignore(normalize(space, query))
   let hits = (backend.search)(space, query, records, k)
   let seen : Map[String, Bool] = Map([])
-  if hits.length() > k { @base.fail("backend_excess_results") }
+  // 负 k 与文本检索一致按 0 处理：直接拿 k 比较会把 0 个命中误判成后端越权。
+  let cap = Int::max(0, k)
+  if hits.length() > cap { @base.fail("backend_excess_results") }
   for hit in hits {
     if !records.iter().any(r => r.page == hit.id && r.space == space) || hit.score.is_nan() || hit.score.is_inf() || seen.contains(hit.id) {
       @base.fail("backend_invalid_candidate: " + hit.id)
@@ -114,7 +116,8 @@ pub fn search_vectors(
 pub fn validate_external_hits(
   active_ids : Array[String], hits : Array[VectorHit], k : Int,
 ) -> Array[VectorHit] raise @base.Fault {
-  if hits.length() > k { @base.fail("backend_excess_results") }
+  let cap = Int::max(0, k)
+  if hits.length() > cap { @base.fail("backend_excess_results") }
   let allowed : Map[String, Bool] = Map([])
   for id in active_ids { allowed[id] = true }
   let seen : Map[String, Bool] = Map([])

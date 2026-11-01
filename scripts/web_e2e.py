@@ -105,6 +105,44 @@ with tempfile.TemporaryDirectory(prefix="corridor-web-") as work:
         assert connection.getresponse().status == 403
         connection.close()
 
+        # Raw-socket probes for the request reader itself: the terminator
+        # \r\n\r\n begins at the last header line's own \r, so a parser that
+        # stops splitting at the terminator start would swallow that line
+        # whole — historically producing 403 invalid_host whenever Host came
+        # last, as minimal pipelined clients write it.
+        import socket
+        origin_parts = urlsplit(origin)
+
+        def raw(payload):
+            with socket.create_connection((origin_parts.hostname, origin_parts.port), timeout=30) as probe:
+                probe.sendall(payload)
+                probe.shutdown(socket.SHUT_WR)  # request fully sent; server may drain to EOF
+                chunks = []
+                while True:
+                    piece = probe.recv(65536)
+                    if not piece:
+                        break
+                    chunks.append(piece)
+                return b"".join(chunks)
+
+        host_header = ("Host: %s:%d" % (origin_parts.hostname, origin_parts.port)).encode()
+        minimal = raw(b"GET /api/status HTTP/1.1\r\n" + host_header + b"\r\n\r\n")
+        assert minimal.startswith(b"HTTP/1.1 200 OK"), minimal[:120]
+        assert b'"ok":true' in minimal and b'"op":"status"' in minimal
+        # The byte ceiling covers every accumulated block: an oversized header
+        # block whose terminator arrives with it is 431, not an accepted 200.
+        oversized = raw(b"GET /api/status HTTP/1.1\r\n" + host_header +
+                        b"\r\nX-Pad: " + b"a" * 140000 + b"\r\n\r\n")
+        assert oversized.startswith(b"HTTP/1.1 431 "), oversized[:120]
+        # And the response must actually reach the client: a bounded drain
+        # follows the 431 so the kernel cannot answer the peer's unread bytes
+        # with an RST that swallows the response head+body.
+        assert oversized.rstrip().endswith(b'{"error":"headers_too_large","ok":false}'), oversized[-120:]
+        # HEAD keeps RFC semantics on the raw path: headers only.
+        head_only = raw(b"HEAD /api/status HTTP/1.1\r\n" + host_header + b"\r\n\r\n")
+        assert head_only.startswith(b"HTTP/1.1 200 OK"), head_only[:120]
+        assert head_only.endswith(b"Connection: close\r\n\r\n"), head_only[-120:]
+
         page = root / "wiki/concepts/rich.md"
         text = page.read_text()
         previous = (root / ".corridor/viewer.html").read_bytes()

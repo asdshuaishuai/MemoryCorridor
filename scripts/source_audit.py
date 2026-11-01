@@ -59,7 +59,7 @@ allowed = {"base": [], "core": ["base"], "decl": ["base", "core"],
            "nativehost": ["base", "agent", "platform", "vault"],
            "cli": ["base", "agent", "nativehost"], "mcp": ["base", "agent", "nativehost"],
            "web": ["base", "nativehost", "platform"],
-           "wasm": ["base", "core", "decl", "index", "agent", "visual", "vault"], "pack": ["base"], "interop": ["base"]}
+           "wasm": ["base", "core", "decl", "index", "agent", "visual", "vault"], "pack": ["base"], "interop": ["base", "core"]}
 for package, dependencies in allowed.items():
     imports = re.findall(r'"memorycorridor/([^"]+)"', (ROOT / package / "moon.pkg").read_text())
     assert set(imports) <= set(dependencies), (package, imports)

@@ -349,6 +349,65 @@ def main():
             check("second host process refused by the vault flock; release lets it in")
         finally:
             s.close()
+
+    # wasm HTTP direct face: hosts accept loop + module web_handle_connection
+    # over the same module. Pins module-owned HEAD suppression and the request
+    # reader's terminator handling (the last header line sits at the
+    # terminator start and must not be swallowed).
+    import socket
+    with tempfile.TemporaryDirectory(prefix="memorycorridor-wasm-http-") as http_root:
+        subprocess.run(["python3", str(REPO / "scripts/reading_fixture.py"), http_root],
+                       capture_output=True, text=True, check=True)
+        with socket.socket() as picker:
+            picker.bind(("127.0.0.1", 0))
+            http_port = picker.getsockname()[1]
+        log = tempfile.TemporaryFile(mode="w+")
+        http_host = subprocess.Popen(
+            [sys.executable, str(HOST), "--module", str(MODULE), "--root", http_root,
+             "--serve", str(http_port)],
+            stdout=subprocess.PIPE, stderr=log, text=True)
+        try:
+            assert select.select([http_host.stdout], [], [], 60)[0], "wasm http startup timed out"
+            ready = http_host.stdout.readline()
+            assert f"127.0.0.1:{http_port}" in ready, ready
+
+            def raw(payload):
+                with socket.create_connection(("127.0.0.1", http_port), timeout=60) as probe:
+                    probe.sendall(payload)
+                    probe.shutdown(socket.SHUT_WR)
+                    pieces = []
+                    while True:
+                        piece = probe.recv(65536)
+                        if not piece:
+                            break
+                        pieces.append(piece)
+                    return b"".join(pieces)
+
+            host_header = f"Host: 127.0.0.1:{http_port}".encode()
+            minimal = raw(b"GET /api/status HTTP/1.1\r\n" + host_header + b"\r\n\r\n")
+            assert minimal.startswith(b"HTTP/1.1 200 OK"), minimal[:120]
+            assert b'"op":"status"' in minimal
+            check("wasm http face answers a Host-last minimal request with 200")
+            head = raw(b"HEAD / HTTP/1.1\r\n" + host_header + b"\r\n\r\n")
+            assert head.startswith(b"HTTP/1.1 200 OK"), head[:120]
+            assert head.endswith(b"Connection: close\r\n\r\n"), head[-120:]
+            check("wasm http face suppresses the body for HEAD like the native face")
+            oversized = raw(b"GET /api/status HTTP/1.1\r\n" + host_header +
+                            b"\r\nX-Pad: " + b"a" * 140000 + b"\r\n\r\n")
+            assert oversized.startswith(b"HTTP/1.1 431 "), oversized[:120]
+            assert oversized.rstrip().endswith(b'{"error":"headers_too_large","ok":false}'), oversized[-120:]
+            check("wasm http face keeps the byte ceiling across the terminator block and delivers the 431")
+        finally:
+            http_host.terminate()
+            try:
+                http_host.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                http_host.kill()
+                http_host.wait(timeout=30)
+            log.seek(0)
+            log_text = log.read()
+            assert "Traceback" not in log_text, log_text
+            log.close()
     print("wasm service e2e: boundary scenarios passed")
 
 

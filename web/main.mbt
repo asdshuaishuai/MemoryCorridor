@@ -117,6 +117,20 @@ fn send_response(conn : Int, response : Response, head_only : Bool) -> Unit {
   }
 }
 
+// A 431 usually fires while the peer is still sending, so closing right after
+// the response leaves unread bytes in the socket and the kernel answers them
+// with an RST that swallows the response. Drain a bounded amount (the request
+// reader already holds the connection hostage to any slow sender, so this adds
+// no new exposure) so the response gets acknowledged before close.
+fn drain_request(conn : Int) -> Unit {
+  let buf = Bytes::new(16384)
+  for round = 0; round < 64; round = round + 1 {
+    let n = @platform.tcp_recv(conn, buf, 16384)
+    ignore(round)
+    if n <= 0 { return }
+  }
+}
+
 // ------------------------------------------------------------ byte tools
 
 fn ascii_range(data : Array[Int], start : Int, end : Int) -> String {
@@ -288,11 +302,14 @@ fn read_request(conn : Int) -> ReadOutcome {
       }
       scanned = scanned + 1
     }
-    if end >= 0 {
-      break
-    }
+    // The byte ceiling covers every accumulated block, including the one the
+    // terminator arrived in — checking only the no-terminator path let an
+    // oversized header block through when both landed in the same read.
     if data.length() > 131072 {
       return Rejected(431, "headers_too_large")
+    }
+    if end >= 0 {
+      break
     }
     let buf = Bytes::new(16384)
     let n = @platform.tcp_recv(conn, buf, 16384)
@@ -315,6 +332,16 @@ fn read_request(conn : Int) -> ReadOutcome {
       lines.push((line_start, stop))
       line_start = i + 1
     }
+  }
+  // The terminator \r\n\r\n starts at the last header line's own \r, so the
+  // scan above never sees that line's \n. Without this tail the final line
+  // (often Host) is swallowed whole and a valid request is misjudged.
+  if line_start < end {
+    let mut stop = end
+    if stop > line_start && data[stop - 1] == 0x0D {
+      stop = stop - 1
+    }
+    lines.push((line_start, stop))
   }
   if lines.length() > 101 {
     return Rejected(431, "headers_too_large")
@@ -682,7 +709,10 @@ fn dispatch(root : String, op : String, fields : Map[String, Json], view : Bool)
 fn serve_connection(root : String, bound : Int, conn : Int) -> Unit {
   match read_request(conn) {
     Disconnect => ()
-    Rejected(status, code) => send_response(conn, error_response(status, code), false)
+    Rejected(status, code) => {
+      send_response(conn, error_response(status, code), false)
+      if status == 431 { drain_request(conn) }
+    }
     Ready(request) => {
       let response = route_request(root, bound, request)
       send_response(conn, response, request.verb == "HEAD")

@@ -355,7 +355,8 @@ def serve(module_path, root, http_port=None, mcp_mode=False):
 
     if http_port is not None:
         # HTTP 直跑面：宿主 accept 循环 + 模块 web_handle_connection。
-        # HOST 头校验由模块内部按 port 完成；串行逐连接（与 native web 一致）。
+        # HOST 头校验与 HEAD 剥正文均由模块内部按请求完成；head_only 恒传 0
+        # 仅作兼容参数。串行逐连接（与 native web 一致）。
         print(f"wasipure http serving on 127.0.0.1:{http_port}", flush=True)
         web = exports["web_handle_connection"]
         while True:

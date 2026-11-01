@@ -68,28 +68,44 @@ fn resolve(path : String, from : String) -> String? {
   if result == "" { None } else { Some(result) }
 }
 
+// Link rewriting shares core's code-region classification: code_line_mask
+// keeps fenced blocks, indented code and their blank interior lines intact,
+// and inline code spans use the same cross-line backtick-run pairing as
+// wikilinks, so import/export cannot rewrite link syntax inside code.
 pub fn native_links(doc : Document, ids : Map[String, String]) -> (String, Array[String]) {
   let broken : Array[String] = []
-  let lines : Array[String] = []
-  let mut fence = ""
-  for view in doc.body.split("\n") {
-    let line = view.to_owned()
-    let trim = line.trim_start()
-    if trim.has_prefix("```") || trim.has_prefix("~~~") {
-      let marker = trim[:3].to_owned()
-      if fence == "" { fence = marker } else if fence == marker { fence = "" }
-      lines.push(line); continue
-    }
-    if fence != "" { lines.push(line); continue }
+  let lines = doc.body.split("\n").map(x => x.to_owned()).to_array()
+  let mask = @core.code_line_mask(lines)
+  let out_lines : Array[String] = []
+  let mut code_ticks = 0
+  for line_index = 0; line_index < lines.length(); line_index = line_index + 1 {
+    let line = lines[line_index]
+    if mask[line_index] { out_lines.push(line); continue }
     let out : Array[String] = []
     let mut i = 0
-    let mut inline = false
     while i < line.length() {
-      if line[i] == b'`'.to_uint16() { inline = !inline }
-      if !inline && i+1 < line.length() && line[i:i+2] == "[[" {
+      if line[i] == b'`'.to_uint16() && !@core.escaped_marker(line, i) {
+        let start = i
+        while i < line.length() && line[i] == b'`'.to_uint16() { i = i + 1 }
+        out.push(line[start:i].to_owned())
+        let run = i - start
+        if code_ticks == 0 {
+          if @core.has_code_closer(lines, line_index, i, run) { code_ticks = run }
+        } else if code_ticks == run { code_ticks = 0 }
+        continue
+      }
+      if code_ticks == 0 && i+1 < line.length() && line[i:i+2] == "[[" && !@core.escaped_marker(line, i) {
         match line[i+2:].split_once("]]") {
           Some((inside, after)) => {
             let args = inside.split("|").map(s => s.to_owned()).to_array()
+            if args.length() > 2 {
+              // More than one alias segment cannot survive the round trip:
+              // keep the link verbatim (escaped) and flag the target instead
+              // of silently dropping the tail.
+              out.push("\\[\\[" + @base.replace_all(inside.to_owned(), "[[", "\\[\\[") + "]]")
+              if !broken.contains(args[0]) { broken.push(args[0]) }
+              i = line.length()-after.length(); continue
+            }
             let (target_path, fragment) = anchor_parts(args[0])
             let key = if target_path.has_suffix(".md") { target_path } else { target_path + ".md" }
             let resolved = resolve(key, doc.path)
@@ -103,7 +119,7 @@ pub fn native_links(doc : Document, ids : Map[String, String]) -> (String, Array
           None => { out.push("\\[\\["); i = i+2; continue }
         }
       }
-      if !inline && line[i] == b'['.to_uint16() && (i == 0 || line[i-1] != b'!'.to_uint16()) {
+      if code_ticks == 0 && line[i] == b'['.to_uint16() && (i == 0 || line[i-1] != b'!'.to_uint16()) {
         match line[i+1:].split_once("](") {
           Some((label, tail)) => match tail.split_once(")") {
             Some((url, after)) => {
@@ -128,32 +144,43 @@ pub fn native_links(doc : Document, ids : Map[String, String]) -> (String, Array
       }
       out.push(line[i:i+1].to_owned()); i = i+1
     }
-    lines.push(out.join(""))
+    out_lines.push(out.join(""))
   }
-  (lines.join("\n"), broken)
+  (out_lines.join("\n"), broken)
 }
 
 pub fn okf_links(body : String, paths : Map[String, String]) -> String {
-  let lines : Array[String] = []
-  let mut fence = ""
-  for view in body.split("\n") {
-    let line = view.to_owned()
-    let trim = line.trim_start()
-    if trim.has_prefix("```") || trim.has_prefix("~~~") {
-      let marker = trim[:3].to_owned()
-      if fence == "" { fence = marker } else if fence == marker { fence = "" }
-      lines.push(line); continue
-    }
-    if fence != "" { lines.push(line); continue }
+  let lines = body.split("\n").map(x => x.to_owned()).to_array()
+  let mask = @core.code_line_mask(lines)
+  let out_lines : Array[String] = []
+  let mut code_ticks = 0
+  for line_index = 0; line_index < lines.length(); line_index = line_index + 1 {
+    let line = lines[line_index]
+    if mask[line_index] { out_lines.push(line); continue }
     let out : Array[String] = []
-    let mut inline = false
     let mut i = 0
     while i < line.length() {
-      if line[i] == b'`'.to_uint16() { inline = !inline }
-      if !inline && i+1 < line.length() && line[i:i+2] == "[[" {
+      if line[i] == b'`'.to_uint16() && !@core.escaped_marker(line, i) {
+        let start = i
+        while i < line.length() && line[i] == b'`'.to_uint16() { i = i + 1 }
+        out.push(line[start:i].to_owned())
+        let run = i - start
+        if code_ticks == 0 {
+          if @core.has_code_closer(lines, line_index, i, run) { code_ticks = run }
+        } else if code_ticks == run { code_ticks = 0 }
+        continue
+      }
+      if code_ticks == 0 && i+1 < line.length() && line[i:i+2] == "[[" && !@core.escaped_marker(line, i) {
         match line[i+2:].split_once("]]") {
           Some((inside, after)) => {
             let args = inside.split("|").map(s => s.to_owned()).to_array()
+            if args.length() > 2 {
+              // A wikilink with extra alias segments has no OKF equivalent;
+              // leaving it verbatim is visible and lossless, while dropping
+              // the tail would silently change the text.
+              out.push("[[" + inside.to_owned() + "]]")
+              i = line.length()-after.length(); continue
+            }
             let (target_id, fragment) = anchor_parts(args[0])
             let label = if args.length() > 1 { args[1] } else { target_id }
             let escaped = @base.replace_all(@base.replace_all(label, "[", "\\["), "]", "\\]")
@@ -166,7 +193,7 @@ pub fn okf_links(body : String, paths : Map[String, String]) -> String {
       }
       out.push(line[i:i+1].to_owned()); i = i+1
     }
-    lines.push(out.join(""))
+    out_lines.push(out.join(""))
   }
-  lines.join("\n")
+  out_lines.join("\n")
 }

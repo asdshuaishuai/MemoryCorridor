@@ -116,6 +116,20 @@ fn send_response(conn : Int, response : Response, head_only : Bool) -> Unit {
   }
 }
 
+// A 431 usually fires while the peer is still sending, so closing right after
+// the response leaves unread bytes in the socket and the kernel answers them
+// with an RST that swallows the response. Drain a bounded amount (the request
+// reader already holds the connection hostage to any slow sender, so this adds
+// no new exposure) so the response gets acknowledged before the host closes.
+fn drain_request(conn : Int) -> Unit {
+  let buf = Bytes::new(16384)
+  for round = 0; round < 64; round = round + 1 {
+    ignore(round)
+    let n = sock_read(conn, buf)
+    if n <= 0 { return }
+  }
+}
+
 // ------------------------------------------------------------ byte tools
 
 fn ascii_range(data : Array[Int], start : Int, end : Int) -> String {
@@ -306,11 +320,14 @@ fn read_request(conn : Int) -> ReadOutcome {
       }
       scanned = scanned + 1
     }
-    if end >= 0 {
-      break
-    }
+    // The byte ceiling covers every accumulated block, including the one the
+    // terminator arrived in — checking only the no-terminator path let an
+    // oversized header block through when both landed in the same read.
     if data.length() > 131072 {
       return Rejected(431, "headers_too_large")
+    }
+    if end >= 0 {
+      break
     }
     let buf = Bytes::new(16384)
     let n = sock_read(conn, buf)
@@ -333,6 +350,16 @@ fn read_request(conn : Int) -> ReadOutcome {
       lines.push((line_start, stop))
       line_start = i + 1
     }
+  }
+  // The terminator \r\n\r\n starts at the last header line's own \r, so the
+  // scan above never sees that line's \n. Without this tail the final line
+  // (often Host) is swallowed whole and a valid request is misjudged.
+  if line_start < end {
+    let mut stop = end
+    if stop > line_start && data[stop - 1] == 0x0D {
+      stop = stop - 1
+    }
+    lines.push((line_start, stop))
   }
   if lines.length() > 101 {
     return Rejected(431, "headers_too_large")
@@ -677,14 +704,21 @@ fn route_request(root : String, bound : Int, request : ReadyRequest) -> Response
 }
 
 
-// 导出入口：host 的 accept 循环每接受一条连接调用一次；head_only=1 表示
-// 客户端为 HEAD（只发头）。root 固定为 "."（preopen 根即 vault）。
+// 导出入口：host 的 accept 循环每接受一条连接调用一次。HEAD 与 native web
+// 一致由请求动词决定是否剥除正文；head_only 只是宿主的补充断言（现宿主
+// 恒传 0），不再是唯一判据——那曾让 wasm 面对 HEAD 回完整正文。root 固定
+// 为 "."（preopen 根即 vault）。
 pub fn web_handle_connection(conn : Int, port : Int, head_only : Int) -> Int {
-  let response = match read_request(conn) {
+  match read_request(conn) {
     Disconnect => return 0
-    Rejected(status, code) => error_response(status, code)
-    Ready(request) => route_request(".", port, request)
+    Rejected(status, code) => {
+      send_response(conn, error_response(status, code), false)
+      if status == 431 { drain_request(conn) }
+    }
+    Ready(request) => {
+      let response = route_request(".", port, request)
+      send_response(conn, response, request.verb == "HEAD" || head_only == 1)
+    }
   }
-  send_response(conn, response, head_only == 1)
   0
 }

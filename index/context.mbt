@@ -169,6 +169,9 @@ pub fn similar_tokens(text : String) -> Array[String] {
 }
 
 pub fn similar_merge(entry_tokens : Array[String], other_tokens : Array[String]) -> Bool {
+  // 词元序列为空说明分词器提不出任何词（纯标点/纯符号正文），两侧不携带
+  // 相同词元序列，永远不能据此判成近似重复把整页吞掉。
+  if entry_tokens.length() == 0 || other_tokens.length() == 0 { return false }
   if entry_tokens.length() != other_tokens.length() { return false }
   for i = 0; i < entry_tokens.length(); i = i + 1 {
     if entry_tokens[i] != other_tokens[i] { return false }

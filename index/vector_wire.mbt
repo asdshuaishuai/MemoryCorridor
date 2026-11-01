@@ -23,7 +23,11 @@ pub fn values_to_base64(space : VectorSpace, values : Array[Double]) -> String r
   ignore(normalize(space, values))
   let bytes : Array[Byte] = []
   for value in values {
-    let bits = Float::from_double(value).reinterpret_as_uint()
+    let single = Float::from_double(value)
+    // normalize 只按 Double 校验有限性；超出 binary32 范围的有限值在这里
+    // 舍入成 ±Inf，编码端必须先失败，否则产出的是自己的解码器必拒的串。
+    if single.is_nan() || single.is_inf() { @base.fail("vector_base64_overflow") }
+    let bits = single.reinterpret_as_uint()
     bytes.push((bits & 0xff).to_byte())
     bytes.push(((bits >> 8) & 0xff).to_byte())
     bytes.push(((bits >> 16) & 0xff).to_byte())

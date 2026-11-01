@@ -27,7 +27,15 @@ pub(all) struct TextIndex {
 } derive(ToJson)
 pub extend TextIndex with ToJson::{to_json}
 
-pub fn build_index(documents : Array[Document]) -> TextIndex {
+pub fn build_index(documents : Array[Document]) -> TextIndex raise @base.Fault {
+  // 检索命中以 id 为键：重复 id 会让调用方拿到两行同名 Hit，且两份权重
+  // 累进同一个分数。与核心层 validate_entries 的唯一性校验对齐，这里显式
+  // 拒绝而不是静默合并。
+  let seen : Map[String, Bool] = Map([])
+  for doc in documents {
+    if seen.contains(doc.id) { @base.fail("index_duplicate_id: " + doc.id) }
+    seen[doc.id] = true
+  }
   let postings : Map[String, Array[Posting]] = Map([])
   for doc in documents {
     let title : Map[String, Int] = Map([])
@@ -53,21 +61,15 @@ pub fn build_index(documents : Array[Document]) -> TextIndex {
 // CJK text is indexed as unigrams plus bigrams across Han, kana and Hangul
 // syllables, so substring queries work without a language-specific dictionary.
 // Latin/Greek/Cyrillic runs stay word tokens; punctuation and whitespace split.
-fn cjk_unit(code : Int) -> Bool {
-  (code >= 0x3400 && code <= 0x9fff) || (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0x20000 && code <= 0x323af) ||
-    (code >= 0x3040 && code <= 0x309f) || (code >= 0x30a0 && code <= 0x30ff) ||
-    (code >= 0x31f0 && code <= 0x31ff) || (code >= 0xff66 && code <= 0xff9d) ||
-    (code >= 0xac00 && code <= 0xd7a3)
-}
-
+// The scalar ranges come from the shared predicate in base, so the token table
+// and the cost estimate cannot drift apart.
 pub fn tokens(text : String) -> Array[String] {
   let out : Array[String] = []
   let mut word = ""
   let mut previous = ""
   for c in text.to_lower().iter() {
     let code = c.to_int()
-    if cjk_unit(code) {
+    if @base.cjk_unit(code) {
       if word != "" { out.push(word); word = "" }
       let current = c.to_string()
       out.push(current)
@@ -92,7 +94,7 @@ pub fn document(entry : @core.Entry, text : String) -> Document raise @base.Faul
     title_terms: tokens(page.title), body_terms: tokens(page.body) }
 }
 
-pub fn search(documents : Array[Document], query : String, limit? : Int = 10) -> Array[Hit] {
+pub fn search(documents : Array[Document], query : String, limit? : Int = 10) -> Array[Hit] raise @base.Fault {
   search_index(build_index(documents), query, limit~)
 }
 

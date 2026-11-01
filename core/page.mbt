@@ -189,7 +189,10 @@ fn wikilink_page_id(target : String) -> String raise @base.Fault {
   }
 }
 
-fn has_code_closer(lines : Array[String], line_index : Int, from : Int, run : Int) -> Bool {
+// Backtick-run pairing is shared with the interop link rewriters so link
+// conversion and wikilink scanning cannot disagree about where a code span
+// opens or closes.
+pub fn has_code_closer(lines : Array[String], line_index : Int, from : Int, run : Int) -> Bool {
   let mut cursor = from
   let first = lines[line_index]
   while cursor < first.length() {
@@ -219,7 +222,9 @@ fn has_code_closer(lines : Array[String], line_index : Int, from : Int, run : In
   false
 }
 
-fn escaped_marker(line : String, index : Int) -> Bool {
+// Whether the marker at `index` is escaped by an odd number of backslashes.
+// Shared with the interop link rewriters alongside `has_code_closer`.
+pub fn escaped_marker(line : String, index : Int) -> Bool {
   let mut slashes = 0
   let mut cursor = index
   while cursor > 0 && line[cursor-1] == b'\\'.to_uint16() {

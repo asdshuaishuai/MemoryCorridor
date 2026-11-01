@@ -64,7 +64,9 @@ fn zip_encode(files : Array[File]) -> Bytes raise @base.Fault {
     u16(directory, name.length()); u16(directory, 0); u16(directory, 0)
     u16(directory, 0); u16(directory, 0); u32(directory, 0x81a40000U)
     u32(directory, offset.reinterpret_as_uint()); append(directory, name)
-    if out.length()+directory.length() > 16777194 { @base.fail("zip_total_limit") }
+    // 16 MiB 是整条打包流的唯一上限，这里连同 22 字节 EOCD 一起计入，
+    // 让限额常数只在这一处出现；bundle 层按同一常数对可编码字节数预检。
+    if out.length()+directory.length()+22 > 16777216 { @base.fail("zip_total_limit") }
   }
   let central_offset = out.length()
   append(out, Bytes::from_array(directory))

@@ -19,10 +19,12 @@ fn validate_recovery_history(text : String) -> Unit raise @base.Fault {
     @base.keys(change, ["path", "before", "after"])
     let path = @base.text(@base.field(change, "path"))
     @base.path(path)
-    if !(path == "purpose.md" || path.has_prefix("wiki/") || path.has_prefix("state/orders/") ||
-      path.has_prefix("state/events/") || path.has_prefix("state/reviews/") || path.has_prefix("state/research/") ||
-      path.has_prefix("state/suggestions/") || path.has_prefix("state/overview/") || path.has_prefix("state/evidence/") ||
-      path.has_prefix("state/providers/") || path.has_prefix("state/provider-jobs/") || path.has_prefix("vectors/")) {
+    // 与 validate_change_path 读同一份目录清单：引擎中断恢复后自己写出的
+    // history/*.json 会被 snapshot_entries 打进包，这里的白名单一旦比提交
+    // 窄，含恢复日志的 vault 就永远无法从自己的备份解包。
+    if !(path == "purpose.md" || path.has_prefix("wiki/") || path.has_prefix("vectors/") ||
+      path.has_prefix("state/transactions/history/") ||
+      @core.state_directories().any(p => path.has_prefix(p + "/"))) {
       @base.fail("recovery_history_path_refused: " + path)
     }
     for key in ["before", "after"] {

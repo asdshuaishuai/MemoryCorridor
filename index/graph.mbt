@@ -29,7 +29,9 @@ pub fn build_graph(pages : Array[(@core.Entry, @core.Page)]) -> Graph {
     let links = page.links.copy()
     links.sort_by(@base.compare)
     for target in links {
-      if nodes.any(n => n.id == target) {
+      // 自链不是关系：页面引用自己不产生边，邻居表、度数与孤岛判定
+      // 都不把它算作一条连接。
+      if target != entry.id && nodes.any(n => n.id == target) {
         edges.push({ source: entry.id, target, kind: "wikilink", weight: 3.0 })
       }
     }
@@ -51,6 +53,8 @@ pub fn neighbors(graph : Graph, id : String) -> Array[String] raise @base.Fault 
   let found : Array[String] = []
   for edge in graph.edges {
     let other = if edge.source == id { edge.target } else if edge.target == id { edge.source } else { continue }
+    // 手工构造的图可能带自环边；节点永远不是自己的邻居。
+    if other == id { continue }
     if !found.contains(other) { found.push(other) }
   }
   found.sort_by(@base.compare)
@@ -129,7 +133,9 @@ pub fn weighted_path(graph : Graph, from : String, to : String) -> Array[String]
         @base.fail("graph_edge_weight_invalid")
       }
       let candidate = best + edge.weight
-      let old = distances[neighbor]
+      // 边的端点可能不在 nodes 里（Graph 是宿主可手工构造的 pub(all) 结构）。
+      // 这样的一端永远到不了终点，按无穷大对待即可，缺键索引会让整个进程 abort。
+      let old = distances.get(neighbor).unwrap_or(1.0e300)
       if candidate < old {
         distances[neighbor] = candidate
         parent[neighbor] = current
@@ -184,6 +190,9 @@ pub fn expand(graph : Graph, seeds : Array[String], hops : Int) -> Array[Expansi
     for id in layer {
       for edge in graph.edges {
         let other = if edge.source == id { edge.target } else if edge.target == id { edge.source } else { continue }
+        // 与 neighbors/insights 一致：不在 nodes 里的端点不是图的一部分，
+        // 不让 Expansion 行携带调用方查不到的幽灵 id。
+        if !graph.nodes.any(n => n.id == other) { continue }
         if edge.weight.is_nan() || edge.weight.is_inf() || edge.weight <= 0.0 {
           @base.fail("graph_edge_weight_invalid")
         }
@@ -326,6 +335,8 @@ pub fn insights(graph : Graph) -> Json raise @base.Fault {
     let mut weighted = 0.0
     for edge in graph.edges {
       if edge.source == id || edge.target == id {
+        // 加权度的口径与邻居表一致：自环边不构成关系，不计入。
+        if edge.source == id && edge.target == id { continue }
         if edge.weight.is_nan() || edge.weight.is_inf() || edge.weight <= 0.0 {
           @base.fail("graph_edge_weight_invalid")
         }
