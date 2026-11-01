@@ -43,6 +43,12 @@ pub fn commit_pages(
   if order.phase == "committed" { return { "order": id, "phase": "committed", "fingerprint": @vault.fingerprint(entries), "replayed": true } }
   if order.phase != "analysis-done" { @base.fail("order_phase: analysis-submit required") }
   if order.page_hashes.get("purpose.md") != Some(@base.hex_hash(@vault.required(store, "purpose.md"))) { @base.fail("purpose_conflict: refresh context and analysis") }
+  // The freshness gate holds with or without a token: a host that omits
+  // context_token must not publish into a catalog that drifted since the
+  // order froze its inputs, while a carried token is checked by the guard.
+  if order.page_hashes != context_inputs(entries) || order.context_version != context_version(entries) {
+    @base.fail("context_stale: call context and regenerate")
+  }
   if at.length() < 10 || at.contains("\n") { @base.fail("at_required: explicit ISO date/time input") }
   let source = @core.find(entries, order.source)
   if source.kind != "raw" || source.stale || source.sha256 != order.source_hash ||

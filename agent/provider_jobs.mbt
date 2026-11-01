@@ -339,13 +339,19 @@ fn provider_job_close(store : @vault.Storage, entries : Array[@core.Entry], requ
   let old = provider_job_row(@base.parse(before))
   let provider = @base.text(@base.field(old, "provider"))
   let kind = @base.text(@base.field(old, "kind"))
-  let space = @index.space_from_json(@base.field(old, "space"))
-  ignore(provider_for(store, entries, provider, kind, space))
   let at = @base.text(@base.field(request, "at"))
   provider_job_time(at, "at")
   let next_status = if complete { "completed" } else { "cancelled" }
   if @base.text(@base.field(old, "status")) != "pending" {
     if @base.text(@base.field(old, "status")) == next_status && @base.text(@base.field(old, "closed_at")) == at {
+      if complete {
+        // A replay must not bless a payload the stored result never held: the
+        // hash recorded at close time is the only accepted result.
+        let result = @base.field(request, "result")
+        if @base.field(old, "result_hash") != @base.hex_hash(@base.canonical(result)).to_json() {
+          @base.fail("provider_job_terminal")
+        }
+      }
       return { "id": id, "status": next_status, "replayed": true }
     }
     @base.fail("provider_job_terminal")
@@ -355,6 +361,10 @@ fn provider_job_close(store : @vault.Storage, entries : Array[@core.Entry], requ
   let changes : Array[@vault.Change] = []
   let mut applied_vectors = 0
   if complete {
+    // Result attribution needs the provider on record and active. Cancellation
+    // stays available after a revocation, so it carries no such gate.
+    let space = @index.space_from_json(@base.field(old, "space"))
+    ignore(provider_for(store, entries, provider, kind, space))
     let result = @base.field(request, "result")
     if result == Json::null() { @base.fail("provider_job_result_invalid") }
     if kind == "embedding" {

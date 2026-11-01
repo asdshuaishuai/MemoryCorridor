@@ -25,6 +25,16 @@ fn memory_time(value : String) -> Unit raise @base.Fault {
   }
 }
 
+// Transitions move a note's clock forward only. Timestamps are caller-supplied
+// canonical ISO strings, so their lexical order is the engine's deterministic
+// comparison (the same rule provider leases use); a transition stamped before
+// the note's own history would record archived_at < created_at.
+fn memory_time_order(at : String, note : MemoryNote) -> Unit raise @base.Fault {
+  if @base.compare(at, note.created_at) < 0 || @base.compare(at, note.updated_at) < 0 {
+    @base.fail("memory_time_order_invalid: at precedes created_at/updated_at of " + note.id)
+  }
+}
+
 fn memory_key(value : String) -> Unit raise @base.Fault {
   if value.is_empty() || value.length() > 256 || value.contains("\n") || value.contains("\r") {
     @base.fail("memory_idempotency_key_invalid")
@@ -422,9 +432,14 @@ pub fn memory_protect(
   memory_time(at)
   let path = memory_path(id)
   let note = memory_load(store, id)
+  // Pinning marks an active judgment as important; archived and superseded
+  // notes are history and stay out of the pinned state in both directions.
+  if note.status == "superseded" { @base.fail("memory_superseded_note_refused") }
+  if note.status == "archived" { @base.fail("memory_archived_note_refused: restore the note before pinning") }
   if note.pinned == pinned && note.updated_at == at {
     return { "id": id, "path": path, "pinned": pinned, "replayed": true }
   }
+  memory_time_order(at, note)
   let record : MemoryNote = { ..note, pinned, updated_at: at }
   let content = @base.canonical(record.to_json())
   let event_path = "state/events/memory-pin-" + id + "-" +
@@ -515,6 +530,19 @@ fn lint_memory_notes(store : @vault.Storage, entries : Array[@core.Entry], issue
         match note {
           None => ()
           Some(parsed) => {
+            // The transition operations refuse backwards timestamps; lint
+            // reports the inverted clocks that older or hand-written records
+            // may still carry.
+            let inverted = @base.compare(parsed.updated_at, parsed.created_at) < 0 ||
+              (match parsed.archived_at {
+                Some(at) => @base.compare(at, parsed.created_at) < 0
+                None => false
+              })
+            if inverted {
+              lint_add(issues, "memory_time_inverted", entry_path(parsed), entry_path(parsed),
+                "memory note records updated_at/archived_at earlier than created_at",
+                "correct the record timestamps or supersede the note", "warning")
+            }
             // A superseded note is history: its source drift is not actionable,
             // and `memory-list` still reports it for audit.
             if parsed.status != "superseded" {
@@ -602,6 +630,7 @@ fn memory_transition(
   store : @vault.Storage, entries : Array[@core.Entry], note : MemoryNote,
   status : String, at : String, event_op : String,
 ) -> Json raise @base.Fault {
+  memory_time_order(at, note)
   let path = memory_path(note.id)
   let record : MemoryNote = {
     ..note,
@@ -683,8 +712,17 @@ fn memory_write(
   let rows = memory_rows(store, entries)
   for note in rows {
     if note.id == id {
-      return { "id": id, "path": path, "status": note.status, "replayed": true,
-        "record": memory_view(note, entries, false) }
+      // A replay reports the state it actually left behind: an active note is
+      // a true retry, while archived and superseded notes stay invisible, so
+      // answering replayed would read as "recorded and readable".
+      if note.status == "active" {
+        return { "id": id, "path": path, "status": note.status, "replayed": true,
+          "record": memory_view(note, entries, false) }
+      }
+      if note.status == "archived" {
+        @base.fail("memory_archived_note_refused: same key and content are archived; run memory-restore to reactivate")
+      }
+      @base.fail("memory_superseded_note_refused: same key and content were superseded; submit against the active record")
     }
   }
   // Identical understanding under another key is a duplicate, not a new note.
@@ -699,11 +737,20 @@ fn memory_write(
       @base.fail("memory_duplicate_text: " + note.id + "; supersede or archive that note instead")
     }
   }
+  // A replacement writes the old note's history, so its timestamp must move
+  // that note forward too; submitting fresh notes has no such constraint.
+  match previous {
+    Some(old) => memory_time_order(at, old)
+    None => ()
+  }
   let record : MemoryNote = {
     id, kind, scope, text: body, conditions, sources, status: "active", key,
     created_at: at, updated_at: at, archived_at: None,
     source_hashes,
-    superseded_by: None, supersedes: previous.map(p => p.id), pinned: false,
+    superseded_by: None, supersedes: previous.map(p => p.id),
+    // A human's importance marker survives replacement: otherwise the pinned
+    // judgment becomes prunable the moment it is superseded, silently.
+    pinned: match previous { Some(old) => old.pinned; None => false },
     last_used_at: None, note_hash: digest,
   }
   let content = @base.canonical(record.to_json())

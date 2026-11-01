@@ -93,7 +93,20 @@ fn provider_register(store : @vault.Storage, entries : Array[@core.Entry], reque
   match (store.read)(path) {
     Some(existing) => {
       let old = provider_row(@base.parse(existing))
-      if old == row { return { "provider": provider, "status": "active", "replayed": true, "path": path } }
+      // Replay compares the registration identity alone: heartbeats move
+      // `last_seen` and revocation rewrites `status`/`closed_at`, and neither
+      // may close the retry window of the original request. The live status is
+      // echoed back so a revoked provider is not reported active.
+      let same = @base.field(old, "provider") == @base.field(row, "provider") &&
+        @base.field(old, "kind") == @base.field(row, "kind") &&
+        @base.field(old, "space") == @base.field(row, "space") &&
+        @base.field(old, "capabilities") == @base.field(row, "capabilities") &&
+        @base.field(old, "protocol") == @base.field(row, "protocol") &&
+        @base.field(old, "registered_at") == @base.field(row, "registered_at")
+      if same {
+        return { "provider": provider, "status": @base.text(@base.field(old, "status")),
+          "replayed": true, "path": path }
+      }
       @base.fail("provider_registration_conflict: " + provider)
     }
     None => ()

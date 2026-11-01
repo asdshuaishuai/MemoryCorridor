@@ -148,8 +148,12 @@ pub fn quality_audit(store : @vault.Storage, entries : Array[@core.Entry], reque
   let audit_id = @base.hex_hash("quality-audit\n" + at + "\n" + baseline)
   let event_path = "state/events/quality-audit-" + audit_id + ".json"
   if entries.any(e => e.path == event_path) {
+    // `fingerprint` stays the live catalog fingerprint on both paths so two
+    // runs of the same audit are comparable; the input snapshot it addressed
+    // is reported separately as `input_fingerprint`.
     return { "id": audit_id, "issues": issues.map(quality_issue_json).to_json(),
-      "created": Json::array([]), "replayed": true, "fingerprint": baseline }
+      "created": Json::array([]), "replayed": true,
+      "fingerprint": @vault.fingerprint(entries), "input_fingerprint": baseline }
   }
   let mut next = entries.copy()
   let changes : Array[@vault.Change] = []
@@ -178,5 +182,6 @@ pub fn quality_audit(store : @vault.Storage, entries : Array[@core.Entry], reque
   with_views(store, next, changes, "## [" + at + "] quality-audit | " + audit_id + "\n")
   @vault.commit(store, current_fingerprint, next, changes)
   { "id": audit_id, "issues": issues.map(quality_issue_json).to_json(),
-    "created": created.to_json(), "replayed": false, "fingerprint": @vault.fingerprint(next) }
+    "created": created.to_json(), "replayed": false,
+    "fingerprint": @vault.fingerprint(next), "input_fingerprint": baseline }
 }
