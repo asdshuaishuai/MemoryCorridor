@@ -10,7 +10,11 @@
   it with `scripts/release_e2e.py`. The archive and checksum are uploaded as
   `memorycorridor-native-linux`. The gate includes the wasm service e2e
   (`scripts/wasm_service_e2e.py`), which bootstraps a wasmtime venv on the
-  runner.
+  runner. The job budget is `timeout-minutes: 120` (raised from 60 after the
+  gate grew past one hour with 87 mutation rebuilds and the added evaluation
+  suites; a run that hits the budget is reported as `cancelled`, which
+  `gh run watch --exit-status` wrongly treats as success — check
+  `gh run view` conclusions, not the watcher exit code).
 
 Cross-platform delivery is the wasm service runtime's job: the engine module
 runs under any WASM runtime with a thin host (see `docs/wasm.md`), so the
