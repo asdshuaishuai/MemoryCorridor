@@ -65,10 +65,19 @@ pub fn generate(view : View) -> String {
 
 pub fn parse(text : String) -> View raise @base.Fault {
   let code = code_block(text)
-  let start = code_header() + "view("
-  let end = ")" + code_footer()
-  if !code.has_prefix(start) || !code.has_suffix(end) { @base.fail("view_literal_required: corridor-view-v1") }
-  let args = @base.array(@base.parse("[" + code[start.length():code.length()-end.length()].to_owned() + "]"))
+  // Same closed literal subset as the catalog: scaffolding matched token for
+  // token, the single view(...) call read structurally, so comments,
+  // whitespace and MoonBit escapes are accepted the way moon accepts them.
+  let tokens = try @base.literal_tokens(code) catch {
+    @base.Fault(message) => raise @base.Fault("view_literal_required: corridor-view-v1 (" + message + ")")
+  }
+  let header = try @base.literal_tokens(code_header()) catch { _ => [] }
+  if !@base.literal_prefix_matches(tokens, header) { @base.fail("view_literal_required: corridor-view-v1") }
+  let (args, next) = try @base.literal_call(tokens, header.length(), "view") catch {
+    @base.Fault(message) => raise @base.Fault("view_literal_required: corridor-view-v1 (" + message + ")")
+  }
+  let footer = try @base.literal_tokens(code_footer()) catch { _ => [] }
+  if !@base.literal_tail_matches(tokens, next, footer) { @base.fail("view_noncanonical: declaration must end with the v1 footer") }
   if args.length() != 4 && args.length() != 5 { @base.fail("view_arity: expected 4 or 5") }
   let features = if args.length() == 5 { @base.strings(args[4]) } else { default_features() }
   let view : View = { title: @base.text(args[0]), accent: @base.text(args[1]), paper: @base.text(args[2]), panels: @base.strings(args[3]), features }
@@ -87,7 +96,5 @@ pub fn parse(text : String) -> View raise @base.Fault {
     seen_panels[panel] = true
   }
   validate_features(view.features)
-  let expected = start + args.map(@base.canonical).join(", ") + end
-  if expected != code { @base.fail("view_noncanonical") }
   view
 }

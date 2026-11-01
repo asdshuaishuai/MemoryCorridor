@@ -53,22 +53,36 @@ pub fn generate_preserving(source : String, entries : Array[@core.Entry]) -> Str
   @base.replace_first_checked(source, generated)
 }
 
-// Parse the canonical literal rows without applying entry relationship
-// validation.  Lint uses this boundary to report several independent issues
-// in one deterministic response; normal callers should use parse().
+// Parse the literal rows without applying entry relationship validation.
+// Lint uses this boundary to report several independent issues in one
+// deterministic response; normal callers should use parse().
+//
+// The block is read as the closed MoonBit literal subset (@base.literal_*):
+// the scaffolding before and after the rows must match the v1 declarations
+// token for token (so no code can be smuggled in), while whitespace,
+// comments, trailing commas and MoonBit string escapes inside the block are
+// accepted exactly as moon itself accepts them. Publication always rewrites
+// the block in canonical form; parse(generate(x)) round-trips by value.
 pub fn parse_unchecked(text : String) -> Array[@core.Entry] raise @base.Fault {
   let code = code_block(text)
-  let header = code_header()
-  if !code.has_prefix(header) { @base.fail("catalog_header_invalid: require v1 literal DSL") }
+  let tokens = try @base.literal_tokens(code) catch {
+    @base.Fault(message) => raise @base.Fault("catalog_non_literal: " + message)
+  }
+  let header = try @base.literal_tokens(code_header()) catch { _ => [] }
+  if !@base.literal_prefix_matches(tokens, header) {
+    @base.fail("catalog_header_invalid: require v1 literal DSL")
+  }
   let result : Array[@core.Entry] = []
-  let remainder = code[header.length():].to_owned()
   let mut arity = 0
-  for line in remainder.split("\n") {
-    if line == "  ]" { break }
-    if !line.has_prefix("    entry(") || !line.has_suffix("),") {
-      @base.fail("catalog_non_literal: only entry literal rows allowed")
+  let mut pos = header.length()
+  while true {
+    if pos >= tokens.length() { @base.fail("catalog_non_literal: unterminated entry list") }
+    if tokens[pos] == Word("]") { break }
+    let (args, next) = try @base.literal_call(tokens, pos, "entry") catch {
+      @base.Fault(message) => raise @base.Fault("catalog_non_literal: only entry literal rows allowed (" + message + ")")
     }
-    let args = @base.array(@base.parse("[" + line[10:line.length()-2].to_owned() + "]"))
+    pos = next
+    if pos < tokens.length() && tokens[pos] == Word(",") { pos = pos + 1 }
     if args.length() != 6 && args.length() != 7 { @base.fail("entry_arity: expected 6 or 7") }
     if arity == 0 { arity = args.length() }
     if arity != args.length() { @base.fail("entry_arity: mixed legacy and current rows") }
@@ -89,21 +103,11 @@ pub fn parse_unchecked(text : String) -> Array[@core.Entry] raise @base.Fault {
       })
     }
   }
-  let expected = header + result.map(e => {
-    let args : Array[Json] = if arity == 6 {
-      [e.id.to_json(), e.path.to_json(), e.kind.to_json(), e.sha256.to_json(), e.sources.to_json(), e.stale.to_json()]
-    } else {
-      [e.id.to_json(), e.path.to_json(), e.kind.to_json(), e.format.to_json(), e.sha256.to_json(), e.sources.to_json(), e.stale.to_json()]
-    }
-    "    entry(" + args.map(@base.canonical).join(", ") + "),\n"
-  }).join("") + code_footer(result.length())
-  if expected != code {
-    let mut offset = 0
-    while offset < expected.length() && offset < code.length() && expected[offset] == code[offset] { offset = offset + 1 }
-    let end_expected = Int::min(expected.length(), offset+80)
-    let end_actual = Int::min(code.length(), offset+80)
-    @base.fail("catalog_noncanonical: offset \{offset}; expected " +
-      @base.quoted(expected[offset:end_expected].to_owned()) + " got " + @base.quoted(code[offset:end_actual].to_owned()))
+  // The footer closes the list and declares the row count; it must say
+  // exactly what the rows say and contain nothing else.
+  let footer = try @base.literal_tokens(code_footer(result.length())) catch { _ => [] }
+  if !@base.literal_tail_matches(tokens, pos, footer) {
+    @base.fail("catalog_noncanonical: footer must close the list and declare \{result.length()} entries")
   }
   result
 }

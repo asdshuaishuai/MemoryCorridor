@@ -586,6 +586,27 @@ MUTATIONS = [
      '  None => ()',
      "wasipure direct-run e2e:",
      "wasipure_e2e.py"),
+
+    # The literate compilation surface: the catalog block is read as the
+    # closed MoonBit literal subset. Each guard below is what keeps that
+    # grammar closed; dropping one must make the literate-surface tests fail.
+    ("catalog scaffolding must match the v1 declarations token for token",
+     "decl/catalog.mbt",
+     '  if !@base.literal_prefix_matches(tokens, header) {\n    @base.fail("catalog_header_invalid: require v1 literal DSL")\n  }',
+     '  if false { @base.fail("catalog_header_invalid: require v1 literal DSL") }',
+     "catalog still refuses smuggled code, wrong scaffolding and count drift"),
+
+    ("catalog footer must declare the parsed row count and nothing else",
+     "decl/catalog.mbt",
+     '  if !@base.literal_tail_matches(tokens, pos, footer) {',
+     '  if false {',
+     "catalog still refuses smuggled code, wrong scaffolding and count drift"),
+
+    ("literal reader must skip line comments like moon does",
+     "base/literal.mbt",
+     "    if unit == b'/'.to_uint16() && i + 1 < code.length() && code[i+1] == b'/'.to_uint16() {",
+     "    if false {",
+     "catalog accepts moon-equivalent formatting, comments and escapes"),
 ]
 
 

@@ -119,3 +119,51 @@ test "deterministic catalog mutations never panic and canonicalize when accepted
     }
   }
 }
+
+// The literate compilation surface: a block is the catalog whenever it is
+// the same program moon would compile, not only when it is the same bytes.
+test "catalog accepts moon-equivalent formatting, comments and escapes" {
+  let source : @core.Entry = { id: "raw/窑口.md", path: "raw/窑口.md", kind: "raw",
+    format: "markdown", sha256: @base.hex_hash("窑口"), sources: [], stale: false }
+  let entry : @core.Entry = { id: "concepts/青瓷", path: "wiki/concepts/青瓷.md", kind: "concept",
+    format: "markdown", sha256: @base.hex_hash("青瓷"), sources: ["raw/窑口.md"], stale: false }
+  let canonical = generate([entry, source])
+  let row = "    entry(\"concepts/青瓷\", \"wiki/concepts/青瓷.md\", \"concept\", \"markdown\", \"" +
+    @base.hex_hash("青瓷") + "\", [\"raw/窑口.md\"], false),\n"
+  assert_true(canonical.contains(row))
+  // Multi-line row, inline comment, blank lines, trailing array comma,
+  // \u{} escapes for the Chinese id: all the same program.
+  let reformatted = canonical.replace(old=row, new=
+    "    // 由编辑器重排\n\n    entry(\n      \"concepts/\\u{9752}\\u{74f7}\",\n      \"wiki/concepts/青瓷.md\", \"concept\", \"markdown\",\n      \"" +
+    @base.hex_hash("青瓷") + "\",\n      [\"raw/窑口.md\",],\n      false,\n    ),\n\n")
+  let parsed = parse(reformatted)
+  assert_eq(parsed.length(), 2)
+  assert_eq(parsed[0].id, "concepts/青瓷")
+  assert_eq(generate(parsed), canonical)
+  // Scaffolding may be reformatted too, as long as it is the same tokens.
+  let spaced_header = reformatted.replace(old="pub(all) struct CorridorEntry {", new="pub(all)   struct   CorridorEntry {  // 目录条目")
+  assert_eq(generate(parse(spaced_header)), canonical)
+}
+
+test "catalog still refuses smuggled code, wrong scaffolding and count drift" {
+  let entry : @core.Entry = { id: "raw/a.md", path: "raw/a.md", kind: "raw", format: "markdown",
+    sha256: @base.hex_hash("a"), sources: [], stale: false }
+  let canonical = generate([entry])
+  let refused = [
+    // an identifier where a literal belongs
+    canonical.replace(old="\"raw\", \"markdown\"", new="kind, \"markdown\""),
+    // a nested call
+    canonical.replace(old="false),", new="is_stale()),"),
+    // a comment that hides an extra row is still an extra row: count drifts
+    canonical.replace(old="  ]\n", new="    entry(\"raw/b.md\", \"raw/b.md\", \"raw\", \"markdown\", \"" + @base.hex_hash("b") + "\", [], false),\n  ]\n"),
+    // scaffolding changed
+    canonical.replace(old="pub fn entry(", new="pub fn entry2("),
+    // a bare word row
+    canonical.replace(old="  ]\n", new="    panic(),\n  ]\n"),
+    // declared count disagrees with the rows
+    canonical.replace(old="length(), 1)", new="length(), 2)"),
+  ]
+  for text in refused {
+    assert_true(try { ignore(parse(text)); false } catch { _ => true })
+  }
+}

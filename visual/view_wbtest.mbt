@@ -38,8 +38,14 @@ test "literate view round-trips canonical output and validates field bounds" {
   let legacy = generate(view).replace(
     old=", [\"search\",\"routing\",\"rich-render\",\"code-format\",\"source-links\"])", new=")")
   assert_eq(parse(legacy).features, default_features())
-  let padded = generate(view).replace(old="view(\"MemoryCorridor\"", new="view( \"MemoryCorridor\"")
-  assert_true(try { ignore(parse(padded)); false } catch { _ => true })
+  // Formatting that moon accepts is the same program: it parses to the same
+  // view and publication rewrites it canonically.
+  let padded = generate(view).replace(old="view(\"MemoryCorridor\"", new="view( // 注释\n  \"MemoryCorridor\"")
+  assert_eq(parse(padded).to_json(), view.to_json())
+  assert_eq(generate(parse(padded)), generate(view))
+  // Code smuggled into the declaration is still refused.
+  let injected = generate(view).replace(old="view(\"MemoryCorridor\"", new="view(panic(), \"MemoryCorridor\"")
+  assert_true(try { ignore(parse(injected)); false } catch { _ => true })
   assert_true(try { ignore(parse(generate({ ..view, title: "" }))); false } catch { _ => true })
   assert_eq(parse(generate({ ..view, title: "a".repeat(100) })).title.length(), 100)
   assert_true(try { ignore(parse(generate({ ..view, title: "a".repeat(101) }))); false } catch { _ => true })
