@@ -1,0 +1,22 @@
+[package]
+name = "ocr-adapter"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native host OCR/PDF text adapter for the MemoryCorridor extraction sidecar channel: one static binary, no Python."
+
+[dependencies]
+# load-dynamic: the runtime is a plain C dylib (libonnxruntime) dlopen'd at
+# start, selected via ORT_DYLIB_PATH. The pyke static build shipped with
+# download-binaries mis-executes the PP-OCRv4 recognition graph on macOS/arm64
+# (detection is fine; every rec output collapses to one token), while the same
+# ORT 1.31.1 through the official dylib is correct.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
+ndarray = "0.17"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff"] }
+lopdf = "0.36"
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
