@@ -111,7 +111,7 @@ MUTATIONS = [
 
     ("read source must not claim a binary source is textual",
      "agent/sources.mbt",
-     '  let textual = entry.format != "binary" && entry.format != "image"',
+     '  let textual =\n    entry.format != "binary" && entry.format != "image" && !@office.is_office_format(entry.format)',
      '  let textual = true',
      "read-source: metadata, verification",
      "read_source_e2e.py"),
@@ -602,17 +602,10 @@ MUTATIONS = [
      '  if false {',
      "catalog still refuses smuggled code, wrong scaffolding and count drift"),
 
-    ("office formats must stay byte containers in read-source textual check",
-     "agent/sources.mbt",
-     '    entry.format != "binary" && entry.format != "image" && !@office.is_office_format(entry.format)',
-     '    entry.format != "binary" && entry.format != "image"',
-     "office e2e:",
-     "office_e2e.py"),
-
-    ("context must serve extracted text only for genuine office packages",
+    ("context must run office extraction for OOXML formats",
      "agent/orders.mbt",
-     '    source_entry.format != "binary" && source_entry.format != "image" && !@office.is_office_format(source_entry.format)',
-     '    source_entry.format != "binary" && source_entry.format != "image"',
+     '  let office_text = if @office.is_office_format(source_entry.format) {',
+     '  let office_text = if false {',
      "office e2e:",
      "office_e2e.py"),
 
