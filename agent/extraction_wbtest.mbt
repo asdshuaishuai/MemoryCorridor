@@ -261,6 +261,29 @@ test "sidecar and event validation reject a non-raw source and a malformed diges
     "at": "2026-11-02T00:00:00Z" }), "extraction_event_source_hash_invalid")
 }
 
+test "twin sources: replay echoes the booked path; the stale predicate follows the digest" {
+  // 续十六 B-B/B-C: a sidecar booked through one path serves any active raw
+  // with the same bytes. Lint must not fire `extraction_source_stale` when
+  // the booked path was forgotten but a twin still matches the digest, and
+  // the verbatim replay echo carries the *booked* path, not the request's.
+  let (store, _broken, files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  files["raw/a.png"] = "twin-bytes-identical"
+  files["raw/b.png"] = "twin-bytes-identical"
+  ignore(scan(store, @vault.load(store)))
+  ignore(submit(store, "raw/a.png", "tesseract-v5", "1", "哥窑"))
+  let r = submit(store, "raw/b.png", "tesseract-v5", "1", "哥窑")
+  assert_eq(@base.boolean(@base.field(r, "replayed")), true)
+  assert_eq(@base.text(@base.field(r, "source")), "raw/a.png")
+  ignore(forget(store, @vault.load(store), "raw/a.png", "2026-11-02T10:00:00Z"))
+  let violations = @base.array(@base.field(lint_result(store, (store.read)("index.mbt.md")), "violations"))
+  assert_true(!has_lint_predicate(violations, "extraction_source_stale"))
+  // once the twin is gone too, the digest matches nothing and the warning returns
+  ignore(forget(store, @vault.load(store), "raw/b.png", "2026-11-02T11:00:00Z"))
+  let violations2 = @base.array(@base.field(lint_result(store, (store.read)("index.mbt.md")), "violations"))
+  assert_true(has_lint_predicate(violations2, "extraction_source_stale"))
+}
+
 test "a shared-digest sidecar never overrides a textual source's own bytes" {
   // Two paths, identical bytes -> one content hash (sidecars are content
   // addressed). The image path legitimately serves the sidecar; the markdown

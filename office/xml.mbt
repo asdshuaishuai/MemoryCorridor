@@ -78,7 +78,11 @@ fn code_point_string(value : Int) -> String raise @base.Fault {
   }
 }
 
-// source[from] == '&'; decode up to ';' within a short entity window.
+// source[from] == '&'; decode up to ';' within a short entity window. A bare
+// '&' with no ';' inside the window stays literal (pre-existing leniency),
+// but anything that *is* complete entity syntax and does not decode is
+// malformed markup and refuses outright -- silently keeping the raw `&name;`
+// would smuggle markup residue into published text (续十六围猎 F8).
 fn entity_value(source : String, from : Int) -> (String, Int)? raise @base.Fault {
   let mut j = from + 1
   while j < source.length() && j - from <= 12 && source[j] != b';'.to_uint16() { j = j + 1 }
@@ -87,19 +91,19 @@ fn entity_value(source : String, from : Int) -> (String, Int)? raise @base.Fault
   let mut value = 0
   if body.has_prefix("#x") || body.has_prefix("#X") {
     let digits = body[2:].to_owned()
-    if digits.is_empty() { return None }
+    if digits.is_empty() { @base.fail("xml_entity_invalid: " + body) }
     for c in digits {
       let d = if c >= '0' && c <= '9' { c.to_int() - '0'.to_int() }
         else if c >= 'a' && c <= 'f' { c.to_int() - 'a'.to_int() + 10 }
       else if c >= 'A' && c <= 'F' { c.to_int() - 'A'.to_int() + 10 }
-      else { return None }
+      else { raise @base.Fault("xml_entity_invalid: " + body) }
       value = value * 16 + d
     }
   } else if body.has_prefix("#") {
     let digits = body[1:].to_owned()
-    if digits.is_empty() { return None }
+    if digits.is_empty() { @base.fail("xml_entity_invalid: " + body) }
     for c in digits {
-      if c < '0' || c > '9' { return None }
+      if c < '0' || c > '9' { @base.fail("xml_entity_invalid: " + body) }
       value = value * 10 + (c.to_int() - '0'.to_int())
     }
   } else {
@@ -109,10 +113,17 @@ fn entity_value(source : String, from : Int) -> (String, Int)? raise @base.Fault
       "gt" => 62
       "quot" => 34
       "apos" => 39
-      _ => return None
+      _ => raise @base.Fault("xml_entity_unknown: " + body)
     }
   }
-  if value == 0 || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF) { return None }
+  // XML 1.0 legal characters: #x9 #xA #xD and [#x20-#D7FF] [#xE000-#FFFD]
+  // [#x10000-#x10FFFF]. 0, surrogates and other C0 controls never belong in
+  // part text; accepting them would emit control bytes into knowledge text.
+  let legal = value == 9 || value == 10 || value == 13 ||
+    (value >= 32 && value <= 0xD7FF) ||
+    (value >= 0xE000 && value <= 0xFFFD) ||
+    (value >= 0x10000 && value <= 0x10FFFF)
+  if !legal { @base.fail("xml_entity_codepoint_invalid: " + body) }
   Some((code_point_string(value), j + 1))
 }
 
@@ -151,7 +162,12 @@ pub fn xml_events(source : String) -> Array[XmlEvent] raise @base.Fault {
       let start = i
       while i < source.length() && source[i] != b'<'.to_uint16() { i = i + 1 }
       let text = source[start:i].to_owned()
-      if !text.trim().is_empty() { events.push(Text(decode_entities(text))) }
+      // Emit every non-empty text node verbatim. Trimming whitespace-only
+      // nodes to silence pretty-print gaps also deleted `<w:t> </w:t>` runs,
+      // which Word uses for inter-word spacing -- extractors consume Text
+      // only inside whitelisted leaf elements, so inter-tag whitespace is
+      // simply never captured (续十六围猎 F3).
+      if text.length() > 0 { events.push(Text(decode_entities(text))) }
       continue
     }
     if i + 1 < source.length() && source[i+1] == b'?'.to_uint16() {

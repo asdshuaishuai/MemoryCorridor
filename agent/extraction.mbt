@@ -86,7 +86,11 @@ pub fn extraction_submit(
       if @base.text(@base.field(stored, "text")) != submitted {
         @base.fail("extraction_conflict")
       }
-      return { "source": source, "path": path, "source_sha256": source_sha256,
+      // Echo the *record's* source, not the requesting path: under twin
+      // sources the replay key matches by digest, and misattributing the
+      // sidecar to this path would contradict what the record books (续十六 B-C).
+      return { "source": @base.text(@base.field(stored, "source")), "path": path,
+        "source_sha256": source_sha256,
         "kind": @base.text(@base.field(stored, "kind")), "extractor": extractor,
         "version": version, "replayed": true, "event": Json::null(),
         "fingerprint": @vault.fingerprint(entries) }
@@ -116,12 +120,17 @@ pub fn extraction_submit(
 // Schema faults are `validate_record`'s job (reached by `verify` and lint); this
 // pass adds the cross-record invariant a single sidecar cannot express: the
 // source it pins to must still be an active raw whose current bytes match.
+// Judged by digest, not by the booked path: under twin sources `context`
+// legally serves this sidecar to any active raw with matching bytes, so the
+// warning must not fire while supply is correct (续十六 B-B -- the old
+// path-based verdict made an unactionable warning stick to a serving record).
 fn extraction_source_state(
   store : @vault.Storage, entries : Array[@core.Entry], row : Json,
 ) -> String raise @base.Fault {
   let source = @base.text(@base.field(row, "source"))
   let source_sha256 = @base.text(@base.field(row, "source_sha256"))
-  match entries.iter().find_first(e => e.id == source && e.kind == "raw") {
+  let by_path = entries.iter().find_first(e => e.id == source && e.kind == "raw")
+  let verdict = match by_path {
     None => "missing"
     Some(entry) => if entry.stale {
       "revoked"
@@ -130,6 +139,18 @@ fn extraction_source_state(
     } else {
       "current"
     }
+  }
+  if verdict == "current" {
+    "current"
+  } else {
+    // Some active raw may still carry exactly these bytes: the sidecar serves.
+    let mut twin = false
+    for e in entries {
+      if e.kind == "raw" && !e.stale && (store.digest)(e.path) == Some(source_sha256) {
+        twin = true
+      }
+    }
+    if twin { "current" } else { verdict }
   }
 }
 

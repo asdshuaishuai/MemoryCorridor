@@ -710,6 +710,7 @@ dependencies = [
 name = "ocr-adapter"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "image",
  "lopdf",
  "ndarray",

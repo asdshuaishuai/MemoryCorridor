@@ -38,6 +38,7 @@ const DICT: &str = include_str!("../models/ppocr_keys_v1.txt");
 const DET_MEAN: [f32; 3] = [0.5, 0.5, 0.5]; // PP-OCRv4 uses symmetric norm on BGR
 const DET_STD: [f32; 3] = [0.5, 0.5, 0.5];
 const DET_LIMIT_MIN: f32 = 736.0;
+const DET_LIMIT_MAX: f32 = 2000.0; // RapidOCR reduce_max_side
 const DET_THRESH: f32 = 0.3;
 const DET_BOX_THRESH: f32 = 0.5;
 const DET_UNCLIP: f32 = 1.6;
@@ -64,6 +65,9 @@ struct Box2 {
 fn ort_environment() -> Result<ort::environment::Environment, String> {
     if let Ok(p) = std::env::var("ORT_DYLIB_PATH") {
         if !p.is_empty() {
+            if !std::path::Path::new(&p).exists() {
+                return Err(format!("ORT_DYLIB_PATH={p} does not exist"));
+            }
             return ort::init_from(&p)
                 .map_err(|e| format!("loading ORT dylib {p}: {e}"))?
                 .build()
@@ -85,10 +89,21 @@ fn ort_environment() -> Result<ort::environment::Environment, String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let json = args.iter().any(|a| a == "--json");
-    let Some(path) = args.iter().skip(1).find(|a| !a.starts_with("--")).cloned() else {
-        eprintln!("usage: ocr-adapter <file> [--json]");
+    // Strict CLI: unknown flags and extra positional arguments are refused
+    // outright, matching the engine's "unknown fields rejected" discipline
+    // (续十六围猎 C-low: `--weird file` and second paths used to be ignored).
+    let positional: Vec<String> = args.iter().skip(1).filter(|a| !a.starts_with("--")).cloned().collect();
+    for a in args.iter().skip(1) {
+        if a.starts_with("--") && a != "--json" {
+            eprintln!("unknown flag: {a}");
+            exit(2);
+        }
+    }
+    if positional.len() != 1 {
+        eprintln!("usage: ocr-adapter <file> [--json] (exactly one input file)");
         exit(2);
-    };
+    }
+    let path = positional[0].clone();
     let env = match ort_environment() {
         Ok(e) => e,
         Err(e) => {
@@ -209,14 +224,14 @@ fn sha256_hex(data: &[u8]) -> String {
 
 fn bgr_planar(img: &image::DynamicImage, mean: [f32; 3], std: [f32; 3], scale: f32) -> (usize, usize, Vec<f32>) {
     let rgb = img.to_rgb8();
-    let (w, h) = rgb.dimensions();
-    let mut data = vec![0f32; (w * h * 3) as usize];
-    for y in 0..h as usize {
-        for x in 0..w as usize {
+    let (w, h) = (rgb.width() as usize, rgb.height() as usize);
+    let mut data = vec![0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
             let p = rgb.get_pixel(x as u32, y as u32);
             let px = [p[2] as f32, p[1] as f32, p[0] as f32]; // B, G, R
             for c in 0..3 {
-                data[(c * h as usize + y) * w as usize + x] = (px[c] * scale / 255.0 - mean[c]) / std[c];
+                data[(c * h + y) * w + x] = (px[c] * scale / 255.0 - mean[c]) / std[c];
             }
         }
     }
@@ -270,9 +285,23 @@ fn rot180(img: &image::RgbImage) -> image::RgbImage {
 
 fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> Result<(String, f64), String> {
     let (w0, h0) = img.dimensions();
-    let scale = (DET_LIMIT_MIN / (w0.min(h0) as f32)).max(1.0);
-    let dw = (((w0 as f32 * scale) / 32.0).round() as u32 * 32).max(32);
-    let dh = (((h0 as f32 * scale) / 32.0).round() as u32 * 32).max(32);
+    if (w0 as u64) * (h0 as u64) > MAX_PIXELS {
+        return Err(format!("image too large: {}x{} exceeds the 25 MP budget", w0, h0));
+    }
+    // RapidOCR's det resize is two-stage: first *reduce* so the longest side
+    // fits 2000 px, then *increase* so the shortest side reaches 736 px. The
+    // reduce stage was missing here, so large rasters ran detection at
+    // native scale (续十六围猎 C-H2: 12000^2 page -> 9 GB RSS).
+    let long = w0.max(h0) as f32;
+    let short = w0.min(h0) as f32;
+    let reduce = if long > DET_LIMIT_MAX { DET_LIMIT_MAX / long } else { 1.0 };
+    let increase = if short * reduce < DET_LIMIT_MIN { DET_LIMIT_MIN / (short * reduce) } else { 1.0 };
+    let scale = reduce * increase;
+    let dw = (((w0 as f32 * scale) / 32.0).round() as u64 * 32).clamp(32, DET_LIMIT_MAX as u64) as u32;
+    let dh = (((h0 as f32 * scale) / 32.0).round() as u64 * 32).clamp(32, DET_LIMIT_MAX as u64) as u32;
+    if (dw as u64) * (dh as u64) > 4_000_000 {
+        return Err("image aspect ratio too extreme for detection".into());
+    }
     let det_img = resize_to(img, dw, dh);
     let (_, _, input) = bgr_planar(&det_img, DET_MEAN, DET_STD, 1.0);
 
@@ -403,12 +432,6 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
         .flatten()
         .collect();
 
-    if std::env::var("OCR_DEBUG_BOXES").is_ok() {
-        eprintln!("boxes={} img {}x{}", ordered.len(), w0, h0);
-        for b in &ordered {
-            eprintln!("box {} {} {} {}", b.x0, b.y0, b.x1, b.y1);
-        }
-    }
     let mut rec = Session::builder(env)
         .map_err(|e| e.to_string())?
         .with_intra_threads(2)
@@ -427,30 +450,7 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
         .commit_from_memory(CLS_MODEL)
         .map_err(|e| e.to_string())?;
     let chars: Vec<&str> = DICT.lines().collect();
-    // debug: replay a known-good input tensor from disk through the same session
-    if std::env::var("OCR_REPLAY_IN").is_ok() {
-        let dims: Vec<usize> = std::fs::read_to_string("/tmp/rust_rec_in.shape").unwrap()
-            .split_whitespace().map(|x| x.parse().unwrap()).collect();
-        let raw = std::fs::read("/tmp/rust_rec_in.raw").unwrap();
-        let mut data = Vec::with_capacity(raw.len() / 4);
-        for chunk in raw.chunks(4) { data.push(f32::from_le_bytes(chunk.try_into().unwrap())); }
-        let t = ort::value::Tensor::from_array(
-            ndarray::Array4::from_shape_vec((dims[0], dims[1], dims[2], dims[3]), data)
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        let o = rec.run(ort::inputs![t]).map_err(|e| e.to_string())?;
-        let (sh, d) = o[0].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
-        eprintln!("replay shape={:?} len={}", sh, d.len());
-        let nc = sh[sh.len() - 1] as usize;
-        let tt = sh[sh.len() - 2] as usize;
-        let chars: Vec<&str> = DICT.lines().collect();
-        let (txt, _) = ctc_greedy(&d[..tt * nc], tt, nc, &chars);
-        eprintln!("replay text => {txt}");
-        return Ok((String::new(), 0.0));
-    }
     let rgb_img = img.to_rgb8();
-    let mut box_idx = 0usize;
     let mut texts: Vec<String> = Vec::new();
     let mut confs: Vec<f32> = Vec::new();
     for b in ordered {
@@ -476,20 +476,6 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
                 buf[2 * REC_H * rw + i] = (p[0] as f32 / 255.0 - 0.5) / 0.5; // R plane
             }
         }
-        if std::env::var("OCR_DEBUG_CROP").is_ok() {
-            let _ = image::DynamicImage::ImageRgb8(resized.clone())
-                .save(format!("/tmp/rust_crop_{box_idx}.png"));
-        }
-        if std::env::var("OCR_DUMP_IN").is_ok() && box_idx == 0 {
-            std::fs::write("/tmp/rust_rec_in.raw", bytemuck_bytes(&buf)).ok();
-            std::fs::write("/tmp/rust_rec_in.shape", format!("1 3 {} {}", REC_H, rw)).ok();
-        }
-        if std::env::var("OCR_DEBUG_CTC").is_ok() && box_idx == 0 {
-            let smin = buf.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-            let smax = buf.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-            let smean = buf.iter().sum::<f32>() as f64 / buf.len() as f64;
-            eprintln!("input min/max/mean = {}/{}/{} len={} rw={}", smin, smax, smean, buf.len(), rw);
-        }
         let shape = [1usize, 3, REC_H, rw];
         let rtensor = ort::value::Tensor::from_array(
             ndarray::Array4::from_shape_vec((shape[0], shape[1], shape[2], shape[3]), buf)
@@ -500,27 +486,6 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
         let (tshape, tdata) = out[0].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
         let dims: Vec<usize> = tshape.iter().map(|d| *d as usize).collect();
         let (tt, nc) = (dims[dims.len() - 2], dims[dims.len() - 1]);
-        box_idx += 1;
-        if std::env::var("OCR_DEBUG_CTC").is_ok() && box_idx == 1 {
-            let bmin = tdata.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-            let bmax = tdata.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-            let bmean = tdata.iter().sum::<f32>() as f64 / tdata.len() as f64;
-            eprintln!("out min/max/mean = {}/{}/{}", bmin, bmax, bmean);
-            eprintln!("ctc shape={:?} t={} nc={}", tshape, tt, nc);
-            let mut prev = usize::MAX;
-            let mut seq: Vec<usize> = Vec::new();
-            for ti2 in 0..tt.min(60) {
-                let row = &tdata[ti2 * nc..(ti2 + 1) * nc];
-                let bi = row.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i).unwrap_or(0);
-                if bi != prev { seq.push(bi); }
-                prev = bi;
-            }
-            eprintln!("ctc first path: {:?}", seq);
-            if std::env::var("OCR_DUMP_OUT").is_ok() {
-                std::fs::write("/tmp/rust_out.raw", bytemuck_bytes(tdata)).ok();
-                std::fs::write("/tmp/rust_out.shape", format!("{:?}", tshape)).ok();
-            }
-        }
         let (text, conf) = ctc_greedy(tdata, tt, nc, &chars);
         if !text.is_empty() {
             texts.push(text);
@@ -533,14 +498,6 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
         confs.iter().sum::<f32>() as f64 / confs.len() as f64
     };
     Ok((texts.join("\n"), (mean * 1e4).round() / 1e4))
-}
-
-fn bytemuck_bytes(data: &[f32]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(data.len() * 4);
-    for f in data {
-        v.extend_from_slice(&f.to_le_bytes());
-    }
-    v
 }
 
 fn ctc_greedy(data: &[f32], t: usize, classes: usize, chars: &[&str]) -> (String, f32) {
@@ -745,13 +702,26 @@ fn samples_to_rgb(samples: &[u8], w: usize, h: usize, comp: usize, predictor: i6
     Some(img)
 }
 
+/// Declared pixel budget for embedded page images and raster inputs. Real
+/// scans top out around 24 MP (600 dpi A4); beyond this a page image is a
+/// decompression bomb and is refused before any allocation is sized from it
+/// (续十六围猎 C-H1/H2: negative dims wrapped through `as usize` and huge
+/// declared sizes allocated gigabytes with no cap on the PDF path).
+const MAX_PIXELS: u64 = 25_000_000;
+const MAX_DIM: i64 = 20_000;
+
 fn decode_page_image(doc: &lopdf::Document, obj: &lopdf::Object) -> Option<image::RgbImage> {
     let s = page_stream(doc, obj)?;
     let d = &s.dict;
-    let w = get_int(d, b"Width")? as usize;
-    let h = get_int(d, b"Height")? as usize;
-    let bpc = get_int(d, b"BitsPerComponent").unwrap_or(8) as usize;
-    if w == 0 || h == 0 || bpc != 8 {
+    let w_i = get_int(d, b"Width")?;
+    let h_i = get_int(d, b"Height")?;
+    let bpc = get_int(d, b"BitsPerComponent").unwrap_or(8);
+    if w_i <= 0 || h_i <= 0 || w_i > MAX_DIM || h_i > MAX_DIM || bpc != 8 {
+        return None;
+    }
+    let (w, h) = (w_i as usize, h_i as usize);
+    let comp = color_count(d);
+    if (w_i as u64) * (h_i as u64) > MAX_PIXELS {
         return None;
     }
     let filters: Vec<Vec<u8>> = match d.get(b"Filter").ok() {
@@ -768,20 +738,50 @@ fn decode_page_image(doc: &lopdf::Document, obj: &lopdf::Object) -> Option<image
         return Some(dynimg.to_rgb8());
     }
     if filters.as_slice() == [b"FlateDecode".to_vec()] {
-        // lopdf already inflated FlateDecode content at load
-        let predictor = d
-            .get(b"DecodeParms")
-            .ok()
-            .and_then(|dp| match dp {
-                lopdf::Object::Dictionary(dd) => dd.get(b"Predictor").ok().and_then(|p| p.as_i64().ok()),
-                _ => None,
-            })
-            .unwrap_or(1);
-        let comp = color_count(d);
-        let data = s.get_plain_content().unwrap_or_else(|_| s.content.clone());
+        // Self-managed decode: lopdf's `get_plain_content` applies PNG
+        // predictors for a *dict* DecodeParms only, silently skipping the
+        // array form the PDF spec also allows -- mixing the two layers
+        // double-unfilters dict files (rejecting legitimate scans) and
+        // leaves array files raw (publishing garbage text) (续十六 C-H3).
+        // Read the compressed bytes and do the pipeline exactly once.
+        let cap = (w * h * comp) + h * (comp + 1) + 1024; // + filter bytes headroom
+        let mut data = Vec::new();
+        let mut dec = flate2::bufread::ZlibDecoder::new(
+            std::io::Read::take(&s.content[..], cap as u64),
+        );
+        if std::io::Read::read_to_end(&mut dec, &mut data).is_err() {
+            return None;
+        }
+        let predictor = match d.get(b"DecodeParms").ok() {
+            Some(dp) => decode_parms_predictor(doc, dp),
+            None => 1,
+        };
         return samples_to_rgb(&data, w, h, comp, predictor);
     }
     None
+}
+
+/// Predictor from DecodeParms in either spec form: a bare dict, a reference
+/// to one, or an array of the two (one entry per filter).
+fn decode_parms_predictor(doc: &lopdf::Document, dp: &lopdf::Object) -> i64 {
+    let mut cur = dp;
+    for _ in 0..8 {
+        match cur {
+            lopdf::Object::Reference(id) => {
+                let Ok(o) = doc.get_object(*id) else { return 1 };
+                cur = o;
+            }
+            lopdf::Object::Dictionary(dd) => {
+                return dd.get(b"Predictor").ok().and_then(|p| p.as_i64().ok()).unwrap_or(1)
+            }
+            lopdf::Object::Array(arr) => {
+                let Some(first) = arr.first() else { return 1 };
+                return decode_parms_predictor(doc, first);
+            }
+            _ => return 1,
+        }
+    }
+    1
 }
 
 /// Largest embedded page image across pages (scanned pages are one big image).

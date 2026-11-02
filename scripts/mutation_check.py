@@ -609,6 +609,87 @@ MUTATIONS = [
      "office e2e:",
      "office_e2e.py"),
 
+    # 续十六 fourth-round hunt (office/xml parse surface): whitelist capture
+    # replaced the skip/instrText blacklists that latched forever on
+    # self-closing tags; entities refuse outright; decimals are bounded;
+    # slides enforce the `slide<N>.xml` pattern and a:t-only text.
+    ("word text must be captured only inside w:t leaves",
+     "office/office.mbt",
+     '        } else if name == "w:t" && !self_closing {\n          capturing = true',
+     '        } else if false {\n          capturing = true',
+     "whitelist capture: self-closing skip tags hide nothing downstream"),
+
+    ("w:t capture must close on End so excluded runs stay excluded",
+     "office/office.mbt",
+     '      End(name) => if name == "w:t" { capturing = false }',
+     '      End(name) => ()',
+     "whitelist capture: self-closing skip tags hide nothing downstream"),
+
+    ("whitespace-only text nodes must survive verbatim (word space runs)",
+     "office/xml.mbt",
+     '      if text.length() > 0 { events.push(Text(decode_entities(text))) }',
+     '      if !text.trim().is_empty() { events.push(Text(decode_entities(text))) }',
+     "whitelist capture: self-closing skip tags hide nothing downstream"),
+
+    ("a self-closing shared string must keep its index slot",
+     "office/office.mbt",
+     '          if self_closing {\n            items.push("")\n            current = None\n          } else {\n            current = Some(StringBuilder())\n          }',
+     '          current = Some(StringBuilder())',
+     "excel latches and index integrity: f-is-si self-closing and bounded indices"),
+
+    ("complete entity syntax that does not decode must refuse, not leak markup",
+     "office/xml.mbt",
+     '      _ => raise @base.Fault("xml_entity_unknown: " + body)',
+     '      _ => return None',
+     "xml scanner refuses markup the deterministic contract excludes"),
+
+    ("illegal entity codepoints must refuse instead of emitting control bytes",
+     "office/xml.mbt",
+     '  if !legal { @base.fail("xml_entity_codepoint_invalid: " + body) }',
+     '  if !legal { return None }',
+     "xml scanner refuses markup the deterministic contract excludes"),
+
+    # The length check is the primary bound; the per-step accumulator cap is
+    # registered as defense-in-depth (deleting it alone keeps the exact refusal
+    # via the range check -- same observable behavior, so no mutation binds).
+    ("decimal parsing must refuse overflow instead of wrapping back into range",
+     "office/office.mbt",
+     '  if value.length() > 18 {\n    return None\n  }\n',
+     '',
+     "excel latches and index integrity: f-is-si self-closing and bounded indices"),
+
+    ("slide parts outside the slide<N>.xml pattern must refuse the package",
+     "office/office.mbt",
+     '        @base.fail("office_slide_unnamed: " + file.path)',
+     '        ()',
+     "slides: named-pattern enforcement and a:t-only text"),
+
+    ("duplicate slide numbers must refuse, not reorder ambiguously",
+     "office/office.mbt",
+     '            @base.fail("office_slide_duplicate: " + file.path)',
+     '            ()',
+     "slides: named-pattern enforcement and a:t-only text"),
+
+    ("slide text is only what renders: a:t leaves and nothing else",
+     "office/office.mbt",
+     '      Text(value) => if capturing { out.write_string(value) }\n    }\n  }\n  out.to_string()\n}\n\n// ---------------------------------------------------------------- Entry',
+     '      Text(value) => out.write_string(value)\n    }\n  }\n  out.to_string()\n}\n\n// ---------------------------------------------------------------- Entry',
+     "slides: named-pattern enforcement and a:t-only text"),
+
+    # 续十六 second-round corrections (sidecar): replay echoes the booked
+    # path, and the lint stale predicate follows the digest like context does.
+    ("a replayed sidecar must echo the booked source, not the requesting path",
+     "agent/extraction.mbt",
+     '      return { "source": @base.text(@base.field(stored, "source")), "path": path,',
+     '      return { "source": source, "path": path,',
+     "twin sources: replay echoes the booked path; the stale predicate follows the digest"),
+
+    ("the stale predicate must follow the digest across twin sources",
+     "agent/extraction.mbt",
+     '      if e.kind == "raw" && !e.stale && (store.digest)(e.path) == Some(source_sha256) {\n        twin = true\n      }',
+     '      if false { twin = true }',
+     "twin sources: replay echoes the booked path; the stale predicate follows the digest"),
+
     # Extraction sidecar (extraction-submit). Review corrections: the submit-side
     # `(store.digest)(source) != entry.sha256` check is shadowed by `verify`
     # (active raws are digest-checked there first), so no mutation binds to it.

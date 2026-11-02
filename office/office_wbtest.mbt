@@ -85,6 +85,84 @@ test "slides extraction orders numerically and ignores non-slide parts" {
   assert_true(!extracted.contains("版式文字"))
 }
 
+test "whitelist capture: self-closing skip tags hide nothing downstream" {
+  // F1: `<w:delText/>`/`<w:instrText/>` self-closing used to latch skip with
+  // no End; the rest of the document vanished while ok=true carried the
+  // deterministic-extraction marker. Whitelist capture removes the latch.
+  let doc =
+    "<w:document><w:body>" +
+    "<w:p><w:r><w:t>ALPHA</w:t></w:r></w:p>" +
+    "<w:p><w:r><w:delText/><w:instrText>R</w:instrText></w:r></w:p>" +
+    "<w:p><w:r><w:t>BRAVO</w:t></w:r></w:p>" +
+    "</w:body></w:document>"
+  let bytes = ok_bytes([
+    file("[Content_Types].xml", "<Types/>"),
+    file("word/document.xml", doc),
+  ])
+  assert_eq(ok_text("office-word", bytes), "ALPHA\n\nBRAVO")
+  // F3: a space-only preserve run must survive verbatim.
+  let spaced =
+    "<w:document><w:body><w:p><w:r><w:t>Hello</w:t></w:r>" +
+    "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>" +
+    "<w:r><w:t>World</w:t></w:r></w:p></w:body></w:document>"
+  let spaced_bytes = ok_bytes([
+    file("[Content_Types].xml", "<Types/>"),
+    file("word/document.xml", spaced),
+  ])
+  assert_eq(ok_text("office-word", spaced_bytes), "Hello World")
+}
+
+test "excel latches and index integrity: f-is-si self-closing and bounded indices" {
+  // F2: `<f/>` used to latch skipping for the remainder of the sheet --
+  // every later cell silently emptied. F4: a self-closing `<si/>` was
+  // dropped, shifting all later shared indices by one.
+  let sst = "<sst><si><t>ALPHA</t></si><si/><si><t>TWO</t></si></sst>"
+  let sheet =
+    "<worksheet>" +
+    "<row r=\"1\"><c r=\"A1\"><f/><v>999</v></c><c r=\"B1\" t=\"s\"><v>2</v></c></row>" +
+    "<row r=\"2\"><c r=\"A2\"><is><t>inline&#32;ok</t></is></c><c r=\"B2\"><v>7</v></c></row>" +
+    "</worksheet>"
+  let bytes = ok_bytes([
+    file("[Content_Types].xml", "<Types/>"),
+    file("xl/workbook.xml", "<workbook><sheets><sheet name=\"S1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"),
+    file("xl/_rels/workbook.xml.rels", "<Relationships><Relationship Id=\"rId1\" Target=\"worksheets/sheet1.xml\"/></Relationships>"),
+    file("xl/sharedStrings.xml", sst),
+    file("xl/worksheets/sheet1.xml", sheet),
+  ])
+  // index 2 = TWO (the empty <si/> keeps slot 1); formula body gone, v kept
+  assert_eq(ok_text("office-spreadsheet", bytes), "# sheet S1\n999\tTWO\ninline ok\t7")
+  // F5: an astronomical index wrapping back into range must refuse, not fold
+  let wrap =
+    "<worksheet><row r=\"1\"><c r=\"A1\" t=\"s\"><v>101457092405402533889</v></c></row></worksheet>"
+  let wrap_bytes = ok_bytes([
+    file("[Content_Types].xml", "<Types/>"),
+    file("xl/workbook.xml", "<workbook><sheets><sheet name=\"S1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"),
+    file("xl/_rels/workbook.xml.rels", "<Relationships><Relationship Id=\"rId1\" Target=\"worksheets/sheet1.xml\"/></Relationships>"),
+    file("xl/sharedStrings.xml", sst),
+    file("xl/worksheets/sheet1.xml", wrap),
+  ])
+  // exact-message assertion: with the bound removed the number wraps back
+  // to a valid index and resolves to a *string* instead of refusing, so an
+  // equality on the refusal message is what pins this defense (续十六 F5)
+  assert_eq(error_of("office-spreadsheet", wrap_bytes), "office_shared_index: 101457092405402533889")
+}
+
+test "slides: named-pattern enforcement and a:t-only text" {
+  // F6: slide parts outside `slide<N>.xml` used to vanish silently; Text
+  // outside `a:t` (cached fields, metadata, arbitrary namespaced elements)
+  // used to be published as visible slide text.
+  let base = [
+    file("[Content_Types].xml", "<Types/>"),
+    file("ppt/slides/slide1.xml",
+         "<p><a:p><a:tbl/><a:t>REAL</a:t></a:p><a:blah>HIDDEN</a:blah></p>"),
+  ]
+  assert_eq(ok_text("office-slides", ok_bytes(base)), "# slide 1\nREAL")
+  let ghost : Array[@pack.File] = base + [file("ppt/slides/slideA.xml", "<p><a:t>GHOST</a:t></p>")]
+  assert_true(error_of("office-slides", ok_bytes(ghost)).has_prefix("office_slide_unnamed"))
+  let dup : Array[@pack.File] = base + [file("ppt/slides/slide01.xml", "<p><a:t>DUP</a:t></p>")]
+  assert_true(error_of("office-slides", ok_bytes(dup)).has_prefix("office_slide_duplicate"))
+}
+
 test "office extraction refuses malformed packages and unsupported formats" {
   assert_true(!error_of("office-word", @utf8.encode("not a zip archive at all\n\n\n\n")).is_empty())
   let no_ct = ok_bytes([file("word/document.xml", "<w:document/>")])
@@ -127,6 +205,17 @@ test "xml scanner refuses markup the deterministic contract excludes" {
   assert_eq(run("</a>"), "end a")
   assert_eq(run("</>"), "error:xml_unnamed_tag")
   assert_eq(run("<!-- skip --><a/>"), "start a /")
-  assert_eq(run("<?xml v?>\n<a k=\"x&quot;y\">body</a>"), "start a k=x\"y|text body|end a")
+  // whitespace between tags now emits a verbatim Text event (续十六围猎 F3:
+  // swallowing whitespace-only nodes also deleted `<w:t> </w:t>` word-space
+  // runs); extractors ignore inter-element text via their leaf whitelists
+  assert_eq(run("<?xml v?>\n<a k=\"x&quot;y\">body</a>"), "text \n|start a k=x\"y|text body|end a")
   assert_eq(run("<a><b/><a:x>文&#x4e2D;</a:x></a>"), "start a|start b /|start a:x|text 文中|end a:x|end a")
+  // 续十六围猎 F8: complete entity syntax that does not decode is malformed
+  // markup and refuses outright instead of leaking raw `&name;` residue or
+  // control bytes into published text
+  assert_eq(run("<a>1&nbsp;2</a>"), "error:xml_entity_unknown: nbsp")
+  assert_eq(run("<a>A&#x1;B</a>"), "error:xml_entity_codepoint_invalid: #x1")
+  assert_eq(run("<a>&#xD800;</a>"), "error:xml_entity_codepoint_invalid: #xD800")
+  assert_eq(run("<a>&#0;</a>"), "error:xml_entity_codepoint_invalid: #0")
+  assert_eq(run("<a>x & y</a>"), "start a|text x & y|end a") // bare & stays literal (leniency kept)
 }

@@ -30,10 +30,26 @@ ocr-adapter <文件> --json   # {sha256, kind, source, confidence, text}
 
 路径：图片（PNG/JPEG/WebP/BMP/TIFF）→ PP-OCRv4 det+cls+rec；PDF → 优先文本层
 （lopdf，精确、免模型）；文本层近空即判扫描版，提取页内最大内嵌图
-（DCTDecode JPEG 或 FlateDecode 位图，支持 PNG/TIFF predictor、RGB/Gray/CMYK）
+（DCTDecode JPEG 或 FlateDecode 位图——**flate 解压与 PNG/TIFF predictor 重建
+由自研单趟管线完成**：lopdf 的自动 predictor 反解只认 dict 形态 DecodeParms，
+与外层组合会双重解码，续十六围猎实证「合法 dict 件误拒、数组件输出错字」后
+已绕开自管，dict/array 两形态、RGB/Gray/CMYK 均支持）
 走 OCR；两者皆无则显式拒绝说明原因。**cls 方向分类器**（0.6MB，`use_cls` 参考
 默认开）逐框判 0°/180°（softmax 输出，阈值 0.9），命中先把 crop 转 180°
 再识别——颠倒扫描件（真实传真/双面扫描常见）全行恢复，关闭则整页乱码。
+
+资源纪律（续十六围猎加固）：任何输入（栅格或 PDF 内嵌图）超 **25MP**、单边
+超 20000px、尺寸非正、或声明尺寸与解压字节不符 → **分配前**显式拒绝；det
+resize 与 RapidOCR 同为两段（`reduce_max_side` 2000 → `increase_min_side`
+736，此前缺 reduce 段，12000² 页实测 9GB RSS），极端长宽比另有 det 网格上限；
+诊断用环境变量钩子（OCR_DEBUG_*/OCR_DUMP_*/OCR_REPLAY_IN）已全部从二进制
+移除（固定 /tmp 路径 + 符号链接 = 任意文件覆盖面）。CLI 严格化：未知 flag
+与多余位置参数一律 rc=2 拒绝。
+
+**平台**：macOS arm64 为支持目标。微软自 ONNX Runtime 1.24.4 起不再发布
+macOS Intel 二进制（v1.31.1 无 osx-x86_64 资产，GitHub 404），Intel Mac 上
+`fetch_ort.sh` 显式失败说明原因；Linux/Windows 宿主可按同款 load-dynamic
+对接官方 .so/.dll。
 
 ## 选型（对照「50 MB 以内最合适，不要最大不要最小」）
 
@@ -72,7 +88,7 @@ scan → context(extraction_required) → ocr-adapter → extraction-submit
 - onnxruntime（推理运行时，官方 dylib）MIT
 - PP-OCRv4 mobile det/rec/cls 模型 + 字典 Apache-2.0
 - Rust 依赖：ort 2.0.0-rc.15（MIT/Apache-2.0 双许可）、ndarray、image、lopdf、
-  serde_json（均 MIT/Apache-2.0/BSD/Unicode，逐个核对见 cargo 元数据）
+  flate2（miniz_oxide，均 MIT/Apache-2.0/BSD/Unicode，逐个核对见 cargo 元数据）
 - fpdf2 LGPL-2.1：**仅** dev fixture 生成，非运行时依赖，不分发
 
 ## 构建

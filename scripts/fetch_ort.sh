@@ -7,13 +7,19 @@
 set -eu
 VERSION=1.31.1
 SHA256_ARM64="2e1344a1926ee50eb25b38153cb6992c3567515aef0e677a1a520a1798896d6f"
-SHA256_X64="PENDING_X86_64_CHECKSUM"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/adapters/ocr-rs/runtime"
 ARCH="$(uname -m)"
 case "$ARCH" in
   arm64) PKG="onnxruntime-osx-arm64-$VERSION.tgz"; SHA="$SHA256_ARM64" ;;
-  x86_64) PKG="onnxruntime-osx-x86_64-$VERSION.tgz"; SHA="$SHA256_X64" ;;
+  x86_64)
+    # Microsoft stopped shipping macOS Intel ONNX Runtime binaries after
+    # 1.24.4 - v1.31.1 has no osx-x86_64 asset at all (GitHub 404), and
+    # ort 2.0.0-rc.15 refuses a 1.22 runtime as BadVersion. Intel Macs are
+    # not a supported distribution target for this adapter; the placeholder
+    # checksum used to fail `shasum -c` with a confusing message instead.
+    echo "unsupported arch: $ARCH (ONNX Runtime $VERSION publishes macOS arm64 only)" >&2
+    exit 1 ;;
   *) echo "unsupported arch: $ARCH" >&2; exit 1 ;;
 esac
 TMP="$(mktemp -d)"

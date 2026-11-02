@@ -57,12 +57,22 @@ fn parse_decimal(value : String) -> Int? {
   if value.is_empty() {
     return None
   }
+  // Bound before accumulating: an unbounded multiply wraps i64 silently and
+  // folds an astronomical index back into range (11*2^63+1 -> 1), defeating
+  // the out-of-range guard entirely (续十六围猎 F5). 18 digits still fits
+  // i64 without wrapping; real indices and slide numbers never approach it.
+  if value.length() > 18 {
+    return None
+  }
   let mut acc = 0
   for c in value {
     if c < '0' || c > '9' {
       return None
     }
     acc = acc * 10 + (c.to_int() - '0'.to_int())
+    if acc > 0x7FFF_FFFF {
+      return None
+    }
   }
   Some(acc)
 }
@@ -74,27 +84,30 @@ fn word_text(part : String) -> String raise @base.Fault {
   let events = xml_events(part)
   let out = StringBuilder()
   let mut para_seen = false
-  let mut skip = false
+  let mut capturing = false
   for event in events {
     match event {
+      // Whitelist capture (续十六围猎 F1): text is taken only inside
+      // `<w:t>` leaf elements. instrText/delText and anything else are
+      // excluded by not being whitelisted -- a blacklist `skip` latch had
+      // no End event for self-closing tags and silently hid the rest of
+      // the document. Self-closing `<w:t/>` carries no text and sets
+      // nothing.
       Start(name, _, self_closing) =>
         if name == "w:p" && !self_closing {
           if para_seen {
             out.write_string("\n")
           }
           para_seen = true
-        } else if name == "w:instrText" || name == "w:delText" {
-          skip = true
+        } else if name == "w:t" && !self_closing {
+          capturing = true
         } else if name == "w:tab" {
           out.write_string("\t")
         } else if name == "w:br" || name == "w:cr" {
           out.write_string("\n")
         }
-      End(name) =>
-        if name == "w:instrText" || name == "w:delText" {
-          skip = false
-        }
-      Text(value) => if !skip { out.write_string(value) }
+      End(name) => if name == "w:t" { capturing = false }
+      Text(value) => if capturing { out.write_string(value) }
     }
   }
   out.to_string()
@@ -112,7 +125,17 @@ fn shared_strings(files : Array[@pack.File]) -> Array[String] raise @base.Fault 
   let mut current : StringBuilder? = None
   for event in events {
     match event {
-      Start(name, _, _) => if name == "si" { current = Some(StringBuilder()) }
+      // `<si/>` self-closing is a legitimate empty shared string; dropping
+      // it silently shifts every later index by one (续十六围猎 F4).
+      Start(name, _, self_closing) =>
+        if name == "si" {
+          if self_closing {
+            items.push("")
+            current = None
+          } else {
+            current = Some(StringBuilder())
+          }
+        }
       End(name) =>
         if name == "si" {
           match current {
@@ -195,7 +218,6 @@ fn sheet_text(part : String, shared : Array[String]) -> String raise @base.Fault
   let mut cell = ""
   let mut cell_shared = false
   let mut capturing = false
-  let mut skipping = false
   let mut inline = false
   for event in events {
     match event {
@@ -208,17 +230,19 @@ fn sheet_text(part : String, shared : Array[String]) -> String raise @base.Fault
           if row_started { out.write_string("\t") }
           cell = ""
           cell_shared = attrs.get("t").unwrap_or("") == "s"
-        } else if name == "v" {
+        } else if name == "v" && !self_closing {
           capturing = true
-        } else if name == "is" {
+        } else if name == "is" && !self_closing {
+          // `<is/>` self-closing must not latch inline on (续十六围猎 F2 同族)
           inline = true
         } else if name == "t" {
-          if inline { capturing = true }
-        } else if name == "f" {
-          skipping = true
+          if inline && !self_closing { capturing = true }
         }
+        // `<f>` needs no skip latch: cell text is captured only inside
+        // `<v>`/`<is><t>`, formula bodies are outside the whitelist. The
+        // old latch never cleared for `<f/>` and zeroed every later cell.
       }
-      End(name) => {
+      End(name) =>
         if name == "c" {
           // A shared-string cell resolves to its table entry; the engine
           // refuses rather than guessing when the stored index is invalid.
@@ -239,11 +263,8 @@ fn sheet_text(part : String, shared : Array[String]) -> String raise @base.Fault
           if inline { capturing = false }
         } else if name == "is" {
           inline = false
-        } else if name == "f" {
-          skipping = false
         }
-      }
-      Text(value) => if capturing && !skipping { cell = cell + value }
+      Text(value) => if capturing { cell = cell + value }
     }
   }
   out.to_string()
@@ -267,11 +288,20 @@ fn slide_number(path : String) -> Int? {
 fn slide_text(part : String) -> String raise @base.Fault {
   let events = xml_events(part)
   let out = StringBuilder()
+  let mut capturing = false
   for event in events {
     match event {
-      Start(name, _, _) => if name == "a:p" { out.write_string("\n") }
-      Text(value) => out.write_string(value)
-      End(_) => ()
+      // Only `a:t` runs are slide text (续十六围猎 F6): capturing every
+      // Text node published cached field values, metadata and arbitrary
+      // namespaced elements that PowerPoint does not show.
+      Start(name, _, self_closing) =>
+        if name == "a:p" {
+          out.write_string("\n")
+        } else if name == "a:t" && !self_closing {
+          capturing = true
+        }
+      End(name) => if name == "a:t" { capturing = false }
+      Text(value) => if capturing { out.write_string(value) }
     }
   }
   out.to_string()
@@ -317,8 +347,20 @@ pub fn text(format : String, bytes : Bytes) -> String raise @base.Fault {
   } else {
     let slides : Array[(Int, String)] = []
     for file in files {
+      if file.path.has_prefix("ppt/slides/") && file.path.has_suffix(".xml") &&
+        slide_number(file.path) == None {
+        // A slide part outside `slide<N>.xml` was previously dropped silently;
+        // its content then vanishes from the extraction while the rest passes
+        // (续十六围猎 F6). Refuse instead of publishing a partial deck.
+        @base.fail("office_slide_unnamed: " + file.path)
+      }
       match slide_number(file.path) {
-        Some(number) => slides.push((number, file.path))
+        Some(number) => {
+          if slides.iter().any(s => s.0 == number) {
+            @base.fail("office_slide_duplicate: " + file.path)
+          }
+          slides.push((number, file.path))
+        }
         None => ()
       }
     }
