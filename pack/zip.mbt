@@ -40,7 +40,7 @@ fn read32(bytes : Bytes, at : Int) -> UInt raise @base.Fault {
   bytes[at].to_uint() | (bytes[at+1].to_uint() << 8) | (bytes[at+2].to_uint() << 16) | (bytes[at+3].to_uint() << 24)
 }
 
-fn zip_encode(files : Array[File]) -> Bytes raise @base.Fault {
+pub fn zip_encode(files : Array[File]) -> Bytes raise @base.Fault {
   let sorted = files.copy()
   sorted.sort_by((a,b) => @base.compare(a.path, b.path))
   let out : Array[Byte] = []

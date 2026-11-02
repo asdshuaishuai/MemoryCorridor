@@ -27,6 +27,11 @@ pub fn format_for_path(path : String) -> String {
   if ["html", "htm"].contains(ext) { return "html" }
   if ["png", "jpg", "jpeg", "gif", "webp"].contains(ext) { return "image" }
   if ["txt", "csv", "log", "rst"].contains(ext) || normalized.has_suffix("/license") { return "text" }
+  // OOXML originals: the engine extracts their text deterministically, so
+  // they get dedicated formats instead of falling into `binary`.
+  if ext == "docx" { return "office-word" }
+  if ext == "xlsx" { return "office-spreadsheet" }
+  if ext == "pptx" { return "office-slides" }
   let languages = Map([
     ("mbt", "moonbit"), ("js", "javascript"), ("mjs", "javascript"), ("cjs", "javascript"),
     ("ts", "typescript"), ("tsx", "tsx"), ("jsx", "jsx"), ("json", "json"),

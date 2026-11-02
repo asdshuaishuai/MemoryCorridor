@@ -1,0 +1,6 @@
+import {
+  "memorycorridor/base",
+  "memorycorridor/pack",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/ref",
+}

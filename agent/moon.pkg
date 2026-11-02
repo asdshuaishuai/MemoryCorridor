@@ -6,6 +6,7 @@ import {
   "memorycorridor/vault",
   "memorycorridor/index",
   "memorycorridor/visual",
+  "memorycorridor/office",
   "memorycorridor/interop",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/encoding/base64",

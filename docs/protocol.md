@@ -26,7 +26,7 @@
 
 ## 页面生成与来源
 
-`raw/` 原件可以是任意格式，以原始字节 SHA-256 登记。目录行的 `format` 是已验证的内容契约：Markdown/HTML、图片和代码语言分别记录为 `markdown`、`html`、`image` 或语言名，未知后缀为 `binary`；视觉服务和工单上下文都使用该登记值，不在运行时重新猜测。已知文本格式的 `context` 返回 `source_text`；图片和 `binary` 返回 null 和 `extraction_required:true`，由宿主负责提取，不能假称可直接全文搜索。旧版六字段目录缺少 `format` 时按 `kind/path` 推导并可读取，重新生成目录会写入七字段行。
+`raw/` 原件可以是任意格式，以原始字节 SHA-256 登记。目录行的 `format` 是已验证的内容契约：Markdown/HTML、图片和代码语言分别记录为 `markdown`、`html`、`image` 或语言名，未知后缀为 `binary`；视觉服务和工单上下文都使用该登记值，不在运行时重新猜测。已知文本格式的 `context` 返回 `source_text`。OOXML 原件（`office-word`/`office-spreadsheet`/`office-slides`，即 `.docx`/`.xlsx`/`.pptx`）由引擎自身做确定性正文抽取：`context` 返回正文文本（Word 段落/制表符语义、Excel 按工作簿顺序的 `# sheet <名>` 表格行、PowerPoint 按编号顺序的 `# slide <n>` 段落），并附 `extraction:{kind,extractor:"corridor-office-v1"}`；损坏、加密、不支持的压缩方法或超出展开上限（32 MiB）的包以稳定错误族拒绝，绝不返回部分文本。图片与其他 `binary` 返回 null 和 `extraction_required:true`，由宿主负责提取（模型能力不入内核），不能假称可直接全文搜索。`read-source` 始终把 OOXML 当作字节容器报告（`textual:false` + 体积），抽取文本以 `context` 为准——登记字节完整性与正文投影是两个通道。旧版六字段目录缺少 `format` 时按 `kind/path` 推导并可读取，重新生成目录会写入七字段行。
 
 raw 条目的 `id` 必须与 `path` 完全相同。页面 `sources[]`、事实证据和来源失效传播都以这个相对路径作为稳定引用；目录如果把同一原件登记成不同 id/path，校验会拒绝，`lint` 会返回 `raw_identity_mismatch`。
 

@@ -24,6 +24,7 @@ LAYERS = {
     "interop": 2,
     "vault": 3,
     "index": 3,
+    "office": 3,
     "agent": 4,
     "wasm": 4,
     "wasipure": 4,
@@ -52,7 +53,12 @@ def main():
     violations = []
     graph = {}
     seen_external = set()
-    package_files = sorted(ROOT.rglob("moon.pkg"))
+    # moon fmt mirrors sources (with moon.pkg) under _build/*/format; those
+    # are build artifacts, not packages, and must not enter the layer graph.
+    package_files = sorted(
+        path for path in ROOT.rglob("moon.pkg")
+        if "_build" not in path.relative_to(ROOT).parts
+    )
     for package_file in package_files:
         package = package_file.parent.relative_to(ROOT).as_posix()
         imports = package_imports(package_file)

@@ -154,8 +154,21 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
   // Text extraction follows the verified catalog format. Extension checks
   // would incorrectly hide HTML and source-language inputs from an agent.
   let source_entry = @core.find(entries, order.source)
-  let textual = source_entry.format != "binary" && source_entry.format != "image"
-  let source = if textual { @vault.required(store, order.source).to_json() } else { Json::null() }
+  // OOXML originals get deterministic text extraction here; every other
+  // non-textual format still reports extraction_required and stays the
+  // adapter's problem. A malformed archive (bad CRC, encrypted, unsupported
+  // method) fails the request rather than returning partial text.
+  let office_text = if @office.is_office_format(source_entry.format) {
+    Some(@office.text(source_entry.format, required_bytes(store, order.source)))
+  } else {
+    None
+  }
+  let textual =
+    source_entry.format != "binary" && source_entry.format != "image" && !@office.is_office_format(source_entry.format)
+  let source = match office_text {
+    Some(value) => value.to_json()
+    None => if textual { @vault.required(store, order.source).to_json() } else { Json::null() }
+  }
   let pages : Array[Json] = []
   let hashes : Map[String, String] = Map([])
   hashes["purpose.md"] = @base.hex_hash(@vault.required(store, "purpose.md"))
@@ -176,7 +189,11 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
   (store.write)("staging/" + id + "/.corridor-order", id)
   { "order": next.to_json(), "context_token": context_token(next),
     "source_summary_id": "sources/" + @base.hex_hash(order.source),
-    "source_text": source, "extraction_required": !textual, "pages": pages.to_json(),
+    "source_text": source, "extraction_required": office_text is None && !textual,
+    "extraction": match office_text {
+      Some(_) => { "kind": source_entry.format, "extractor": "corridor-office-v1" }.to_json()
+      None => Json::null()
+    }, "pages": pages.to_json(),
     "purpose": @vault.required(store, "purpose.md"),
     "output_schema": { "entities": "string[]", "concepts": "string[]", "conflicts": "string[]", "summary": "string" } }
 }

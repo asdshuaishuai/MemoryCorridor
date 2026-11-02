@@ -602,6 +602,20 @@ MUTATIONS = [
      '  if false {',
      "catalog still refuses smuggled code, wrong scaffolding and count drift"),
 
+    ("office formats must stay byte containers in read-source textual check",
+     "agent/sources.mbt",
+     '    entry.format != "binary" && entry.format != "image" && !@office.is_office_format(entry.format)',
+     '    entry.format != "binary" && entry.format != "image"',
+     "office e2e:",
+     "office_e2e.py"),
+
+    ("context must serve extracted text only for genuine office packages",
+     "agent/orders.mbt",
+     '    source_entry.format != "binary" && source_entry.format != "image" && !@office.is_office_format(source_entry.format)',
+     '    source_entry.format != "binary" && source_entry.format != "image"',
+     "office e2e:",
+     "office_e2e.py"),
+
     ("literal reader must skip line comments like moon does",
      "base/literal.mbt",
      "    if unit == b'/'.to_uint16() && i + 1 < code.length() && code[i+1] == b'/'.to_uint16() {",

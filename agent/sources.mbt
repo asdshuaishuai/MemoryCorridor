@@ -44,7 +44,10 @@ pub fn read_source(
   @base.path(id)
   let entry = @core.find(entries, id)
   if entry.kind != "raw" { @base.fail("expected_raw_source") }
-  let textual = entry.format != "binary" && entry.format != "image"
+  // OOXML originals are byte containers like images: the registered bytes
+  // are reported as size, while `context` serves the deterministic extraction.
+  let textual =
+    entry.format != "binary" && entry.format != "image" && !@office.is_office_format(entry.format)
   let bytes = (store.read_bytes)(entry.path)
   let digest = (store.digest)(entry.path)
   // A revoked source keeps its tombstone entry, so a read reports the state
