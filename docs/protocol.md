@@ -30,6 +30,18 @@
 
 raw 条目的 `id` 必须与 `path` 完全相同。页面 `sources[]`、事实证据和来源失效传播都以这个相对路径作为稳定引用；目录如果把同一原件登记成不同 id/path，校验会拒绝，`lint` 会返回 `raw_identity_mismatch`。
 
+### Extraction sidecar（宿主抽取结果入账）
+
+模型推理（OCR、PDF 正文抽取、网页解析）始终在宿主侧——引擎不调用模型或网络。`extraction-submit`（字段 `source/kind/extractor/version/text/at`，全部必填字符串）把宿主抽取结果入账为一等公民数据，存成 `state/extractions/<source sha256>.json` 的 sidecar 记录，内容与文件名都绑定登记字节的 SHA-256（`{source, source_sha256, kind, extractor, version, text, submitted_at}`，canonical JSON；文件名哈希必须是 64 位小写十六进制且等于内容 `source_sha256`，否则 `extraction_record_identity_invalid`）。约束与生命周期语义：
+
+- `source` 必须是当前**有效**（active）的 raw 条目且 `textual=false`（`binary`/`image`）。文本类来源已有 `context`/`read-source` 直接通道，外部入账被 `extraction_source_textual` 拒绝；OOXML 原件走引擎自身的确定性抽取（续十一），外部结果**不能覆盖**该通道——`extraction_override` 拒绝。已撤销或缺失的条目报 `extraction_source_stale`。submit 另有一道 `source_changed` 字节比对（`agent/extraction.mbt:53`）：它被更早的 `verify`（对 active raw 先报 `source_missing_or_changed`，见下）遮蔽，属纵深防御，登记在[未触达分支](unreachable-branches.md)。`text` 上限 1 MiB **UTF-8 字节**（`extraction_text_invalid`；与 native/MCP 面 2 MiB 请求行上限同口径——宿主按原始 UTF-8 发送正文即可容纳，`\uXXXX` 转义形态行宽约 2–3 倍、超限由传输层先拒）；`submitted_at` 为 ISO 时间串。
+- 重放与冲突按 `(source_sha256, extractor, version)` 判定：逐字相同的 `text` 返回 `replayed:true` 且不写第二条记录；同通道不同文本拒绝 `extraction_conflict`，绝不静默覆盖；同一字节哈希上换 extractor/version 拒绝 `extraction_exists:<current>`（详情段是当前持有者 `extractor:version`）。**sidecar 对给定字节哈希是一次性登记**：`forget` 撤销来源后同字节重扫不会复活（`scan` 的墓碑规则），换 version 再提交仍撞 `extraction_exists`；唯一的恢复路径是替换来源字节、`scan` 出新哈希、按新哈希重新入账，旧 sidecar 由 `lint` 报 `extraction_source_stale`/`extraction_source_drift`。不存在"撤销后原字节重新入账"或"同哈希换通道"的通道——hint 表与 `tools.mbt` 描述按此口径写。
+- 每次真实提交在 `state/events/extraction-submit-<source sha256>.json` 登记事件（事件文件名绑定来源哈希，改写照不到别处）。盘上残留同哈希事件而目录没有 sidecar 记录时拒绝入账（`extraction_event_conflict`）：审计痕迹与目录必须同时存在或同时不存在，孤儿事件不得被新提交悄悄接管。
+- `context` 接线：`textual=false` 且存在匹配**当前** digest 的注册 sidecar 时，`source_text` 即 sidecar 正文、`extraction_required:false`、`extraction:{kind, extractor, version, bound_sha256, source_sha256}`（`bound_sha256` 为记录内哈希，`source_sha256` 为工单当前 digest）。查找只经目录注册条目，绝不裸读路径——宿主直写的未注册文件不会成为文本源。来源被 `forget`/撤销或字节漂移（重 `scan` 后 digest 变化）时 sidecar 不再命中：`context` 回到 `extraction_required:true` + `source_text:null`，`lint` 对旧 sidecar 报 `extraction_source_stale`（撤销/缺失）或 `extraction_source_drift`（字节已变）。OOXML 优先走引擎自抽通道，不受 sidecar 影响。`read-source` 不变：登记字节通道与抽取投影通道分离。
+- sidecar 按**内容寻址**：文件名是字节哈希，因此两条相同字节的不同路径共用同一条 sidecar（provenance 记录在记录自身的 `source` 字段，指向首次入账路径）。接受这一语义并如实入账，是内容绑定失效（drift ⇒ 不再命中）能够单点成立的前提。
+
+选型背景：宿主侧 OCR 适配器的调研（PP-OCRv6_small ONNX，约 20MB 级）见 `specs/engine/tasks.md` 续十一/十二落账；引擎边界不因该通道改变。
+
 `index.mbt.md` 和 `views/*.mbt.md` 的目录/视图 IR 来自第一个 `mbt check` 代码块；后续 `mbt`/`mbt check` 块由 MoonBit 一起编译，可提供共享辅助定义和测试，但不改变引擎提取的 IR。代码块外的 Markdown 是可编辑说明，会被编译器忽略但仍随源文件保存。解析器统一接受 LF/CRLF，避免 Windows 编辑器产生的换行差异造成编译器与运行期分叉。首块内非字面量、不闭合代码块和不规范声明会拒绝；首个受检块闭合围栏之后的任何内容都必须以空行分隔（下一个字符为换行或文件结束）；紧跟围栏的裸文本按畸形 Markdown 拒绝（目录返回 `catalog_literate_tail`，视图返回 `view_literate_tail`，修复指引是补一个空行），不会静默当成无关注释；后续块的语法/类型由 `moon check` 拒绝。引擎提交或缓存重建只替换首个规范 IR 块，保留前后 Markdown 和辅助块；这些说明和辅助块不参与目录指纹。
 
 工单依次进入 `pending → context-ready → analysis-done → committed`，终止也可为 `cancelled`。同一 vault 同时只允许一个非终态工单进入分析。`context` 提供研究目标、原始来源及既有页面全文/哈希，避免覆盖式重写。上下文变化会要求重新分析。分析里的 `conflicts` 在提交时变成持久化审核项。
@@ -139,7 +151,7 @@ tags: ["研究"]
 
 ## MCP
 
-所有操作都同时存在于 CLI 与 MCP：工具名加 `corridor_` 前缀、连字符转下划线，schema 与 CLI 同源。`scripts/mcp_e2e.py` 对新增操作做真实 JSON-RPC 调用（不只是字典比对），覆盖名称翻译、布尔/数组字段往返、只读操作不返回 `execution`、`memory-prefetch` 的两种种子互斥、`memory-use` 的批量与重放、`page-history`、`purpose-cancel`/`overview-cancel` 的终态与重放、`impact-audit`/`impact-resolve` 的状态机与 dismissed 抑制、错误信封的 `error_code`。所有 93 个广告工具都有字典/schema 全量比对，其中 88 个还真实走过 `tools/call`（其余 5 个是非 vault 或会话类 op）；探针刻意在 `init` 之前跑——金库未初始化，85 个 op 必须返回领域 `error_code`，而 `lint`（诊断入口）与 `recover` 必须成功。
+所有操作都同时存在于 CLI 与 MCP：工具名加 `corridor_` 前缀、连字符转下划线，schema 与 CLI 同源。`scripts/mcp_e2e.py` 对新增操作做真实 JSON-RPC 调用（不只是字典比对），覆盖名称翻译、布尔/数组字段往返、只读操作不返回 `execution`、`memory-prefetch` 的两种种子互斥、`memory-use` 的批量与重放、`page-history`、`purpose-cancel`/`overview-cancel` 的终态与重放、`impact-audit`/`impact-resolve` 的状态机与 dismissed 抑制、`extraction-submit` 的真实入账成功路径（重放与 `extraction_conflict` 也走传输层）、错误信封的 `error_code`。所有 94 个广告工具都有字典/schema 全量比对，其中 89 个还真实走过 `tools/call`（其余 5 个是非 vault 或会话类 op）；探针刻意在 `init` 之前跑——金库未初始化，87 个 op 必须返回领域 `error_code`，而 `lint`（诊断入口）与 `recover` 必须成功。三个面的 `tools/list` 同源同序（native 字典 schema 与 CLI 逐字节一致，corridor/wasipure 两面的计数与信封行为由各自 e2e 断言）。
 
 启动 `_build/native/debug/build/mcp/mcp.exe`。使用换行 JSON-RPC 2.0 stdio；支持 `initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call`。工具前缀 `corridor_`，连字符改为下划线，例如 `corridor_read_page`。`corridor_session_open` 要求 vault，其余工具可在已打开会话中省略 vault；工具列表/schema 与 CLI 来自同一字典。当前支持协议版本 2024-11-05 / 2025-03-26 / 2025-06-18。
 

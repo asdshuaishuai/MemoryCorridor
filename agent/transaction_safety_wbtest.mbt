@@ -540,3 +540,30 @@ test "source revocation recovers from a crash at any publish point" {
   // Revocation is durable and visible in the catalog once it lands.
   assert_true(@core.find(@vault.load(store), "raw/ceramics.md").stale)
 }
+
+// A sidecar is one record plus one event, committed together. If either were
+// written without the other, the record would be an orphan (file_unregistered)
+// or the event would reference a missing sidecar.
+fn seed_binary(store : @vault.Storage) -> Unit raise @base.Fault {
+  ignore(initialize(store, "研究陶瓷"))
+  (store.write)("raw/plate.png", "PNG-bytes-not-a-real-image")
+  ignore(scan(store, @vault.load(store)))
+}
+
+test "extraction submit recovers from a crash at any publish point" {
+  let sha = @base.hex_hash("PNG-bytes-not-a-real-image")
+  let store = each_crash_point(seed_binary, { "op": "extraction-submit",
+    "source": "raw/plate.png", "kind": "image", "extractor": "tesseract", "version": "1",
+    "text": "哥窑 窑址", "at": "2026-10-29T09:00:00Z" })
+  // Once it lands, both the sidecar record and its event are catalog entries,
+  // and the record is bound to the digest it was extracted from.
+  let entries = @vault.load(store)
+  @vault.verify(store, entries)
+  assert_true(entries.any(e => e.path == "state/extractions/" + sha + ".json"))
+  assert_true(entries.any(e => e.path == "state/events/extraction-submit-" + sha + ".json"))
+  // The submission replays rather than writing a second record/event pair.
+  let replay = extraction_submit(store, entries, { "op": "extraction-submit",
+    "source": "raw/plate.png", "kind": "image", "extractor": "tesseract", "version": "1",
+    "text": "哥窑 窑址", "at": "2026-10-29T09:00:00Z" })
+  assert_eq(@base.boolean(@base.field(replay, "replayed")), true)
+}

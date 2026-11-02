@@ -609,6 +609,97 @@ MUTATIONS = [
      "office e2e:",
      "office_e2e.py"),
 
+    # Extraction sidecar (extraction-submit). Review corrections: the submit-side
+    # `(store.digest)(source) != entry.sha256` check is shadowed by `verify`
+    # (active raws are digest-checked there first), so no mutation binds to it.
+    # These bind to the checks that actually decide: the catalog gate on the
+    # context lookup, the per-digest key, the OOXML override refusal, the
+    # filename/content digest lock in validate_record, and the never-overwrite
+    # conflict rule. Each is guarded by extraction_wbtest.mbt AND extraction_e2e.py.
+    ("the context sidecar lookup must go through the catalog, not a bare path",
+     "agent/extraction.mbt",
+     '''  match entries.iter().find_first(e => e.path == path) {
+    None => None
+    Some(entry) => Some(@base.parse(@vault.required(store, entry.path)))
+  }''',
+     '''  match (store.read)(path) {
+    None => None
+    Some(text) => Some(@base.parse(text))
+  }''',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("context must bind the sidecar to the current digest, not any registered one",
+     "agent/extraction.mbt",
+     '  match entries.iter().find_first(e => e.path == path) {',
+     '  match entries.iter().find_first(e => e.path.has_prefix("state/extractions/")) {',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("OOXML sources must refuse external extraction (extraction_override)",
+     "agent/extraction.mbt",
+     '  if @office.is_office_format(raw.format) { @base.fail("extraction_override") }\n',
+     '',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("the sidecar filename digest must lock the content source digest",
+     "core/records.mbt",
+     '''    if entry.path != "state/extractions/" + source_sha256 + ".json" {
+      @base.fail("extraction_record_identity_invalid")
+    }''',
+     '    if false { @base.fail("extraction_record_identity_invalid") }',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("a textual source must keep its own bytes when a sidecar shares the digest",
+     "agent/orders.mbt",
+     '  let sidecar = if office_text is None && !textual && !source_entry.stale {',
+     '  let sidecar = if office_text is None && !source_entry.stale {',
+     "a shared-digest sidecar never overrides a textual source's own bytes"),
+
+    ("a replayed channel must conflict on different text, never overwrite",
+     "agent/extraction.mbt",
+     '''      if @base.text(@base.field(stored, "text")) != submitted {
+        @base.fail("extraction_conflict")
+      }''',
+     '      if false { @base.fail("extraction_conflict") }',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    # Lifecycle honesty (review findings 3/4/5): the gates behind the rewritten
+    # hints and the one-way lifecycle must actually fire, or the documented
+    # recovery path is a lie the next host learns the hard way.
+    ("a second extractor must not silently inherit an active sidecar (exists gate)",
+     "agent/extraction.mbt",
+     '''      if stored_extractor != extractor || stored_version != version {
+        @base.fail("extraction_exists: " + stored_extractor + ":" + stored_version)
+      }''',
+     '      if false { @base.fail("extraction_exists") }',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("a revoked source must not reopen its sidecar channel (stale gate)",
+     "agent/extraction.mbt",
+     '  if raw.stale { @base.fail("extraction_source_stale") }\n',
+     '',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("an orphan event without its registered sidecar must be refused, not absorbed",
+     "agent/extraction.mbt",
+     '  if (store.read)(event_path) is Some(_) { @base.fail("extraction_event_conflict") }\n',
+     '',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
+    ("the text cap must count UTF-8 bytes, not characters (transport's unit)",
+     "core/records.mbt",
+     '  if value.is_empty() || @base.utf8_size(value) > EXTRACTION_TEXT_LIMIT || value.contains("\\r") {',
+     '  if value.is_empty() || value.length() > EXTRACTION_TEXT_LIMIT || value.contains("\\r") {',
+     "extraction sidecar e2e:",
+     "extraction_e2e.py"),
+
     ("literal reader must skip line comments like moon does",
      "base/literal.mbt",
      "    if unit == b'/'.to_uint16() && i + 1 < code.length() && code[i+1] == b'/'.to_uint16() {",

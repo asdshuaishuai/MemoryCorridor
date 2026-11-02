@@ -5,11 +5,40 @@
 pub fn state_directories() -> Array[String] {
   ["state/orders", "state/events", "state/reviews", "state/research",
    "state/suggestions", "state/overview", "state/evidence", "state/memory",
-   "state/impacts", "state/providers", "state/provider-jobs"]
+   "state/impacts", "state/providers", "state/provider-jobs", "state/extractions"]
 }
+
+// Sidecar text is host-supplied (OCR, PDF text) and could be arbitrarily long.
+// The cap counts UTF-8 bytes -- the same unit as the native/MCP 2 MiB request
+// line -- so a record that passes `validate_record` is transmissible on every
+// face, and one submission stays far inside the 16 MiB write ceiling instead of
+// being re-hashed forever as a multi-megabyte field on every verifying read.
+// `String.length()` would count UTF-16 units and let ~3x that many bytes slip
+// onto a face that refuses the request line before the engine ever runs.
+pub const EXTRACTION_TEXT_LIMIT : Int = 1048576
 
 fn valid_hash(value : String) -> Bool {
   value.length() == 64 && value.iter().all(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+}
+
+// kind/extractor/version name the host channel that produced an extraction.
+// Bounded like a provider name: free-form so adapters are not hard-coded, but
+// short and newline-free so it stays a stable provenance token.
+fn extraction_token(value : String, field : String) -> Unit raise @base.Fault {
+  if value.is_empty() || value.length() > 128 || value.contains("\n") || value.contains("\r") {
+    @base.fail("extraction_" + field + "_invalid")
+  }
+}
+
+// Extracted text keeps newlines (paragraph layout is the point of an OCR pass)
+// but never carriage returns, and is capped by EXTRACTION_TEXT_LIMIT **UTF-8
+// bytes** -- CJK OCR text is three bytes per character, and a character-counted
+// bound would let a record pass here yet die at the transport's 2 MiB request
+// line, giving three faces two different answers to the same submission.
+fn extraction_body(value : String) -> Unit raise @base.Fault {
+  if value.is_empty() || @base.utf8_size(value) > EXTRACTION_TEXT_LIMIT || value.contains("\r") {
+    @base.fail("extraction_text_invalid")
+  }
 }
 
 // Memory note identity is content addressed so a retried submit replays and a
@@ -570,6 +599,25 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       let at = @base.text(closed)
       if at.length() < 10 || at.contains("\n") || at.contains("\r") { @base.fail("provider_closed_at_invalid") }
     } else { @base.fail("provider_status_invalid") }
+  } else if entry.path.has_prefix("state/extractions/") {
+    // A host-side extraction (OCR, PDF text) pinned to the exact registered
+    // bytes. The filename hash and the content `source_sha256` lock each other
+    // so the record cannot be renamed onto a different source, and replay keys
+    // off (source_sha256, extractor, version) instead of a separate id.
+    @base.keys(value, ["source", "source_sha256", "kind", "extractor", "version", "text", "submitted_at"])
+    let source = string("source")
+    @base.path(source)
+    if !source.has_prefix("raw/") { @base.fail("extraction_source_invalid") }
+    let source_sha256 = string("source_sha256")
+    if !valid_hash(source_sha256) { @base.fail("extraction_source_hash_invalid") }
+    if entry.path != "state/extractions/" + source_sha256 + ".json" {
+      @base.fail("extraction_record_identity_invalid")
+    }
+    extraction_token(string("kind"), "kind")
+    extraction_token(string("extractor"), "extractor")
+    extraction_token(string("version"), "version")
+    extraction_body(string("text"))
+    event_time(string("submitted_at"))
   } else if entry.path.has_prefix("state/events/") {
     let op = string("op")
     if op.is_empty() { @base.fail("event_operation_required") }
@@ -583,7 +631,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "research-topic", "research-completed", "research-cancelled", "overview-suggest",
       "overview-apply", "ingest", "forget", "memory-submit", "memory-supersede",
       "memory-archive", "memory-restore", "memory-pin", "memory-use",
-      "impact-open", "impact-resolve",
+      "impact-open", "impact-resolve", "extraction-submit",
     ]
     if !supported.contains(op) { @base.fail("event_operation_unsupported: " + op) }
     if op == "source-missing" {
@@ -900,6 +948,21 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("at"))
       let expected = "state/events/impact-resolve-" + impact + "-" + @base.hex_hash(string("at")) + ".json"
       if entry.path != expected { @base.fail("impact_event_path_invalid") }
+    } else if op == "extraction-submit" {
+      // One sidecar per (source sha256) is enforced at submit, so the event
+      // path binds to that sha: the submission cannot be rewritten onto a
+      // different source, and a replayed submission never adds a second event.
+      @base.keys(value, ["op", "source", "source_sha256", "extractor", "version", "at"])
+      let source = string("source")
+      @base.path(source)
+      if !source.has_prefix("raw/") { @base.fail("extraction_event_source_invalid") }
+      let source_sha256 = string("source_sha256")
+      if !valid_hash(source_sha256) { @base.fail("extraction_event_source_hash_invalid") }
+      extraction_token(string("extractor"), "extractor")
+      extraction_token(string("version"), "version")
+      event_time(string("at"))
+      let expected = "state/events/extraction-submit-" + source_sha256 + ".json"
+      if entry.path != expected { @base.fail("extraction_event_identity_invalid") }
     } else if op == "memory-pin" {
       @base.keys(value, ["op", "memory", "at", "pinned"])
       let memory = string("memory")

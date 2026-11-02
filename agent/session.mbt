@@ -203,6 +203,7 @@ pub fn dispatch_with_catalog(
     "pack" => pack_vault(store, entries, request)
     "stats" | "fingerprints" | "read-log" | "review-list" | "review-resolve" | "quality-audit" | "research-list" | "research-topic" | "research-complete" | "research-cancel" | "purpose-suggest" | "purpose-apply" | "purpose-cancel" | "suggestion-list" | "overview-suggest" | "overview-apply" | "overview-cancel" | "overview-list" | "backfill" | "provider-register" | "provider-heartbeat" | "provider-unregister" | "provider-list" | "provider-job-open" | "provider-job-claim" | "provider-job-heartbeat" | "provider-job-complete" | "provider-job-cancel" | "provider-job-fail" | "provider-job-list" => maintenance(store, entries, request)
     "evidence-submit" => evidence_submit(store, entries, request)
+    "extraction-submit" => extraction_submit(store, entries, request)
     "evidence-replace" => evidence_replace(store, entries, request)
     "evidence-list" => evidence_list(store, entries, request)
     "memory-submit" => memory_submit(store, entries, request)

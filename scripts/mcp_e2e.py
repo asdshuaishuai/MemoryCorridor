@@ -242,6 +242,44 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
             quiet = call("tools/call", {"name": "corridor_impact_audit", "arguments": {
                 "vault": work, "at": "2026-11-02T14:30:00Z"}})["result"]
             assert quiet["structuredContent"]["result"]["committed"] is False
+        # The extraction sidecar intake must survive the transport on the SUCCESS
+        # path, not just return a domain error: a real PNG bytes source, a real
+        # OCR-shaped submission, then the digest-bound replay/conflict semantics.
+        import hashlib
+        import struct
+        import zlib as _zlib
+        signature = b"\x89PNG\r\n\x1a\n"
+        ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+        idat = _zlib.compress(b"\x00\x00\x00\x00\x00\x00", 9)
+
+        def _chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(
+                ">I", _zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+        png = signature + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+        (Path(work) / "raw").mkdir(exist_ok=True)
+        (Path(work) / "raw/mcp-单据.png").write_bytes(png)
+        scanned = call("tools/call", {"name": "corridor_scan", "arguments": {"vault": work}})["result"]
+        assert not scanned["isError"], scanned
+        submitted = call("tools/call", {"name": "corridor_extraction_submit", "arguments": {
+            "vault": work, "source": "raw/mcp-单据.png", "kind": "ocr",
+            "extractor": "ppocr-adapter", "version": "1", "text": "单据编号 A-07",
+            "at": "2026-11-02T15:00:00Z"}})["result"]
+        assert not submitted["isError"], submitted
+        sha = hashlib.sha256(png).hexdigest()
+        assert submitted["structuredContent"]["result"]["path"] == "state/extractions/" + sha + ".json"
+        assert submitted["structuredContent"]["result"]["replayed"] is False
+        replay = call("tools/call", {"name": "corridor_extraction_submit", "arguments": {
+            "vault": work, "source": "raw/mcp-单据.png", "kind": "ocr",
+            "extractor": "ppocr-adapter", "version": "1", "text": "单据编号 A-07",
+            "at": "2026-11-02T15:00:00Z"}})["result"]
+        assert replay["structuredContent"]["result"]["replayed"] is True
+        conflict = call("tools/call", {"name": "corridor_extraction_submit", "arguments": {
+            "vault": work, "source": "raw/mcp-单据.png", "kind": "ocr",
+            "extractor": "ppocr-adapter", "version": "1", "text": "改写",
+            "at": "2026-11-02T15:05:00Z"}})["result"]
+        assert conflict["isError"]
+        assert conflict["structuredContent"]["result"]["error_code"] == "extraction_conflict"
         method_error = call("not-a-method")
         assert method_error["error"]["code"] == -32601
         assert method_error["error"]["data"]["error_code"] == "method_not_found"

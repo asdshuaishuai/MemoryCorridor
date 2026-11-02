@@ -29,6 +29,7 @@ pub fn tools() -> Array[Tool] {
     { name: "read-last-valid", description: "显式读取上次有效目录快照，仍核验所有内容版本", fields: [] },
     { name: "read-purpose", description: "读取知识意图", fields: [] },
     { name: "read-source", description: "按 id 读取已登记 raw 来源：登记格式、SHA-256 是否仍匹配、失效状态与文本内容；可用 start/end 取 UTF-8 字节半开区间以核对 evidence 锚点；binary/image 只报告体积并要求外部抽取", fields: ["id", "start", "end"] },
+    { name: "extraction-submit", description: "入账宿主侧（OCR/PDF 等，模型能力在引擎外）抽取文本为 sidecar：仅限 active 且 textual=false 的 raw（binary/image），OOXML 由引擎自抽不可覆盖（extraction_override），文本类拒绝（extraction_source_textual），已撤销/缺失拒绝（extraction_source_stale），text 上限 1 MiB UTF-8 字节；按登记字节哈希绑定，同 source/extractor/version 逐字重放 replayed、异文 extraction_conflict，同哈希异 extractor/version extraction_exists，绝不静默覆盖——同一字节哈希上 sidecar 一次性登记，恢复只有一条路：替换来源字节→scan 出新哈希→按新哈希入账（forget 后同字节重扫不复活）；盘上残留同哈希事件而目录无记录时报 extraction_event_conflict", fields: ["source", "kind", "extractor", "version", "text", "at"] },
     { name: "search", description: "关键词/暴力向量检索、外部候选后端、图扩展、查询定位与去重预算装配；dedup 可选 exact/similar 近似段落合并，spread 可选 ranked/even 预算分配；返回正文 UTF-8 区间和重复页引用", fields: ["query", "limit", "query_vector", "vector_candidates", "provider", "budget", "hops", "dedup", "spread"] },
     { name: "topics", description: "按主题浏览 synthesis 页：标题、wikilink 目标、raw 来源与失效状态，便于先看主题再定位材料并回原文核对", fields: [] },
     { name: "tree", description: "页面路径树数据", fields: [] },

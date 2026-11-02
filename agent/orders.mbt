@@ -165,9 +165,25 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
   }
   let textual =
     source_entry.format != "binary" && source_entry.format != "image" && !@office.is_office_format(source_entry.format)
+  // A host extraction sidecar only stands in when the engine has no text of its
+  // own: office originals keep their deterministic channel (`office_text is
+  // Some` short-circuits this) and textual sources keep their own bytes --
+  // sidecars are keyed by content hash alone, so without `!textual` an image
+  // sidecar would override a textual path that happens to carry identical
+  // bytes. The lookup goes through `sidecar_for`, which only sees catalog
+  // entries bound to the *current* digest, so a revoked or re-scanned source
+  // never reads back a stale sidecar, and a bare path is never trusted.
+  let sidecar = if office_text is None && !textual && !source_entry.stale {
+    sidecar_for(store, entries, order.source_hash)
+  } else {
+    None
+  }
   let source = match office_text {
     Some(value) => value.to_json()
-    None => if textual { @vault.required(store, order.source).to_json() } else { Json::null() }
+    None => match sidecar {
+      Some(record) => @base.text(@base.field(record, "text")).to_json()
+      None => if textual { @vault.required(store, order.source).to_json() } else { Json::null() }
+    }
   }
   let pages : Array[Json] = []
   let hashes : Map[String, String] = Map([])
@@ -189,10 +205,19 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
   (store.write)("staging/" + id + "/.corridor-order", id)
   { "order": next.to_json(), "context_token": context_token(next),
     "source_summary_id": "sources/" + @base.hex_hash(order.source),
-    "source_text": source, "extraction_required": office_text is None && !textual,
+    "source_text": source, "extraction_required": office_text is None && sidecar is None && !textual,
     "extraction": match office_text {
       Some(_) => { "kind": source_entry.format, "extractor": "corridor-office-v1" }.to_json()
-      None => Json::null()
+      None => match sidecar {
+        Some(record) => {
+          "kind": @base.text(@base.field(record, "kind")),
+          "extractor": @base.text(@base.field(record, "extractor")),
+          "version": @base.text(@base.field(record, "version")),
+          "bound_sha256": @base.text(@base.field(record, "source_sha256")),
+          "source_sha256": order.source_hash,
+        }.to_json()
+        None => Json::null()
+      }
     }, "pages": pages.to_json(),
     "purpose": @vault.required(store, "purpose.md"),
     "output_schema": { "entities": "string[]", "concepts": "string[]", "conflicts": "string[]", "summary": "string" } }

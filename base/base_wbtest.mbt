@@ -111,6 +111,39 @@ test "token estimate counts CJK scalars and Latin words" {
   assert_eq(estimate_tokens("hello\n\nworld"), 2)
 }
 
+test "extraction fault codes carry specific repair hints" {
+  // fault_hint has a catch-all default, so a code that is used by an operation
+  // but never registered silently falls back to generic guidance. Every code
+  // extraction-submit can raise is part of the machine contract, including the
+  // orphan-event guard -- pin all of them against the default.
+  let default_hint = fault_hint("brand_new_code_never_registered")
+  for code in ["extraction_override", "extraction_conflict", "extraction_exists",
+    "extraction_event_conflict", "extraction_source_stale", "extraction_source_textual"] {
+    let hint = fault_hint(code)
+    assert_true(hint != default_hint, msg="hint for " + code + " fell back to the default")
+    assert_true(!hint.is_empty())
+  }
+  // extraction_exists:<current> splits at the first colon, so the registered
+  // code is the bare `extraction_exists` regardless of the current detail.
+  assert_eq(fault_code("extraction_exists: ocr:v2"), "extraction_exists")
+  // The submit-side shadowed guard raises bare `source_changed` while the
+  // context guard carries `: rescan`; both wire-normalize to the one
+  // registered code (protocol.md's sidecar section states it exactly this way).
+  for message in ["source_changed", "source_changed: rescan"] {
+    let code = fault_code(message)
+    assert_eq(code, "source_changed")
+    assert_true(fault_hint(code) != default_hint, msg="source_changed hint not registered")
+  }
+  // The lifecycle hints must name the ONE recovery path the tombstone rules
+  // leave (replace the bytes, rescan, re-book against the new digest) -- a hint
+  // telling the host to "forget then rescan the same bytes" is a dead end,
+  // because scan refuses to re-register identical bytes over a revoked entry.
+  for code in ["extraction_conflict", "extraction_exists", "extraction_source_stale"] {
+    assert_true(fault_hint(code).contains("字节"),
+      msg="hint for " + code + " does not name the byte-replacement recovery path")
+  }
+}
+
 test "literate tail faults carry structural repair records" {
   let raw = try { ignore(first_checked_block("```mbt check\nfn f() -> Int { 1 }\n```\nextra code")); "" } catch {
     Fault(message) => message

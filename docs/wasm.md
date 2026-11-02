@@ -2,7 +2,7 @@
 
 WASM 宿主持久化回执若包含 revision、format 或 sha256 字段，会被逐项核对本次快照封套；错误回执会拒绝发布并保留旧内存快照。
 
-模块有两个面。**纯计算面**（`execute()`，wasm 与 wasm-gc 双目标）保持零宿主导入：目录/页面/视觉声明解析、基于宿主快照的自包含 HTML 渲染、关键词与暴力向量检索、UTF-8 预算上下文装配、页面快照图查询（`graph`/`neighbors`/`path`/`weighted-path`/`insights`）；它不具备磁盘事务，任何需要 vault 的操作不在该面。**服务面**（`service_execute()`，仅 wasm 目标）通过 8 个 `corridor-host` 宿主导入承载**全引擎**：与 native CLI 相同的 93 个 op（含 commit、memory、impact、inbox、evidence 的完整工单与事务语义）经 `@agent.dispatch_with_catalog` 在 WASM 运行时内执行，由 `hosts/wasm-host.py` 这样的薄宿主提供文件系统、flock 锁与 `moon check` 子进程。`tools` 在两个面都返回全引擎工具字典。
+模块有两个面。**纯计算面**（`execute()`，wasm 与 wasm-gc 双目标）保持零宿主导入：目录/页面/视觉声明解析、基于宿主快照的自包含 HTML 渲染、关键词与暴力向量检索、UTF-8 预算上下文装配、页面快照图查询（`graph`/`neighbors`/`path`/`weighted-path`/`insights`）；它不具备磁盘事务，任何需要 vault 的操作不在该面。**服务面**（`service_execute()`，仅 wasm 目标）通过 8 个 `corridor-host` 宿主导入承载**全引擎**：与 native CLI 相同的 94 个 op（含 commit、memory、impact、inbox、evidence、extraction 的完整工单与事务语义）经 `@agent.dispatch_with_catalog` 在 WASM 运行时内执行，由 `hosts/wasm-host.py` 这样的薄宿主提供文件系统、flock 锁与 `moon check` 子进程。`tools` 在两个面都返回全引擎工具字典。
 
 ```sh
 moon build --target wasm wasm

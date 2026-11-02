@@ -26,7 +26,7 @@
 - `search` 是主入口：`budget` 1..65536、`limit` 1..100、`hops` 0..2、`dedup` 默认 `exact`（可 `similar` 合并分词序列相同的排版变体，双侧 ≥64 UTF-8 字节）、`spread` 默认 `ranked`（可 `even` 均分预算）。命中按图边权（互链 3.0、共同来源 4.0）除以跳跃距离补入上下文候选；`hits` 本身仍是关键词/向量排名。可选 `query_vector` 或 `vector_candidates` 参与融合，两者互斥。
 - 响应的 `used` 精确等于所有块 `text` 的 UTF-8 字节数；`estimated_tokens`/`truncated` 是启发式成本参考，不是特定模型的 tokenizer 值，预算语义始终是 UTF-8 字节。`excerpt` 最多 360 UTF-8 字节。
 - 正文区间一律是**解析后 `Page.body` 的 UTF-8 字节半开区间**（`offset_unit:"body_utf8_bytes"`），不是 frontmatter、UTF-16 或原文件字节位置；按区间截取即可重建引用文本。
-- 读取面：`read-page` 按页 id 读正文与证据、`read-source` 按 id 读 raw 原件、`page-history` 看页面版本时间线、`topics` 只读浏览 `synthesis` 主题层、`tree`/`graph`/`neighbors`/`path`/`weighted-path`/`insights` 探索图。`read-source` 可选 `start`/`end`（0..16777216，与 evidence 锚点同约定）精确核对字节；整篇读取按 65536 字节截断并置 `truncated`；binary/image 只报告体积并置 `extraction_required`，抽取由宿主负责。
+- 读取面：`read-page` 按页 id 读正文与证据、`read-source` 按 id 读 raw 原件、`page-history` 看页面版本时间线、`topics` 只读浏览 `synthesis` 主题层、`tree`/`graph`/`neighbors`/`path`/`weighted-path`/`insights` 探索图。`read-source` 可选 `start`/`end`（0..16777216，与 evidence 锚点同约定）精确核对字节；整篇读取按 65536 字节截断并置 `truncated`；binary/image 只报告体积并置 `extraction_required`，抽取由宿主负责：宿主跑完 OCR/PDF 抽取后用 `extraction-submit`（`source/kind/extractor/version/text/at`）入账，`context` 即返回该正文与 `extraction:{kind,extractor,version,bound_sha256,source_sha256}`；sidecar 与登记字节哈希强绑定，来源撤销或字节漂移后不再命中，OOXML 走引擎自抽通道不可被外部覆盖（`extraction_override`）。
 - 证据：`evidence-submit` 提交 1..128 项 `{source,body_start,body_end,quote}`，必须满足 `utf8_slice(body,start,end)==quote`；可选 `source_start/source_end/source_quote` 进一步核验 raw 原文区间。相同内容重试返回 `replayed`；来源撤销或漂移后记录保留但显式 `valid:false`。
 
 ## 终身记忆与宿主判断边界

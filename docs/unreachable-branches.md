@@ -82,6 +82,31 @@ archive/restore/replace，`evidence-submit` 拿不到新记录。需要把用例
 `core/records.mbt` 对 import 事件有 `import_event_version_invalid` /
 `import_event_bundle_invalid`，先于此触发。
 
+### `source_changed`（extraction-submit，2026-11-02 续十二新增）
+
+`agent/extraction.mbt:53`：`(store.digest)(source) != Some(raw.sha256)`。
+
+与 `evidence_page_changed` 同一死法：`@vault.verify`（op 入口第一行）对每个
+非 stale 的 raw 条目做的正是这条比较，先报 `source_missing_or_changed`。
+保留作纵深防御（若更早那道门哪天被重构掉，这条兜底），但 `mutation_check.py`
+不把任何变异绑在它身上——sidecar 的字节绑定由真正起决定作用的检查承担：
+`core/records.mbt` 里「文件名哈希 ↔ 内容 `source_sha256`」互锁，
+`agent/extraction.mbt` 里 context 按当前 digest 查注册条目（`sidecar_for` 的
+目录门与 digest 键各一条变异），加上 forget 不复活、异通道 exists、孤儿事件
+拒、text UTF-8 字节口径等，共十条变异由 `extraction_e2e.py` 与 agent wbtest
+逐条抓住。
+
+注：上方「当前状态」表（core 191、lint 49、agent 156/137/19）是续十一的审计快照，
+未随本轮重算；本轮增量如实登记于此——core 新增 8 个被 `branch_coverage.py`
+计数的校验分支（记录侧 `extraction_source_invalid`/`extraction_source_hash_invalid`/
+`extraction_record_identity_invalid`/`extraction_text_invalid` 与事件侧三条，
+全部有测试引用，现报 199/199、未引用 0），agent 新增 `agent/extraction.mbt`
+的 8 个失败分支，其中 7 个由
+wbtest/e2e 外部触达（`extraction_source_stale/override/source_textual/conflict/exists/
+event_conflict` 与复用名的 `expected_raw_source`），仅本节登记的 `source_changed`
+外部不可达。lint 谓词侧新增 `extraction_source_stale`/`extraction_source_drift`
+两条，均由 wbtest 与 e2e 触达。
+
 ## 二、竞态类（7 个）
 
 都需要"文件在两次读取之间发生变化"。外部测试无法在单线程里构造。
