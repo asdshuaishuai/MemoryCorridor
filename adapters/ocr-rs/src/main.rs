@@ -32,6 +32,7 @@ use std::process::exit;
 
 const DET_MODEL: &[u8] = include_bytes!("../models/ch_PP-OCRv4_det_infer.onnx");
 const REC_MODEL: &[u8] = include_bytes!("../models/ch_PP-OCRv4_rec_infer.onnx");
+const CLS_MODEL: &[u8] = include_bytes!("../models/ch_ppocr_mobile_v2.0_cls_infer.onnx");
 const DICT: &str = include_str!("../models/ppocr_keys_v1.txt");
 
 const DET_MEAN: [f32; 3] = [0.5, 0.5, 0.5]; // PP-OCRv4 uses symmetric norm on BGR
@@ -42,6 +43,8 @@ const DET_BOX_THRESH: f32 = 0.5;
 const DET_UNCLIP: f32 = 1.6;
 const REC_H: usize = 48;
 const REC_MAX_W: usize = 1280;
+const CLS_MAX_W: usize = 192; // cls_image_shape [3,48,192] (RapidOCR default)
+const CLS_THRESH: f32 = 0.9; // probability of 180° needed to rotate a crop
 
 #[derive(Clone, Copy)]
 struct Box2 {
@@ -224,6 +227,45 @@ fn resize_to(img: &image::DynamicImage, nw: u32, nh: u32) -> image::DynamicImage
     img.resize_exact(nw, nh, FilterType::Triangle)
 }
 
+/// True when the direction classifier answers 180° with p >= CLS_THRESH.
+fn cls_is_180(cls: &mut Session, crop: &image::RgbImage) -> Result<bool, String> {
+    let (cw, chh) = (crop.width() as usize, crop.height() as usize);
+    if cw == 0 || chh == 0 {
+        return Ok(false);
+    }
+    let rw = ((REC_H as f32 * cw as f32 / chh as f32).ceil() as usize).clamp(1, CLS_MAX_W);
+    let resized = image::DynamicImage::ImageRgb8(crop.clone())
+        .resize_exact(rw as u32, REC_H as u32, FilterType::Triangle)
+        .to_rgb8();
+    let mut buf = vec![0f32; 3 * REC_H * rw];
+    for y in 0..REC_H {
+        for x in 0..rw {
+            let p = resized.get_pixel(x as u32, y as u32);
+            let i = y * rw + x;
+            buf[i] = (p[2] as f32 / 255.0 - 0.5) / 0.5; // B plane
+            buf[REC_H * rw + i] = (p[1] as f32 / 255.0 - 0.5) / 0.5; // G
+            buf[2 * REC_H * rw + i] = (p[0] as f32 / 255.0 - 0.5) / 0.5; // R
+        }
+    }
+    let t = ort::value::Tensor::from_array(
+        ndarray::Array4::from_shape_vec((1, 3, REC_H, rw), buf).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let out = cls.run(ort::inputs![t]).map_err(|e| e.to_string())?;
+    let (_sh, d) = out[0].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
+    // model output is already softmax over [0°, 180°]
+    Ok(d.len() >= 2 && d[1] >= CLS_THRESH)
+}
+
+fn rot180(img: &image::RgbImage) -> image::RgbImage {
+    let (w, h) = (img.width(), img.height());
+    let mut o = image::RgbImage::new(w, h);
+    for (x, y, px) in img.enumerate_pixels() {
+        o.put_pixel(w - 1 - x, h - 1 - y, *px);
+    }
+    o
+}
+
 // ---------------- detection + recognition --------------------------------
 
 fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> Result<(String, f64), String> {
@@ -373,6 +415,17 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
         .map_err(|e| e.to_string())?
         .commit_from_memory(REC_MODEL)
         .map_err(|e| e.to_string())?;
+    // Direction classifier: PP-OCR's optional line-path (use_cls in every
+    // reference config). Each crop is resized to h=48 (width capped 192),
+    // BGR planar, same symmetric norm; the model answers [p0, p180]. A line
+    // at p180 >= 0.9 is upside down -- rotate the crop before recognition,
+    // otherwise rotated scans yield garbage or nothing at all.
+    let mut cls = Session::builder(env)
+        .map_err(|e| e.to_string())?
+        .with_intra_threads(1)
+        .map_err(|e| e.to_string())?
+        .commit_from_memory(CLS_MODEL)
+        .map_err(|e| e.to_string())?;
     let chars: Vec<&str> = DICT.lines().collect();
     // debug: replay a known-good input tensor from disk through the same session
     if std::env::var("OCR_REPLAY_IN").is_ok() {
@@ -407,6 +460,7 @@ fn ocr_image(env: &ort::environment::Environment, img: &image::DynamicImage) -> 
         let cw = (b.x1 - b.x0 + 1).max(1);
         let chh = (b.y1 - b.y0 + 1).max(1);
         let crop = rgb_img.view(b.x0, b.y0, cw, chh).to_image();
+        let crop = if cls_is_180(&mut cls, &crop)? { rot180(&crop) } else { crop };
         let mut rw = (REC_H as f32 * cw as f32 / chh as f32).ceil() as usize;
         rw = rw.clamp(16, REC_MAX_W);
         let resized = image::DynamicImage::ImageRgb8(crop)

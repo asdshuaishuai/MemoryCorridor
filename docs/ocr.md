@@ -11,7 +11,7 @@ AGENTS.md 与 PROPOSAL 的边界：MoonBit 核心不调模型、不联网；PDF/
 ```
 adapters/ocr-rs/
   src/main.rs          单二进制管线（det DB 后处理 + rec CTC + PDF，全自研实现）
-  models/              PP-OCRv4 mobile：det 4.7 MB + rec 10.9 MB（+cls 0.6 MB 备用），
+  models/              PP-OCRv4 mobile：det 4.7 MB + rec 10.9 MB（cls 0.6 MB 方向校正已接入），
                        字典 6623 行（自 rec 模型 metadata 导出）——共 15 MB，入库
   target/release/ocr-adapter   模型经 include_bytes! 内嵌，构建产物约 17 MB
   runtime/libonnxruntime.dylib 官方 ONNX Runtime（MIT，43 MB），**不入库**，
@@ -28,10 +28,12 @@ ocr-adapter <文件>          # 纯文本
 ocr-adapter <文件> --json   # {sha256, kind, source, confidence, text}
 ```
 
-路径：图片（PNG/JPEG/WebP/BMP/TIFF）→ PP-OCRv4 det+rec；PDF → 优先文本层
+路径：图片（PNG/JPEG/WebP/BMP/TIFF）→ PP-OCRv4 det+cls+rec；PDF → 优先文本层
 （lopdf，精确、免模型）；文本层近空即判扫描版，提取页内最大内嵌图
 （DCTDecode JPEG 或 FlateDecode 位图，支持 PNG/TIFF predictor、RGB/Gray/CMYK）
-走 OCR；两者皆无则显式拒绝说明原因。
+走 OCR；两者皆无则显式拒绝说明原因。**cls 方向分类器**（0.6MB，`use_cls` 参考
+默认开）逐框判 0°/180°（softmax 输出，阈值 0.9），命中先把 crop 转 180°
+再识别——颠倒扫描件（真实传真/双面扫描常见）全行恢复，关闭则整页乱码。
 
 ## 选型（对照「50 MB 以内最合适，不要最大不要最小」）
 

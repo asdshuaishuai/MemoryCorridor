@@ -80,13 +80,15 @@ pdf.set_font("heiti", size=22)
 for line in DOC:
     pdf.cell(0, 18, line, new_x="LMARGIN", new_y="NEXT")
 pdf.output(sys.argv[1] + "/textlayer.pdf")
+img.rotate(180).save(sys.argv[1] + "/plate_upside.png")
 print("made")
 ''' % (DOC,)
     r = subprocess.run([FIXTURE_PYTHON, "-c", code, str(samples)],
                        capture_output=True, text=True)
     if "no-cjk-font" in r.stdout or r.returncode != 0:
         return False
-    return all((samples / n).exists() for n in ("plate.png", "scan.pdf", "textlayer.pdf"))
+    return all((samples / n).exists()
+               for n in ("plate.png", "scan.pdf", "textlayer.pdf", "plate_upside.png"))
 
 
 def adapter_text(path):
@@ -133,8 +135,19 @@ def main():
         assert extracted["raw/文本层.pdf"]["source"] == "text-layer"
         check("native adapter OCRs image + scanned PDF and reads the text-layer PDF exactly")
 
+        # upside-down raster must be corrected by the direction classifier
+        # before recognition - without cls the same crop yields garbage
+        up = adapter_text(samples / "plate_upside.png")
+        assert "龙泉窑青瓷" in up["text"] and "百分之一点五" in up["text"], up
+        assert up["source"] == "ocr" and up["confidence"] > 0.9, up
+        check("upside-down page is rotated by the cls path and fully recognized")
+
+        # the source we publish over must stay open to the end - process it LAST,
+        # since context is exclusive per vault (another_order_active otherwise)
         publish_src, publish_order = "raw/扫描件.pdf", orders["raw/扫描件.pdf"]
-        for src, order in orders.items():
+        order_seq = [s for s in orders if s != publish_src] + [publish_src]
+        for src in order_seq:
+            order = orders[src]
             ctx = ok(root, "context", order=order)
             assert ctx["source_text"] is None and ctx["extraction_required"] is True, src
             sha = hashlib.sha256((root / src).read_bytes()).hexdigest()
