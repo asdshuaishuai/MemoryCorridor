@@ -58,5 +58,14 @@ moon build --target wasm-gc wasm
 "${WASM_PYTHON:-python3}" scripts/wasipure_e2e.py
 # second-runtime face: the same direct-run suite under WasmEdge (skip when absent)
 WASI_RUNTIME=wasmedge "${WASM_PYTHON:-python3}" scripts/wasipure_e2e.py
+# embedded WasmEdge host (corridor-wedge): build + run the same suite through
+# the embedded binary; skipped without WASMEDGE_PREFIX dev files
+if [ -n "${WASMEDGE_PREFIX:-}" ]; then
+  sh scripts/build_wedge_host.sh
+  WASI_RUNTIME=wasmedge WASMEDGE_BIN="$PWD/_build/wedge/corridor-wedge" \
+    "${WASM_PYTHON:-python3}" scripts/wasipure_e2e.py
+else
+  echo "SKIP corridor-wedge face: set WASMEDGE_PREFIX to WasmEdge >=0.18 dev files (scripts/build_wedge_host.sh)"
+fi
 python3 scripts/source_audit.py
 python3 scripts/mutation_check.py
