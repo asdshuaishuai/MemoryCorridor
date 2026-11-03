@@ -38,12 +38,25 @@ def ensure_wasmtime():
     os.execv(str(py), [str(py), __file__, *sys.argv[1:]])
 
 
+RUNTIME = os.environ.get("WASI_RUNTIME", "wasmtime")  # or "wasmedge"
+
+
+def wasmedge_available():
+    import shutil as sh
+    return bool(sh.which(os.environ.get("WASMEDGE_BIN", "wasmedge")))
+
+
 def run_batch(module_path, root, requests, work):
     """One module run over the request lines; returns the response list."""
-    print(f"  [batch] {len(requests)} requests, root={root}")
+    print(f"  [batch] {len(requests)} requests, root={root}, runtime={RUNTIME}")
     lint_req = [r for r in requests if r["op"] == "lint"]
     if lint_req:
         print("  [lint receipts]", json.dumps(lint_req[-1].get("receipts")))
+    root.mkdir(parents=True, exist_ok=True)
+    if not root.is_dir():
+        raise AssertionError(f"root missing before preopen: {root}")
+    if RUNTIME == "wasmedge":
+        return run_batch_wasmedge(module_path, root, requests, work)
     from wasmtime import Engine, Store, Module, Linker, WasiConfig
 
     engine = Engine()
@@ -51,9 +64,6 @@ def run_batch(module_path, root, requests, work):
     store = Store(engine)
     linker = Linker(engine)
     wasi = WasiConfig()
-    root.mkdir(parents=True, exist_ok=True)
-    if not root.is_dir():
-        raise AssertionError(f"root missing before preopen: {root}")
     wasi.preopen_dir(str(root), ".")
     stdin_path = work / "requests.jsonl"
     stdin_path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests), encoding="utf-8")
@@ -76,6 +86,8 @@ def run_batch(module_path, root, requests, work):
 
 def run_mcp_batch(module_path, root, requests, work):
     """One --mcp module run: JSON-RPC lines in, every reply line out."""
+    if RUNTIME == "wasmedge":
+        return run_batch_wasmedge(module_path, root, requests, work, argv_mcp=True)
     from wasmtime import Engine, Store, Module, Linker, WasiConfig
 
     engine = Engine()
@@ -97,6 +109,25 @@ def run_mcp_batch(module_path, root, requests, work):
     instance = linker.instantiate(store, module)
     instance.exports(store)["_start"](store)
     return [json.loads(line) for line in stdout_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def run_batch_wasmedge(module_path, root, requests, work, argv_mcp=False):
+    """Direct `wasmedge run` subprocess: preopen via --dir `.:<root>`
+    (WasmEdge's --dir syntax is guest:host, the inverse of wasmtime's
+    preopen_dir(host, guest) argument order)."""
+    import subprocess as sp
+    root.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    binp = env.get("WASMEDGE_BIN", "wasmedge")
+    if env.get("WASMEDGE_LIB"):
+        env["DYLD_LIBRARY_PATH"] = env["WASMEDGE_LIB"]
+    stdin = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests)
+    cmd = [binp, "run", "--dir", f".:{root}", str(module_path)]
+    if argv_mcp:
+        cmd.append("--mcp")
+    proc = sp.run(cmd, input=stdin.encode(), capture_output=True, timeout=120, env=env, cwd=str(root))
+    out = proc.stdout.decode("utf-8", "replace")
+    return [json.loads(l) for l in out.splitlines() if l.strip()]
 
 
 class PureSession:
@@ -163,6 +194,10 @@ def check(name):
 
 
 def main():
+    if RUNTIME == "wasmedge" and not wasmedge_available():
+        print("SKIP wasipure_e2e(wasmedge): no wasmedge binary on this host; "
+              "hosts with WasmEdge (or CI after installing it) run this face")
+        return 0
     assert MODULE.exists(), f"module missing; run: moon build --target wasm wasipure ({MODULE})"
     with tempfile.TemporaryDirectory(prefix="memorycorridor-wasipure-") as work:
         root = Path(work) / "vault"

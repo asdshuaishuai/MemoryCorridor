@@ -38,10 +38,15 @@ fn wasi_open(rel : String, oflags : Int, directory : Bool) -> WasiOpen raise @ba
   let rel = wasi_components(rel)
   let encoded = @utf8.encode(rel)
   let ptr = bytes2ptr(encoded)
+  // wasi rights (wasi-libc bit positions): fd_read=1<<1, fd_seek=1<<2,
+  // fd_write=1<<6, fd_filestat_get=1<<8. The pre-续二十一 mask omitted
+  // fd_write and worked only because wasmtime does not enforce rights on
+  // fd_write; WasmEdge answers ENOTCAPABLE. Directory-case bits keep the
+  // empirical positions verified against wasmtime's preopen rights.
   let rights : UInt64 = if directory {
     (1 << 18) | (1 << 14) | (1 << 21) | (1 << 19) | (1 << 20) | (1 << 23) | (1 << 24) | (1 << 25) | 2UL | 4UL
   } else {
-    2UL | 4UL | (1 << 21)
+    2UL | 4UL | (1 << 6) | (1 << 8) | (1 << 21)
   }
   let dir_rights : UInt64 = if directory { rights } else { (1 << 18) | (1 << 21) | (1 << 19) | (1 << 20) | (1 << 23) | (1 << 24) | (1 << 25) }
   let flags = if directory { OFLAG_DIRECTORY } else { 0 }
@@ -119,9 +124,10 @@ fn wasi_write_whole(fd : Int, bytes : Bytes) -> Unit raise @base.Fault {
   let mut written = 0
   let total = bytes.length()
   while written < total {
-    if fd_write_ffi(fd, iovs_ptr, 1, nw_ptr) != 0 { raise @base.Fault("wasi_write_failed") }
+    let err = fd_write_ffi(fd, iovs_ptr, 1, nw_ptr)
+    if err != 0 { raise @base.Fault("wasi_write_failed errno=" + err.to_string()) }
     let n = load32(nw_ptr)
-    if n <= 0 { raise @base.Fault("wasi_write_failed") }
+    if n <= 0 { raise @base.Fault("wasi_write_failed nwritten=" + n.to_string()) }
     written += n
     if written < total {
       // advance the iovec to the remaining bytes

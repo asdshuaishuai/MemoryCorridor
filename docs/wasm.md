@@ -17,7 +17,20 @@ WASM-GC 测试需要 Node.js 22+（本地验证为 24.19.0）；Node.js 20 不�
 ```sh
 moon build --target wasm wasm
 python3 scripts/wasm_service_e2e.py          # 首次运行自动创建 wasmtime venv
-python3 hosts/wasm-host.py --module _build/wasm/debug/build/wasm/wasm.wasm --root <vault>
+
+
+## 双运行时验证（续二十一）
+
+`wasipure` 免宿主直跑面（含 `--mcp`、租约锁接管、编译回执往返、进度通知）现在在**两个独立运行时**上由同一套件验证：
+
+- wasmtime（`WASI_RUNTIME=wasmtime`，默认；wasmtime-py 驱动）
+- WasmEdge 0.18.1（`WASI_RUNTIME=wasmedge [WASMEDGE_BIN=...]`；`wasmedge run --dir .:<vault>` 子进程驱动，缺二进制时显式 SKIP）。`verify.sh` 两面各跑一遍。
+
+移植实证（这些不再是假设）：
+1. `--dir` 语法相反：WasmEdge 是 `guest:host`，wasmtime `preopen_dir(host, guest)` 是 host 在前——传反的症状是写路径 ENOTCAPABLE 而非直白报错。
+2. dirent 发射布局**逐字节一致**（d_next u64@0、d_ino u64@8、d_namlen u32@16、d_type u32@20、name@24、stride=24+namlen）：续四钉死的『wasmtime 发射形态』其实是两家共同的规范形态。
+3. **rights 教训**：旧 `wasi_open` 遮罩漏了 `fd_write` 位而一直能跑——因为 wasmtime 不在 fd_write 上执法 rights；WasmEdge 按规范执法（ENOTCAPABLE 76）。修正后的遮罩在两家上都绿。同类被掩盖的还有：全 1 rights 被 WasmEdge 判 EINVAL（28）、文件请求 inheriting 位被拒——都提示我们此前依赖了单一引擎的宽容。
+4. 时钟（monotonic vs wall）、16 MiB 尺寸守卫、O_EXCL 锁文件语义在两家上行为一致。python3 hosts/wasm-host.py --module _build/wasm/debug/build/wasm/wasm.wasm --root <vault>
 ```
 
 `hosts/wasm-host.py` 是 Unix 专用的薄宿主（wasmtime + wasmtime-py）：逐分量 `O_NOFOLLOW` 打开拒绝符号链接、临时文件 + fsync + rename 原子写、`<vault>/.corridor-lock` 上的非阻塞 `flock`、以 `moon check --deny-warn --target-dir .corridor/compiler` 子进程实现编译回调——逐条镜像 `platform/fs.c`。模块内 `wasm/host.mbt` 声明导入并构造与 native 同一个 `@vault.Storage`；`wasm/service.mbt` 移植 nativehost 的会话层（session-open/close、写锁持有、目录缓存）与 `cli/main.mbt` 的响应信封（`{ok,op,result,request_id}`、fault_data 增强、list-tools 特判、未知字段拒绝）。行协议与 native CLI 逐请求兼容；`:exit` 或 EOF 结束。跨进程锁竞争由操作系统 flock 裁决，第二个宿主进程被拒为 `vault_locked`。
