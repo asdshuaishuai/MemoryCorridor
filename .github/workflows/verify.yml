@@ -22,6 +22,20 @@ jobs:
       - name: Sync the MoonBit registry (dependencies are fetched on demand)
         shell: bash
         run: moon update
+      - name: Install WasmEdge 0.18.1 (second runtime + embedded-host faces)
+        shell: bash
+        run: |
+          # pinned by SHA256; verify.sh runs the wasipure suite under the
+          # wasmedge CLI (WASI_RUNTIME=wasmedge) and builds corridor-wedge
+          # against these headers/libs when WASMEDGE_PREFIX is set.
+          curl --fail --silent --show-error --location -o /tmp/wasmedge.tar.gz \
+            https://github.com/WasmEdge/WasmEdge/releases/download/0.18.1/WasmEdge-0.18.1-manylinux_2_28_x86_64.tar.gz
+          echo "ec97ccfc172a1fbb2116e9dd00ca12d41f9f9ad3d7b1c89a63b8477703fa67c9  /tmp/wasmedge.tar.gz" | sha256sum -c -
+          sudo mkdir -p /opt/wasmedge
+          sudo tar xzf /tmp/wasmedge.tar.gz -C /opt/wasmedge
+          echo "/opt/wasmedge/bin" >> "$GITHUB_PATH"
+          echo "WASMEDGE_PREFIX=/opt/wasmedge" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/wasmedge/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
       - name: Verify native, WASM, Web and protocol boundaries
         shell: bash
         run: NODE_BINARY=node ./scripts/verify.sh
