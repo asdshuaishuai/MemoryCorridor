@@ -587,6 +587,51 @@ MUTATIONS = [
      "wasipure direct-run e2e:",
      "wasipure_e2e.py"),
 
+    # 续十八: wasipure boundary mutation validation -- the lease-lock
+    # arithmetic guards, the takeover retry, and the MCP handshake gates.
+    # Each is driven by scripts/wasipure_e2e.py against the rebuilt module.
+    ("a forged negative lease must not authorize instant takeover",
+     "wasipure/storage.mbt",
+     '  if value < 0.0 { return false }',
+     '  if value < 0.0 { return true }',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("a lease beyond the u64 domain must not saturate into takability",
+     "wasipure/storage.mbt",
+     '  if value >= 18446744073709551616.0 { return false }',
+     '  if value >= 18446744073709551616.0 { return true }',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("an unexpired or unreadable lease must never be preempted",
+     "wasipure/storage.mbt",
+     '        if !lease_lock_expired() { @base.fail("vault_locked: another writer is active") }',
+     '        if false { @base.fail("vault_locked: another writer is active") }',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("a takeover must re-create the lock in a second EXCL round",
+     "wasipure/storage.mbt",
+     '  for _ in 0..<2 {',
+     '  for _ in 0..<1 {',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("tools/list must refuse before the initialized notification arrives",
+     "wasipure/mcp.mbt",
+     '      "tools/list" => {\n        if !ready { raise @base.Fault("initialization_required") }',
+     '      "tools/list" => {\n        if false { raise @base.Fault("initialization_required") }',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
+    ("the MCP handshake may only be completed once per connection",
+     "wasipure/mcp.mbt",
+     '        if initialized { raise @base.Fault("already_initialized") }',
+     '        if false { raise @base.Fault("already_initialized") }',
+     "wasipure direct-run e2e:",
+     "wasipure_e2e.py"),
+
     # The literate compilation surface: the catalog block is read as the
     # closed MoonBit literal subset. Each guard below is what keeps that
     # grammar closed; dropping one must make the literate-surface tests fail.

@@ -300,6 +300,12 @@ def main():
         # 未过期但可解析的租约同样不可抢占
         (lock_root / ".corridor-lock").write_text('{"lease_until_ns": 9999999999999999999}', encoding="utf-8")
         rival.call("session-open", error="vault_locked")
+        # 伪造的负租约不可瞬时接管（to_uint64 负值饱和为 0 的防线）
+        (lock_root / ".corridor-lock").write_text('{"lease_until_ns": -5}', encoding="utf-8")
+        rival.call("session-open", error="vault_locked")
+        # 超出 u64 可表示域的租约同样不可抢占（饱和为 u64::MAX 也不行）
+        (lock_root / ".corridor-lock").write_text('{"lease_until_ns": 100000000000000000000}', encoding="utf-8")
+        rival.call("session-open", error="vault_locked")
         # 过期租约 → 接管成功，且新租约到期时刻更晚（崩溃恢复语义）
         (lock_root / ".corridor-lock").write_text('{"lease_until_ns": 1}', encoding="utf-8")
         takeover = run_batch(MODULE, lock_root, [
@@ -351,6 +357,9 @@ def main():
             {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
                 "name": "corridor_status", "arguments": {"vault": str(mcp_root)},
                 "_meta": {"progressToken": "t9"}}},
+            {"jsonrpc": "2.0", "id": 6, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05", "capabilities": {},
+                "clientInfo": {"name": "e2e"}}},
         ]
         mcp_lines = run_mcp_batch(MODULE, mcp_root, mcp_requests, Path(work))
         assert mcp_lines[0]["result"]["protocolVersion"] == "2024-11-05"
@@ -370,6 +379,9 @@ def main():
             {"path": parts[1], "sha256": parts[2], "ok": True}]
         mcp_lines = run_mcp_batch(MODULE, mcp_root, mcp_requests, Path(work))
         assert mcp_lines[3]["result"]["isError"] is False, mcp_lines[3]
+        # 同连接重复 initialize → already_initialized（握手只许发生一次）
+        dup = [l for l in mcp_lines if l.get("id") == 6]
+        assert dup and dup[0]["error"]["data"]["error_code"] == "already_initialized", dup
         # 进度令牌：started/completed 两行通知夹着 status 回复行
         assert mcp_lines[4]["method"] == "notifications/progress"
         assert mcp_lines[4]["params"]["progress"] == 0
@@ -380,7 +392,7 @@ def main():
         # 纯 WASI 面无进程内编译器：index_cache 保持 missing_or_invalid，
         # 但 dispatch 结果必须真实（fingerprint 由回执验证过的候选产出）。
         assert mcp_lines[6]["result"]["structuredContent"]["result"]["fingerprint"]
-        assert len(mcp_lines) == 7, mcp_lines
+        assert len(mcp_lines) == 8, mcp_lines
         check("pure-WASI --mcp face: handshake gate, silent notifications, receipt round trip, progress notices")
     print("wasipure direct-run e2e: boundary scenarios passed")
 
