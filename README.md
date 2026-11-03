@@ -2,7 +2,7 @@
 
 将资料整理为可追溯、可检索、持续维护的知识。核心由 MoonBit 实现，不调用模型或网络。
 
-当前已有可运行的 native 引擎、CLI/MCP、单 vault 进程会话、检索维护闭环、OKF/Markdown 互操作，以及由 `.mbt.md` 编译生成的富文本阅读页和精简本地 Web 服务。本项目只交付独立引擎与 Web 传输层，不包含桌面应用或专用桌面集成。完整分期方案见 [PROPOSAL.md](PROPOSAL.md)，逐项进度见 [tasks.md](specs/engine/tasks.md)，全量边界见 [实现审计](specs/engine/implementation-audit.md)。新增一类持久化工单的登记位置见 [扩展指南](docs/extending.md)，A5 理念的承接方式见 [记忆层说明](docs/memory.md)。
+当前已有可运行的 native 引擎、CLI/MCP、单 vault 进程会话、检索维护闭环、OKF/Markdown 互操作，以及由 `.mbt.md` 编译生成的富文本阅读页和精简本地 Web 服务。本项目只交付独立引擎与 Web 传输层，不包含桌面应用或专用桌面集成。完整分期方案见 [PROPOSAL.md](PROPOSAL.md)，逐项进度见 [tasks.md](specs/engine/tasks.md)，分期验收册（PROPOSAL §14 验收门逐条对证据）见 [acceptance](docs/acceptance.md)，全量边界见 [实现审计](specs/engine/implementation-audit.md)。新增一类持久化工单的登记位置见 [扩展指南](docs/extending.md)，A5 理念的承接方式见 [记忆层说明](docs/memory.md)。
 
 - `index.mbt.md` 是可由 MoonBit 检查的目录；每个条目显式登记 `format`，正文和原件保持独立 Markdown 或其他格式。已知文本格式会进入 Agent context，图片/binary 仍明确交给外部抽取。旧六字段目录可读取并在下一次生成时迁移为显式格式；文学化解析器会扫描整份文件的 MoonBit 围栏并拒绝未闭合块。
 - `lint` 是不写入 vault 的诊断入口：目录语义、条目路径/格式/哈希、来源与正文漂移、页面 frontmatter/断链、state/vector/evidence 记录和检索缓存问题会以稳定排序的 `predicate/subject/path/detail/fix/severity` 返回；evidence 额外检查正文与精确 raw 锚点是否漂移；`verify` 仍是硬失败门禁。
@@ -73,7 +73,7 @@ EOF
 
 验证入口为 `./scripts/verify.sh`（仅 WASM 实例化 e2e 需要 Node.js 22+ 作为 JS 引擎宿主，可通过 NODE_BINARY 指定；浏览器检查是纯 Python 标准库实现，不再需要 Node）。已验证纯函数测试、真实磁盘/编译器/进程锁与恢复、MCP 生命周期和字典/schema 对账、WASM 双产物，以及实际浏览器中的宽屏/手机 Web 交互。源码占比由 `scripts/source_audit.py` 检查，计入 C/Python/JavaScript 适配及内嵌 JS/CSS，排除测试、文档、生成样例和用户数据，门槛为 MoonBit >85%。
 
-[富文本宽屏截图](docs/reading-rich-wide.png) · [富文本手机截图](docs/reading-rich-mobile.png) · [真实项目检索小样报告](docs/quality-report.json) · [WASM 边界](docs/wasm.md)
+[富文本宽屏截图](docs/reading-rich-wide.png) · [富文本手机截图](docs/reading-rich-mobile.png) · [真实项目检索小样报告](docs/quality-report.json) · [模型生成知识双领域对照](docs/model-quality-report.json) · [分期验收册](docs/acceptance.md) · [WASM 边界](docs/wasm.md)
 
 质量报告使用固定问题和人工参考页，只验证该真实项目样本的检索/来源装配；尚不证明模型生成知识的语义正确率，也不以小样推断普遍效果。首版视觉页面使用受控 `.mbt.md` DSL；WASM 持久文件系统、多平台分发与广泛质量/成本验收按后续阶段推进。
 
