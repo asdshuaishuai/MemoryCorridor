@@ -56,8 +56,10 @@ macOS Intel 二进制（v1.31.1 无 osx-x86_64 资产，GitHub 404），Intel Ma
 PP-OCRv4 **mobile** 档：模型 16.2 MB（server 档 80 MB+ 超预算；tiny 档检测
 80.6 Hmean 偏低且不含日文）。推理用 ONNX Runtime CPU。实测中文整页置信度
 0.97–0.99；噪声+微旋转仿真扫描页同样全行召回；真实公开扫描件（IRS F1040
-Schedule 1 文本层）精确直读。macOS 设备原生 Vision 作为第二后端的评估仍挂起
-（用户标记待定）。
+Schedule 1 文本层）精确直读。**macOS 设备原生 Vision 第二后端已放弃**（用户
+2026-11-03 决定）：引擎整体运行在 wasm 沙盒上，再接 OS 级能力与「跨平台 =
+任意 WASM 运行时 + 薄宿主」的架构相悖；OCR 就用已定的 PP-OCRv4 mobile
+低成本模型，不引入 OS 后端。
 
 ## 关键工程事实（为什么是 load-dynamic）
 

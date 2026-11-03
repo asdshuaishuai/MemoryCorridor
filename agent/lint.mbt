@@ -350,6 +350,45 @@ fn lint_compile(store : @vault.Storage, issues : Array[Json]) -> Unit {
   }
 }
 
+// Deterministic page-redundancy warning (续二十三): two active pages whose
+// token sequences are identical (formatting-only differences) and which clear
+// the same byte gate are near-duplicates. Vector cosine is deliberately NOT
+// used here -- lint runs on every load and must stay fast and independent of
+// whether embeddings exist; the semantic paraphrase signal lives in the
+// read-only `page-redundancy` op instead.
+fn lint_redundant_pages(
+  store : @vault.Storage, entries : Array[@core.Entry], issues : Array[Json],
+) -> Unit {
+  let pages = entries.filter(e => @core.is_page(e) && !e.stale)
+  pages.sort_by((a, b) => @base.compare(a.id, b.id))
+  let token_of : Map[String, String] = Map([])
+  let body_of : Map[String, String] = Map([])
+  for page in pages {
+    let body = try {
+      let d = @index.document(page, @vault.required(store, page.path))
+      d.title + "\n\n" + d.body
+    } catch { _ => "" }
+    if body != "" {
+      token_of[page.id] = "1"
+      body_of[page.id] = body
+    }
+  }
+  for i = 0; i < pages.length(); i = i + 1 {
+    for j = 0; j < i; j = j + 1 {
+      let a = pages[j]
+      let b = pages[i]
+      if !token_of.contains(a.id) || !token_of.contains(b.id) { continue }
+      if @index.similar_eligible(body_of[a.id]) && @index.similar_eligible(body_of[b.id]) &&
+        @index.similar_merge(@index.similar_tokens(body_of[a.id]), @index.similar_tokens(body_of[b.id])) {
+        lint_add(issues, "redundant_page", b.id, b.path,
+          "active page is a formatting-only near-duplicate of " + a.id,
+          "consolidate the two pages through a commit, or differentiate their content",
+          "warning")
+      }
+    }
+  }
+}
+
 pub fn lint_result(store : @vault.Storage, catalog : String?) -> Json raise @base.Fault {
   let issues : Array[Json] = []
   match catalog {
@@ -369,6 +408,7 @@ pub fn lint_result(store : @vault.Storage, catalog : String?) -> Json raise @bas
           lint_entry_shape(value, issues)
           lint_file_entries(store, value, issues)
           lint_extractions(store, value, issues)
+          lint_redundant_pages(store, value, issues)
           lint_memory_notes(store, value, issues)
           lint_impact_notes(store, value, issues)
           lint_unregistered_files(store, value, issues)

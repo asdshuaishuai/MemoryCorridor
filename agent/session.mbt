@@ -217,6 +217,7 @@ pub fn dispatch_with_catalog(
     "memory-prefetch" => memory_prefetch(store, entries, request)
     "memory-conflicts" => memory_conflicts(store, entries)
     "memory-candidates" => memory_candidates(store, entries)
+    "page-redundancy" => page_redundancy(store, entries, request)
     "impact-audit" => impact_audit(store, entries, request)
     "impact-list" => impact_list(store, entries)
     "impact-resolve" => impact_resolve(store, entries, request)

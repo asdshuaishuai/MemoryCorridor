@@ -63,6 +63,7 @@ pub fn tools() -> Array[Tool] {
     { name: "memory-use", description: "登记本次前台用到过的记忆笔记，写入 last_used_at；供宿主判断哪些笔记长期未用而可归档。prefetch 本身只读，不自动记录使用", fields: ["ids", "at"] },
     { name: "memory-prefetch", description: "按 query 或按 page（以该页 title+body 作确定性种子）对 active 记忆笔记做 BM25 候选排序，连同 purpose、综述和同条件冲突候选返回有界 brief；dedup 可选 none/similar 合并改写变体，kinds 可按类型过滤；筛选由外部宿主决定", fields: ["query", "page", "limit", "archived", "dedup", "kinds"] },
     { name: "memory-candidates", description: "无需种子地列出记忆整合候选：可合并的近重复组与从未使用的精简候选；只报信号不做决定，冲突、pinned、已替代/已归档、来源失效或漂移的笔记均不提名", fields: [] },
+    { name: "page-redundancy", description: "只读语义冗余检测：对活跃页面成对提名近重复（词元近似/同空间向量余弦/共享来源+词重叠），按 id 稳定选 keeper 归组；只报信号不做决定，绝不写库、绝不自动合并——宿主经现有 commit/编辑流程去合并", fields: ["space", "limit"] },
     { name: "memory-conflicts", description: "列出 kind 与适用条件相同但正文不一致的 active 记忆笔记冲突候选；两侧都保留，由 memory-supersede 解决", fields: [] },
     { name: "impact-audit", description: "比较持久化工单冻结的输入与当前 vault，把研究主题/目标建议/综述建议/已发布综述的漂移记录为可恢复的 impact；漂移消失则关闭记录", fields: ["at", "key"] },
     { name: "impact-list", description: "列出 change-impact 记录、冻结与当前输入摘要及 open/resolved 状态", fields: [] },

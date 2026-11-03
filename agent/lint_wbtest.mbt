@@ -122,3 +122,47 @@ test "unregistered file check covers the catalog-driven directories" {
     assert_true(path.has_prefix("state/") || path.has_prefix("wiki/"))
   }
 }
+
+test "lint flags formatting-only near-duplicate pages (redundant_page)" {
+  let (store, files) = lint_memory()
+  let raw : @core.Entry = { id: "raw/a.md", path: "raw/a.md", kind: "raw",
+    format: "markdown", sha256: @base.hex_hash("src"), sources: [], stale: false }
+  let long = "龙泉窑青瓷以粉青与梅子青著称" + "釉料以石灰碱釉为基钾长石约占三成"
+  // same title+body modulo a trailing newline -> identical token sequences
+  let p1 = "---\ntype: concept\ntitle: 青瓷\nsources: [\"raw/a.md\"]\ntags: []\n---\n" + long
+  let p2 = "---\ntype: concept\ntitle: 青瓷\nsources: [\"raw/a.md\"]\ntags: []\n---\n" + long + "\n"
+  let e1 : @core.Entry = { id: "concepts/one", path: "wiki/concepts/one.md", kind: "concept",
+    format: "markdown", sha256: @base.hex_hash(p1), sources: ["raw/a.md"], stale: false }
+  let e2 : @core.Entry = { id: "concepts/two", path: "wiki/concepts/two.md", kind: "concept",
+    format: "markdown", sha256: @base.hex_hash(p2), sources: ["raw/a.md"], stale: false }
+  let catalog = @decl.generate([raw, e1, e2])
+  files["index.mbt.md"] = catalog
+  files[raw.path] = "src"
+  files[e1.path] = p1
+  files[e2.path] = p2
+  let result = lint_result(store, Some(catalog))
+  let violations = @base.array(@base.field(result, "violations"))
+  assert_true(has_lint_predicate(violations, "redundant_page"))
+}
+
+test "lint does not flag distinct pages as redundant" {
+  let (store, files) = lint_memory()
+  let raw : @core.Entry = { id: "raw/a.md", path: "raw/a.md", kind: "raw",
+    format: "markdown", sha256: @base.hex_hash("src"), sources: [], stale: false }
+  let b1 = "龙泉窑青瓷以粉青与梅子青著称" + "釉料以石灰碱釉为基钾长石约占三成"
+  let b2 = "铁还原呈色含量约百分之一点五" + "哥窑以开片釉闻名紫口铁足为辨识特征"
+  let p1 = "---\ntype: concept\ntitle: 甲\nsources: [\"raw/a.md\"]\ntags: []\n---\n" + b1
+  let p2 = "---\ntype: concept\ntitle: 乙\nsources: [\"raw/a.md\"]\ntags: []\n---\n" + b2
+  let e1 : @core.Entry = { id: "concepts/one", path: "wiki/concepts/one.md", kind: "concept",
+    format: "markdown", sha256: @base.hex_hash(p1), sources: ["raw/a.md"], stale: false }
+  let e2 : @core.Entry = { id: "concepts/two", path: "wiki/concepts/two.md", kind: "concept",
+    format: "markdown", sha256: @base.hex_hash(p2), sources: ["raw/a.md"], stale: false }
+  let catalog = @decl.generate([raw, e1, e2])
+  files["index.mbt.md"] = catalog
+  files[raw.path] = "src"
+  files[e1.path] = p1
+  files[e2.path] = p2
+  let result = lint_result(store, Some(catalog))
+  let violations = @base.array(@base.field(result, "violations"))
+  assert_true(!has_lint_predicate(violations, "redundant_page"))
+}

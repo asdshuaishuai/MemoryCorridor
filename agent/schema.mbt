@@ -27,6 +27,7 @@ pub fn input_schema(t : Tool) -> Json {
         ("search", "budget") => (1, 65536)
         ("search", "hops") => (0, 2)
         ("graph", "hops") => (0, 8)
+        ("page-redundancy", "limit") => (1, 1000)
         ("embedding-plan", "limit") => (1, 128)
         ("memory-prefetch", "limit") => (1, 50)
         ("read-source", "start") => (0, 16777216)

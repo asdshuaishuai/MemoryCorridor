@@ -632,6 +632,47 @@ MUTATIONS = [
      "wasipure direct-run e2e:",
      "wasipure_e2e.py"),
 
+    # 续二十三 semantic page-redundancy: every decision that turns a raw
+    # signal into a proposal is guarded so a paraphrase-only nomination, the
+    # content-version lock, the byte gate, the cosine floor, the priority, and
+    # the lint wiring each have a test/e2e that fails when the guard is dropped.
+    ("page-redundancy must lock a vector to the page's current content version",
+     "agent/redundancy.mbt",
+     '      pages.iter().any(p => p.id == record.page && p.sha256 == record.sha256) {',
+     '      pages.iter().any(p => p.id == record.page) {',
+     "redundancy e2e:",
+     "redundancy_e2e.py"),
+
+    ("near-duplicate token merge must respect the byte gate",
+     "agent/redundancy.mbt",
+     '  if @index.similar_eligible(bodies[page.id]) && @index.similar_eligible(bodies[kept.id]) {',
+     '  if true {',
+     "short bodies never merge on a coincidental token sequence"),
+
+    ("vector cosine must clear the redundancy floor",
+     "agent/redundancy.mbt",
+     '        if cos >= REDUNDANCY_COSINE_FLOOR {',
+     '        if cos >= 0.0 {',
+     "orthogonal vectors nominate nothing without a structural signal"),
+
+    ("the deterministic token signal must outrank vector cosine",
+     "agent/redundancy.mbt",
+     '          if primary is None { primary = Some(("vector_cosine", cos)) }',
+     '          primary = Some(("vector_cosine", cos))',
+     "similar_text takes priority over vector_cosine"),
+
+    ("shared-source nomination needs real term overlap, not just a shared cite",
+     "agent/redundancy.mbt",
+     '    if term_overlap(bodies[page.id], bodies[kept.id]) >= REDUNDANCY_SHARED_OVERLAP_FLOOR {',
+     '    if term_overlap(bodies[page.id], bodies[kept.id]) >= 0.0 {',
+     "shared source with low term overlap does not nominate"),
+
+    ("lint must run the deterministic redundant-page pass",
+     "agent/lint.mbt",
+     '          lint_redundant_pages(store, value, issues)\n',
+     '',
+     "lint flags formatting-only near-duplicate pages (redundant_page)"),
+
     # The literate compilation surface: the catalog block is read as the
     # closed MoonBit literal subset. Each guard below is what keeps that
     # grammar closed; dropping one must make the literate-surface tests fail.
