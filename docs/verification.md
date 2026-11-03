@@ -43,7 +43,7 @@
 
 精简 Web 服务再次通过同一浏览器脚本（使用分配的 loopback 端口），宽屏与手机检查通过，运行时错误 0，无外部依赖请求，见 [Web 浏览器记录](web-browser-check.json)、[宽屏截图](web-wide.png)和[手机截图](web-mobile.png)。绕过服务读取前的引擎验证，会使正文漂移后的 `/api/status` 断言失败；恢复后真实 HTTP 测试通过。
 
-模型生成知识的质量/成本对照见 `scripts/model_quality_eval.py`（`docs/model-quality-report.json`）：同一龙窑青瓷语料上，会话内模型生成的页面以两种策略冻结重放——无锚点改写 vs 精确证据锚点。引擎确定性测量显示：精确锚点以约 +29% 正文字节换来 recall@3 1.0（无锚点 0.833，改写漂移丢失检索词）与零 missing_evidence 债务（无锚点 5 条）；两策略都残留 coverage gap 与 sparse_tag 债务。该对照测量检索性与溯源记账，不断言语义正确性。
+模型生成知识的质量/成本对照见 `scripts/model_quality_eval.py`（`docs/model-quality-report.json`）：在两个自有语料（龙窑青瓷工艺、光合与产量生理，续十九起）上，会话内模型生成的页面以两种策略冻结重放——无锚点改写 vs 精确证据锚点。引擎确定性测量显示：精确锚点以 +29%（域1）/+70%（域2）正文字节换来 recall@3 1.0（两域无锚点均 0.833，改写漂移丢失检索词）与零 missing_evidence 债务（无锚点每域 5 条）；债务的**形态**随领域图结构变化（域2 无锚点无 orphan：共享来源边吸收了它），引擎如实各自报告；两策略都残留 coverage gap 与 sparse_tag 债务。该对照测量检索性与溯源记账，不断言语义正确性。
 
 小样报告不能充当任意资料的质量保证。未验证的范围包括：多领域模型生成质量/成本、跨平台规模阈值和高并发排队服务、完整 CommonMark/YAML/Unicode 语言分词、浏览器中的原位知识写入与实时排名、大包/压缩容器和 WASM 内核内置持久事务。Node WASM 文件快照适配器的 PID 锁、死亡锁回收、原子替换、重启恢复和顺序冲突已由 `wasm_session_e2e.mjs` 覆盖；Web Locks + localStorage 适配器的哈希、CAS 冲突和无锁拒绝由 `wasm_web_storage_e2e.mjs` 覆盖。Windows native 分支已从 `platform/fs.c`/`platform/socket.c` 移除（跨平台由 WASM 运行时承担）；OKF/Markdown 往返和普通容器路径已由独立磁盘测试覆盖；向量计划提供页面前缀，实际模型推理由外部调用方提供。
 

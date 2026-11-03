@@ -370,7 +370,7 @@
 - [x] 记忆冲突保留（吸收 A5 Autodream 理念）：按 `kind` + 规范化 `conditions` 分组检测 active 笔记之间的冲突候选，新增 `memory-conflicts`；`memory-prefetch` 返回 `conflicts`/`conflict_counts` 与逐条 `conflicted`，`memory-list` 与 `stats.memory.conflicted` 同步计数；`superseded`/`archived` 不参与分组，收窄条件或归档某一侧即解除冲突，相同正文不算冲突；lint 以 warning 报告 `memory_conflict`，两侧记录保留可读，由 `memory-supersede`/`memory-archive` 解决。
 - [x] 主动工作收件箱（吸收 A5 Proposal Engine/Inbox 理念）：新增只读 `inbox`，汇总打开的 change-impact、pending HumanGate 审核、`proposed` 研究/目标/综述工单、失效页面和未登记 raw 来源，每条带 `kind`/`subject`（目录路径）/`reason`/`detail`/`next`，按 kind+subject+reason 稳定排序且重复调用不改变指纹；一个 subject 只提议一次，漂移原因并入专门条目的 `drift` 字段；空 `items` 表示无需主动介入。为此补充 `purpose-cancel`/`overview-cancel`（基线漂移后永远无法应用的建议只能取消，记录与冻结上下文保留），`cancelled` 终态的 `result_hash` 必须为 null。
 - [x] 变化影响层（吸收 A5 Diff Engine 理念）：`state/impacts/` 内容寻址记录与 `impact-audit`/`impact-list`/`impact-resolve`；研究主题按创建时记录的 `inputs_hash`（purpose/raw/页面/向量知识指纹，排除 state 记录）比较，综述建议按冻结的 `purpose_hash` 与 `page_hashes` 比较，已发布综述只在没有 applied 记录匹配时报告；漂移消失自动 resolve，宿主决定后按 `dismissed` 抑制重报，输入再次变化才重新打开；lint 增加 `impact_subject_missing`/`impact_no_drift`，`status/stats` 报告 `impacts` 计数；记录参与目录指纹、事务恢复与 pack。
-- [ ] 多领域真实资料与外部模型生成知识的质量/成本对照；改写/同义级语义去冗余仍不在核心内。
+- [x] 多领域真实资料与外部模型生成知识的质量/成本对照（续十九：`model_quality_eval.py` 泛化为领域循环，新增第二领域光合与产量——公开域知识、会话内生成冻结重放——A/B 双策略对照 recall 0.833/1.0、B 精确锚点字节 +70%（域1 为 +29%）、missing_evidence A=5/B=0 复现；债务**形态**按领域不同（域2 A 无 orphan：共享来源图边吸收），断言改为按域期望 + 债务存在性下限，报告 `docs/model-quality-report.json` 双领域化）。改写/同义级语义去冗余仍不在核心内（范围声明）。
 - [x] 四领域 native 检索/来源/预算基线（物理、医学、软件、食品；中英文问题集）；不宣称模型质量，见 [多领域基线](quality.md)。
 - [x] MCP stdio 生命周期、JSON-RPC/工具错误、通知与 CLI 字典/schema 对账。
 - [x] CLI/MCP 可区分结构化进度事件；CLI 显式 opt-in，MCP 按 `progressToken` 映射标准通知，并保留唯一终态响应。
