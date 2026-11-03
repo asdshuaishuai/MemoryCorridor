@@ -717,12 +717,36 @@ MUTATIONS = [
      "extraction sidecar e2e:",
      "extraction_e2e.py"),
 
-    ("OOXML sources must refuse external extraction (extraction_override)",
+    ("office/html sources must refuse external extraction (extraction_override)",
      "agent/extraction.mbt",
-     '  if @office.is_office_format(raw.format) { @base.fail("extraction_override") }\n',
+     '  if @office.is_office_format(raw.format) || @htdoc.is_html_format(raw.format) {\n    // office 原件与 HTML 都有引擎自抽通道（续十一 / 续十七），外部结果不可遮蔽\n    @base.fail("extraction_override")\n  }',
      '',
      "extraction sidecar e2e:",
      "extraction_e2e.py"),
+
+    ("context must project HTML originals through the engine channel",
+     "agent/orders.mbt",
+     '  } else if @htdoc.is_html_format(source_entry.format) {',
+     '  } else if false {',
+     "context supplies the html body"),
+
+    ("the engine channel must name itself per format (corridor-html-v1)",
+     "agent/orders.mbt",
+     '        "extractor": if @htdoc.is_html_format(source_entry.format) {\n          "corridor-html-v1"',
+     '        "extractor": if false {\n          "corridor-html-v1"',
+     "context supplies the html body"),
+
+    ("unclosed script/style regions must refuse, never truncate the body",
+     "htdoc/html.mbt",
+     '        if !closed { @base.fail("html_unterminated_" + region) }',
+     '        if false { @base.fail("html_unterminated_" + region) }',
+     "unclosed script refuses instead of swallowing the tail"),
+
+    ("numeric entities with illegal codepoints must refuse, not leak bytes",
+     "htdoc/html.mbt",
+     '  if !legal { @base.fail("html_entity_codepoint_invalid: &" + body + ";") }',
+     '  if !legal { out.write_string(code_point_string(32)) }',
+     "entities: numeric must decode, unknown names stay literal"),
 
     ("the sidecar filename digest must lock the content source digest",
      "core/records.mbt",

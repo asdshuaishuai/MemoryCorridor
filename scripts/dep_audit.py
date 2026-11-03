@@ -25,6 +25,7 @@ LAYERS = {
     "vault": 3,
     "index": 3,
     "office": 3,
+    "htdoc": 3,
     "agent": 4,
     "wasm": 4,
     "wasipure": 4,

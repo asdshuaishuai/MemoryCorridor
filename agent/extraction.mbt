@@ -42,7 +42,10 @@ pub fn extraction_submit(
   let raw = @core.find(entries, source)
   if raw.kind != "raw" { @base.fail("expected_raw_source") }
   if raw.stale { @base.fail("extraction_source_stale") }
-  if @office.is_office_format(raw.format) { @base.fail("extraction_override") }
+  if @office.is_office_format(raw.format) || @htdoc.is_html_format(raw.format) {
+    // office 原件与 HTML 都有引擎自抽通道（续十一 / 续十七），外部结果不可遮蔽
+    @base.fail("extraction_override")
+  }
   if raw.format != "binary" && raw.format != "image" { @base.fail("extraction_source_textual") }
 
   // Defense in depth: `verify` already refuses a drifted active raw with

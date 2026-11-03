@@ -160,6 +160,12 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
   // method) fails the request rather than returning partial text.
   let office_text = if @office.is_office_format(source_entry.format) {
     Some(@office.text(source_entry.format, required_bytes(store, order.source)))
+  } else if @htdoc.is_html_format(source_entry.format) {
+    // HTML originals (续十七): fetched network bytes are the host's, but the
+    // projection to visible text is deterministic data processing -- same
+    // dual channel as OOXML: read-source keeps raw bytes, context serves
+    // this extraction, and the sidecar refuses to shadow it.
+    Some(@htdoc.text(required_bytes(store, order.source)))
   } else {
     None
   }
@@ -207,7 +213,14 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
     "source_summary_id": "sources/" + @base.hex_hash(order.source),
     "source_text": source, "extraction_required": office_text is None && sidecar is None && !textual,
     "extraction": match office_text {
-      Some(_) => { "kind": source_entry.format, "extractor": "corridor-office-v1" }.to_json()
+      Some(_) => {
+        "kind": source_entry.format,
+        "extractor": if @htdoc.is_html_format(source_entry.format) {
+          "corridor-html-v1"
+        } else {
+          "corridor-office-v1"
+        },
+      }.to_json()
       None => match sidecar {
         Some(record) => {
           "kind": @base.text(@base.field(record, "kind")),

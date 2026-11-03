@@ -261,6 +261,45 @@ test "sidecar and event validation reject a non-raw source and a malformed diges
     "at": "2026-11-02T00:00:00Z" }), "extraction_event_source_hash_invalid")
 }
 
+test "context supplies the html body" {
+  // 续十七 engine channel: an HTML original gets visible text through htdoc
+  // with its own extractor tag; read-source keeps the raw bytes channel.
+  let (store, _broken, files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  files["raw/页面.html"] =
+    "<!DOCTYPE html><html><head><title>窑口</title></head><body>" +
+    "<p>铁还原<b>呈色</b></p><script>hide()</script></body></html>"
+  ignore(scan(store, @vault.load(store)))
+  let entries = @vault.load(store)
+  let order = orders(store, entries)[0]
+  let view = context(store, entries, order.id)
+  assert_eq(@base.text(@base.field(view, "source_text")), "窑口\n铁还原呈色")
+  let ex = @base.field(view, "extraction")
+  assert_eq(@base.text(@base.field(ex, "extractor")), "corridor-html-v1")
+  assert_eq(@base.text(@base.field(ex, "kind")), "html")
+  assert_eq(@base.boolean(@base.field(view, "extraction_required")), false)
+  let raw = @vault.required(store, "raw/页面.html")
+  assert_true(raw.has_prefix("<!DOCTYPE html>"))
+}
+
+test "html originals are refused from the sidecar channel (engine owns them)" {
+  // 续十七: HTML has an engine extraction channel like OOXML; an external
+  // result must not shadow it. `extraction_override` fires on `.html` too.
+  let (store, _broken, files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  files["raw/页面.html"] = "<html><body><p>正文</p></body></html>"
+  ignore(scan(store, @vault.load(store)))
+  let fault = try {
+    ignore(extraction_submit(store, @vault.load(store), {
+      "op": "extraction-submit", "source": "raw/页面.html", "kind": "html",
+      "extractor": "readability", "version": "1", "text": "外部正文",
+      "at": "2026-11-02T09:00:00Z",
+    }))
+    "none"
+  } catch { @base.Fault(m) => m }
+  assert_true(fault.has_prefix("extraction_override"))
+}
+
 test "twin sources: replay echoes the booked path; the stale predicate follows the digest" {
   // 续十六 B-B/B-C: a sidecar booked through one path serves any active raw
   // with the same bytes. Lint must not fire `extraction_source_stale` when

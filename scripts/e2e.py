@@ -294,8 +294,13 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-e2e-") as work:
     (root / "raw/context.html").write_text("<article><h1>HTML source</h1><p>可直接交给 Agent 分析。</p></article>")
     html_order = s.call("scan")["orders"][0]
     html_context = s.call("context", order=html_order)
-    assert html_context["source_text"] == "<article><h1>HTML source</h1><p>可直接交给 Agent 分析。</p></article>"
+    # 续十七: HTML originals now serve the engine's deterministic visible-text
+    # projection (raw bytes remain auditable via read-source)
+    assert html_context["source_text"] == "HTML source\n可直接交给 Agent 分析。", html_context["source_text"]
+    assert html_context["extraction"] == {"kind": "html", "extractor": "corridor-html-v1"}, html_context["extraction"]
     assert not html_context["extraction_required"]
+    raw_html = s.call("read-source", id="raw/context.html")
+    assert raw_html["text"].startswith("<article>"), raw_html["text"][:40]
     s.call("cancel", order=html_order)
     check("catalog format exposes HTML source text to context without external extraction")
 

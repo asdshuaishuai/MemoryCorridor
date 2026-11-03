@@ -118,7 +118,7 @@ pub fn fault_hint(code : String) -> String {
     "overview_key_conflict" => "相同幂等键必须保持相同的目标和页面版本，或换用新的 key"
     "evidence_page_version_mismatch" | "evidence_page_changed" => "重新读取页面并使用当前 entry.sha256 提交证据"
     "evidence_source_not_active" => "先调用 scan 登记来源，且只能引用当前未撤销的 raw 文件"
-    "extraction_override" => "OOXML 由引擎自抽（续十一通道），外部结果不能覆盖；只接受 binary/image 来源"
+    "extraction_override" => "OOXML/HTML 由引擎自抽（续十一/续十七通道），外部结果不能覆盖；只接受其余 binary/image 来源"
     "extraction_conflict" => "同 source/extractor/version 已有不同正文；同一字节哈希内 sidecar 不可改写——要换正文就换原件：改字节、scan、对新哈希重新入账"
     "extraction_exists" => "该字节哈希已有另一 extractor/version 的有效 sidecar；forget 后同字节重扫仍是墓碑，换 version 也会再次被拒——唯一恢复路径是替换来源字节、scan 出新哈希、按新哈希入账（旧记录由 lint 报 stale/drift）"
     "extraction_event_conflict" => "同哈希的 extraction-submit 事件与 sidecar 记录配对被破坏（lint 会以 file_unregistered/file_missing 点名是哪一侧）：事务未完成先 recover；确为孤儿则删除 state/events/extraction-submit-<哈希>.json 或经 owning op 重建记录；替换字节重摄按新哈希入账"
