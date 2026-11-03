@@ -34,3 +34,17 @@ python3 scripts/watch.py /path/to/vault --cli ./bin/memorycorridor-cli --once
 
 The release archive is byte-for-byte stable for the same inputs. The release
 smoke test is part of `scripts/verify.sh`.
+
+## Self-carried WASM runtime alternative (no native toolchain needed)
+
+Beyond the native archive, the engine ships a runtime-embedded form:
+`_build/wasm/debug/build/wasipure/wasipure.wasm` (the whole engine, 94 ops,
+line protocol, host-free by design) + `corridor-wedge` (`scripts/build_wedge_host.sh`,
+an ~120-line C host linking WasmEdge) + WasmEdge >= 0.18 `libwasmedge`.
+Those three artifacts are a complete MemoryCorridor service on any machine
+with the library — no Python, no wasmtime install. `docs/wasm.md` covers the
+CLI shape and the dual-runtime verification (wasmtime, WasmEdge CLI, and the
+embedded host all run the same suite in CI). We deliberately do not fold the
+~60 MB runtime library into the release tarball: it is an Apache-2.0 product
+of its own with its own distribution channel; the archive would balloon and
+the checksum pinning (CI workflow) keeps the supply chain explicit.
