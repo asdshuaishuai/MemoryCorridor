@@ -10,3 +10,4 @@ vendor/reader/node_modules/
 .stepcode/
 .corridor/
 .pivot/
+.zcode/
