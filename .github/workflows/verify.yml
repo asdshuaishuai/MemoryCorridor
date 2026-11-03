@@ -35,7 +35,7 @@ jobs:
           sudo tar xzf /tmp/wasmedge.tar.gz -C /opt/wasmedge
           echo "/opt/wasmedge/bin" >> "$GITHUB_PATH"
           echo "WASMEDGE_PREFIX=/opt/wasmedge" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/opt/wasmedge/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/wasmedge/lib64:/opt/wasmedge/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
       - name: Verify native, WASM, Web and protocol boundaries
         shell: bash
         run: NODE_BINARY=node ./scripts/verify.sh

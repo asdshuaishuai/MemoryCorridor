@@ -8,7 +8,10 @@ PREFIX="${WASMEDGE_PREFIX:-/usr/local}"
 CXX="${CXX:-clang++}"
 OUT="$ROOT/_build/wedge/corridor-wedge"
 mkdir -p "$ROOT/_build/wedge"
+# macOS packages ship lib/; the manylinux release ships lib64/
+LIBDIR="$PREFIX/lib"
+[ -d "$LIBDIR" ] || LIBDIR="$PREFIX/lib64"
 "$CXX" -std=c++17 -O2 -o "$OUT" "$ROOT/hosts/corridor-wedge.cpp" \
-  -I"$PREFIX/include" -L"$PREFIX/lib" -lwasmedge \
-  -Wl,-rpath,"$PREFIX/lib"
+  -I"$PREFIX/include" -L"$LIBDIR" -lwasmedge \
+  -Wl,-rpath,"$LIBDIR"
 echo "ok: $OUT"
