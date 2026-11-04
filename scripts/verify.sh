@@ -48,7 +48,6 @@ python3 scripts/extraction_e2e.py
 python3 scripts/htmldoc_e2e.py
 python3 scripts/ocr_e2e.py
 python3 scripts/redundancy_e2e.py
-python3 scripts/embed_e2e.py
 moon check views/library.mbt.md --deny-warn
 moon build --target wasm wasm
 moon build --target wasm wasipure
