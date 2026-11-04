@@ -21,6 +21,27 @@ already exist under `_build/<target>/debug/build/`.
 
 CI produces the Linux artifact from the same script: the Ubuntu job uploads
 `memorycorridor-native-linux` (first green run 41050582660, 2026-10-30).
+
+## Embedded-runtime face (续二十四)
+
+Every archive now also carries the self-carried-WASM-runtime form as a
+first-class deliverable, not just a test artifact:
+
+- `wasm/wasipure.wasm` — the whole engine (all operations, line protocol,
+  host-free by design), always built and included.
+- `bin/corridor-wedge` — the ~120-line native WasmEdge host that runs it. It is
+  included when the build host had the runtime to compile it (`WASMEDGE_PREFIX`
+  set); CI's Ubuntu job installs WasmEdge, so the Linux artifact ships it.
+- `scripts/fetch_wasmedge.sh` + `scripts/build_wedge_host.sh` — pinned acquisition
+  and rebuild of the host.
+
+The three pieces — `corridor-wedge` + `wasm/wasipure.wasm` + `libwasmedge` — are a
+complete MemoryCorridor service that needs neither Python nor a preinstalled wasm
+CLI. `libwasmedge` (~176 MB) is deliberately NOT folded into the tarball: it is an
+Apache-2.0 product of its own with its own channel, and `fetch_wasmedge.sh` pins it
+by checksum (darwin arm64 + linux x86_64 verified; other arches fail loudly rather
+than shipping an unpinned blob). This mirrors the OCR decision to keep the runtime
+library as a pinned fetch rather than vendoring it.
 Windows packaging was removed with the Windows platform branches when the
 project moved to WASM-runtime delivery (`docs/wasm.md`); each archive's
 manifest records its own platform and architecture.

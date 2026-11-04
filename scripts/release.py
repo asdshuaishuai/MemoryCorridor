@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -46,6 +47,19 @@ def copy_file(stage, relative, destination=None):
     shutil.copyfile(source, target)
 
 
+def copy_optional(stage, relative, destination=None):
+    """Include a build artifact only when it exists, so the embedded-runtime
+    face rides in the package when the build host produced it (wasipure.wasm
+    always; corridor-wedge only when WASMEDGE_PREFIX gave the runtime)."""
+    source = ROOT / relative
+    if not source.is_file():
+        return False
+    target = stage / (destination or relative)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return True
+
+
 def make_archive(stage, output):
     with output.open("wb") as raw:
         with gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=9, mtime=0, filename="") as compressed:
@@ -71,6 +85,11 @@ def main():
     args = parser.parse_args()
     if not args.skip_build:
         subprocess.run(["moon", "build", "--target", args.target, "cli", "mcp", "web"], cwd=ROOT, check=True)
+        # the embedded-runtime face: the whole engine as a host-free wasm module
+        subprocess.run(["moon", "build", "--target", "wasm", "wasipure"], cwd=ROOT, check=True)
+        # corridor-wedge (native WasmEdge host) builds only when the runtime is present
+        if os.environ.get("WASMEDGE_PREFIX"):
+            subprocess.run(["sh", "scripts/build_wedge_host.sh"], cwd=ROOT, check=True)
     cli, mcp = binary("cli", args.target), binary("mcp", args.target)
     web = binary("web", args.target)
     tag = f"memorycorridor-{version()}-{args.target}-{platform.system().lower()}-{platform.machine().lower()}"
@@ -87,6 +106,13 @@ def main():
         copy_file(stage, str(cli.relative_to(ROOT)), "bin/memorycorridor-cli" + (".exe" if cli.suffix == ".exe" else ""))
         copy_file(stage, str(mcp.relative_to(ROOT)), "bin/memorycorridor-mcp" + (".exe" if mcp.suffix == ".exe" else ""))
         copy_file(stage, str(web.relative_to(ROOT)), "bin/memorycorridor-web" + (".exe" if web.suffix == ".exe" else ""))
+        # embedded-runtime face: the engine as a host-free wasm module, plus the
+        # native WasmEdge host when this build host had the runtime to compile it.
+        copy_file(stage, str((ROOT / "_build/wasm/debug/build/wasipure/wasipure.wasm").relative_to(ROOT)),
+                  "wasm/wasipure.wasm")
+        copy_optional(stage, "_build/wedge/corridor-wedge", "bin/corridor-wedge")
+        copy_file(stage, "scripts/fetch_wasmedge.sh", "scripts/fetch_wasmedge.sh")
+        copy_file(stage, "scripts/build_wedge_host.sh", "scripts/build_wedge_host.sh")
         for executable in (stage / "bin").iterdir():
             executable.chmod(0o755)
         rows = []
