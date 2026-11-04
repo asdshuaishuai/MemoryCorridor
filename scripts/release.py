@@ -108,8 +108,9 @@ def main():
         copy_file(stage, str(web.relative_to(ROOT)), "bin/memorycorridor-web" + (".exe" if web.suffix == ".exe" else ""))
         # embedded-runtime face: the engine as a host-free wasm module, plus the
         # native WasmEdge host when this build host had the runtime to compile it.
-        copy_file(stage, str((ROOT / "_build/wasm/debug/build/wasipure/wasipure.wasm").relative_to(ROOT)),
-                  "wasm/wasipure.wasm")
+        # Both are optional so a --skip-build run (or a host without the wasm/
+        # WasmEdge artifacts) stays deterministic instead of hard-failing.
+        copy_optional(stage, "_build/wasm/debug/build/wasipure/wasipure.wasm", "wasm/wasipure.wasm")
         copy_optional(stage, "_build/wedge/corridor-wedge", "bin/corridor-wedge")
         copy_file(stage, "scripts/fetch_wasmedge.sh", "scripts/fetch_wasmedge.sh")
         copy_file(stage, "scripts/build_wedge_host.sh", "scripts/build_wedge_host.sh")
