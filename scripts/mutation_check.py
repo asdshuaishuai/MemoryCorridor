@@ -673,6 +673,52 @@ MUTATIONS = [
      '',
      "lint flags formatting-only near-duplicate pages (redundant_page)"),
 
+    # 续二十六 optional multimodal routing: the capability vocabulary is
+    # closed, the routing reads the ACTUAL provider row, the image pick is
+    # deterministic, unembeddable pages are skipped rather than gap-counted,
+    # and image items pin the exact bytes. Each guard is caught by the always-
+    # in-CI embedding protocol e2e or the selector wbtest.
+    ("provider capability vocabulary must stay closed",
+     "agent/providers.mbt",
+     '  if !["embed", "search", "embed-multimodal"].contains(value) {\n    @base.fail("provider_capability_unknown: " + value)\n  }',
+     '  if false { @base.fail("provider_capability_unknown: " + value) }',
+     "Multimodal plan routing:",
+     "embedding_e2e.py"),
+
+    ("multimodal routing must fire for a declaring provider",
+     "agent/vectors.mbt",
+     '  let multimodal = provider_declares(store, entries, request, "embedding", space, "embed-multimodal")',
+     '  let multimodal = false',
+     "Multimodal plan routing:",
+     "embedding_e2e.py"),
+
+    ("multimodal routing must read the actual provider row, not assume",
+     "agent/providers.mbt",
+     '      let row = provider_for(store, entries, provider, kind, space)\n      @base.strings(@base.field(row, "capabilities")).contains(capability)',
+     '      ignore(provider_for(store, entries, provider, kind, space))\n      true',
+     "Multimodal plan routing:",
+     "embedding_e2e.py"),
+
+    ("the image source pick must be sorted-deterministic",
+     "agent/vectors.mbt",
+     '  let sorted = page.sources.copy()\n  sorted.sort()',
+     '  let sorted = page.sources.copy()',
+     "first image source picks the sorted-first active image"),
+
+    ("pages without an image source must be skipped, never planned",
+     "agent/vectors.mbt",
+     '  let targets = if multimodal { pages.filter(p => first_image_source(entries, p) != None) } else { pages }',
+     '  let targets = pages',
+     "Multimodal plan routing:",
+     "embedding_e2e.py"),
+
+    ("image items must pin the exact image bytes version",
+     "agent/vectors.mbt",
+     '      items.push({ "page": entry.id, "sha256": entry.sha256, "modality": "image",\n        "image": source.id, "image_sha256": source.sha256 })',
+     '      items.push({ "page": entry.id, "sha256": entry.sha256, "modality": "image", "image": source.id })',
+     "Multimodal plan routing:",
+     "embedding_e2e.py"),
+
     # The literate compilation surface: the catalog block is read as the
     # closed MoonBit literal subset. Each guard below is what keeps that
     # grammar closed; dropping one must make the literate-surface tests fail.

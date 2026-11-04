@@ -13,6 +13,13 @@ ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "
 ndarray = "0.17"
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 serde_json = "1"
+# Optional multimodal face (续二十六): CLIP ViT-B/32 vision tower on real
+# image bytes. Decoder feature set mirrors the engine's image extensions
+# (core/entry.mbt: png jpg jpeg gif webp); no tiff there.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# image_sha256 lock: the adapter verifies the bytes it embeds match the exact
+# version embedding-plan pinned (defense-in-depth before submit re-validates).
+sha2 = "0.10"
 
 [profile.release]
 strip = true

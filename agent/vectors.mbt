@@ -12,10 +12,27 @@ fn embedding_task_text(store : @vault.Storage, entry : @core.Entry) -> (String, 
   (text.to_string(), used < @base.utf8_size(full))
 }
 
+// Deterministic pick for the optional multimodal space (续二十六): the first
+// non-stale `raw` image source (sorted by id, format "image" implied by the
+// registered extension) is the visual content the host must embed. Pages
+// without an image source are structurally unembeddable in a visual-only
+// space and are skipped from the plan entirely -- they are NOT counted as a
+// gap, unlike a page whose vector for its current content version is missing.
+fn first_image_source(entries : Array[@core.Entry], page : @core.Entry) -> @core.Entry? {
+  let sorted = page.sources.copy()
+  sorted.sort()
+  for id in sorted {
+    let hits = entries.filter(e => e.id == id && e.kind == "raw" && !e.stale)
+    if hits.length() > 0 && hits[0].format == "image" { return Some(hits[0]) }
+  }
+  None
+}
+
 fn embedding_plan(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @vault.verify(store, entries)
   let space = @index.space_from_json(@base.field(request, "space"))
   require_registered_provider(store, entries, request, "embedding", space)
+  let multimodal = provider_declares(store, entries, request, "embedding", space, "embed-multimodal")
   let limit = integer(request, "limit", 8, 1, 128)
   let current : Map[String, String] = Map([])
   for entry in entries {
@@ -25,13 +42,26 @@ fn embedding_plan(store : @vault.Storage, entries : Array[@core.Entry], request 
   }
   let pages = entries.filter(e => @core.is_page(e) && !e.stale && current.get(e.id) != Some(e.sha256))
   pages.sort_by((a,b) => @base.compare(a.id, b.id))
+  let targets = if multimodal { pages.filter(p => first_image_source(entries, p) != None) } else { pages }
   let items : Array[Json] = []
-  for entry in pages[:Int::min(limit, pages.length())] {
-    let (text, truncated) = embedding_task_text(store, entry)
-    items.push({ "page": entry.id, "sha256": entry.sha256, "text": text, "truncated": truncated })
+  for entry in targets[:Int::min(limit, targets.length())] {
+    if multimodal {
+      let source = match first_image_source(entries, entry) {
+        Some(e) => e
+        None => raise @base.Fault("vector_image_source_unreachable")
+      }
+      items.push({ "page": entry.id, "sha256": entry.sha256, "modality": "image",
+        "image": source.id, "image_sha256": source.sha256 })
+    } else {
+      let (text, truncated) = embedding_task_text(store, entry)
+      items.push({ "page": entry.id, "sha256": entry.sha256, "text": text, "truncated": truncated })
+    }
   }
-  { "space": space.to_json(), "text_recipe": "title-body-prefix16KiB-v1", "items": items.to_json(),
-    "remaining": pages.length() - items.length(), "fingerprint": @vault.fingerprint(entries) }
+  let text_recipe : Json = if multimodal { Json::null() } else { "title-body-prefix16KiB-v1".to_json() }
+  let image_recipe : Json = if multimodal { "first-image-source-v1".to_json() } else { Json::null() }
+  { "space": space.to_json(), "text_recipe": text_recipe, "image_recipe": image_recipe,
+    "items": items.to_json(),
+    "remaining": targets.length() - items.length(), "fingerprint": @vault.fingerprint(entries) }
 }
 
 pub(all) struct PreparedEmbeddings {

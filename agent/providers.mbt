@@ -16,6 +16,17 @@ fn provider_kind(value : String) -> Unit raise @base.Fault {
   if !["embedding", "search"].contains(value) { @base.fail("provider_kind_invalid") }
 }
 
+// Capability is a closed protocol vocabulary (AGENTS: unsupported
+// capabilities are rejected, never silently tolerated). embed-multimodal is
+// the declarative routing signal for embedding-plan: the host gets
+// deterministic image items instead of text items. The engine still never
+// calls a model -- it only stores and validates vectors it is handed.
+fn provider_capability_known(value : String) -> Unit raise @base.Fault {
+  if !["embed", "search", "embed-multimodal"].contains(value) {
+    @base.fail("provider_capability_unknown: " + value)
+  }
+}
+
 fn provider_row(value : Json) -> Json raise @base.Fault {
   @base.keys(value, ["id", "provider", "kind", "space", "capabilities", "protocol", "registered_at", "last_seen", "status", "closed_at"])
   ignore(@base.text(@base.field(value, "provider")))
@@ -26,6 +37,7 @@ fn provider_row(value : Json) -> Json raise @base.Fault {
   let seen : Map[String, Bool] = Map([])
   for capability in capabilities {
     if capability.is_empty() || capability.length() > 64 || capability.contains("\n") || seen.contains(capability) { @base.fail("provider_capability_invalid") }
+    provider_capability_known(capability)
     seen[capability] = true
   }
   let registered = @base.text(@base.field(value, "registered_at"))
@@ -81,6 +93,7 @@ fn provider_register(store : @vault.Storage, entries : Array[@core.Entry], reque
   let space = @index.space_from_json(@base.field(request, "space"))
   let capabilities = @base.strings(@base.field(request, "capabilities"))
   if capabilities.is_empty() || capabilities.length() > 16 { @base.fail("provider_capabilities_invalid") }
+  for capability in capabilities { provider_capability_known(capability) }
   if kind == "embedding" && !capabilities.contains("embed") { @base.fail("provider_embed_capability_required") }
   if kind == "search" && !capabilities.contains("search") { @base.fail("provider_search_capability_required") }
   let at = @base.text(@base.field(request, "at"))
@@ -187,6 +200,22 @@ pub fn require_registered_provider(
   match provider_name(request) {
     None => ()
     Some(provider) => ignore(provider_for(store, entries, provider, kind, space))
+  }
+}
+
+// The request's provider, if any, declares `capability` on its active
+// kind/space registration. Used to route embedding-plan between text and
+// image items. Absent provider (an unauthenticated internal plan) => false.
+pub fn provider_declares(
+  store : @vault.Storage, entries : Array[@core.Entry], request : Json,
+  kind : String, space : @index.VectorSpace, capability : String,
+) -> Bool raise @base.Fault {
+  match provider_name(request) {
+    None => false
+    Some(provider) => {
+      let row = provider_for(store, entries, provider, kind, space)
+      @base.strings(@base.field(row, "capabilities")).contains(capability)
+    }
   }
 }
 

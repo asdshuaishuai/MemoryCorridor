@@ -25,6 +25,7 @@
 | --- | --- | --- |
 | 暴力搜索与参考实现对照 | `retrieval_e2e.py` + `index/*_wbtest`（BM25/混合/向量后端矩阵） | pass |
 | 模型空间隔离/向量失效/后端覆盖与回退 | `embedding_e2e.py`、`provider_e2e.py`、`provider_jobs_e2e.py`（注册/心跳/租约/撤销） | pass |
+| 可选多模态向量空间（默认仍文本为核心） | 协议面：`embedding_e2e.py` 多模态段（能力封闭词表、image items、字节版本锁、无图页跳过——CI 恒跑）；真模型面：`multimodal_e2e.py`（CLIP ViT-B/32 int8 双塔以图搜图+跨模态检索+bge 文本面不受扰，缺模型显式 SKIP）；校准发现（扁平色 ~0.925 压文本线）按实钉死 | pass(with scope note：跨模态查询文本塔为英文；中文图文召回由 OCR+bge 文本空间承担，Chinese-CLIP 重量替换项记录于 `docs/vector.md` 不入库) |
 | 来源撤销矩阵 | `source_deletion_e2e.py`、`revocation_lifecycle_e2e.py`（页面/证据/记忆/影响全传播） | pass |
 | 冻结问题集的检索与知识质量对照 | 检索：`quality_eval.py` + `multidomain_eval.py`（四领域 fixtures，`docs/quality-report.json`、`docs/multidomain-quality-report.json`）；模型生成知识 A/B：`model_quality_eval.py`（**双领域**：龙泉青瓷 + 光合与产量，`docs/model-quality-report.json`） | pass(with scope note：报告只测检索/溯源记账，不断言语义正确性——scope 字段写明) |
 | 真实资料 | 语料为仓库自有的 PROPOSAL/LICENSE 与领域 fixture（自撰确定性文本），数据集字段如实记录；外部真实原件经 OCR/PDF 通道进入：`adapters/ocr-rs` + IRS 真实 PDF 验证记录在 `docs/ocr.md` | pass |
