@@ -35,7 +35,10 @@ def ensure_wasmtime():
         import venv as venv_mod
         venv_mod.create(venv, with_pip=True)
         subprocess.run([str(py), "-m", "pip", "install", "--quiet", "wasmtime"], check=True)
-    os.execv(str(py), [str(py), __file__, *sys.argv[1:]])
+    # Re-exec the ENTRY script (sys.argv[0]), not this module's file: helper
+    # scripts import PureSession from here, and execing __file__ would hijack
+    # their process into the stdio suite (a false pass for the importer).
+    os.execv(str(py), [str(py), sys.argv[0], *sys.argv[1:]])
 
 
 RUNTIME = os.environ.get("WASI_RUNTIME", "wasmtime")  # or "wasmedge"
