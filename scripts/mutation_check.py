@@ -649,9 +649,9 @@ MUTATIONS = [
      '  if true {',
      "short bodies never merge on a coincidental token sequence"),
 
-    ("vector cosine must clear the redundancy floor",
+    ("vector cosine must clear the (now declarable) redundancy floor",
      "agent/redundancy.mbt",
-     '        if cos >= REDUNDANCY_COSINE_FLOOR {',
+     '        if cos >= cosine_floor {',
      '        if cos >= 0.0 {',
      "orthogonal vectors nominate nothing without a structural signal"),
 
@@ -718,6 +718,30 @@ MUTATIONS = [
      '      items.push({ "page": entry.id, "sha256": entry.sha256, "modality": "image", "image": source.id })',
      "Multimodal plan routing:",
      "embedding_e2e.py"),
+
+    # 续二十七 explicit cosine tier: the declared floor must reach the
+    # nomination decision, must default to the text tier, and must bounds-
+    # check finiteness; each guard is caught by redundancy_e2e's tier section.
+    ("the declared cosine tier must reach the nomination decision",
+     "agent/redundancy.mbt",
+     '        if cos >= cosine_floor {',
+     '        if cos >= REDUNDANCY_COSINE_FLOOR {',
+     "redundancy e2e:",
+     "redundancy_e2e.py"),
+
+    ("the cosine tier default must stay the documented text floor",
+     "agent/redundancy.mbt",
+     '  let cosine_floor = bounded_double(request, "cosine_floor", REDUNDANCY_COSINE_FLOOR, 0.0, 1.0)',
+     '  let cosine_floor = bounded_double(request, "cosine_floor", 0.0, 0.0, 1.0)',
+     "redundancy e2e:",
+     "redundancy_e2e.py"),
+
+    ("the cosine tier bound must refuse values above 1",
+     "agent/explore.mbt",
+     '    Some(Number(n, ..)) if !n.is_nan() && !n.is_inf() && n >= low && n <= high => n',
+     '    Some(Number(n, ..)) if !n.is_nan() && !n.is_inf() && n >= low => n',
+     "redundancy e2e:",
+     "redundancy_e2e.py"),
 
     # The literate compilation surface: the catalog block is read as the
     # closed MoonBit literal subset. Each guard below is what keeps that

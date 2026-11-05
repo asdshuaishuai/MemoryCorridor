@@ -14,6 +14,7 @@ pub fn input_schema(t : Tool) -> Json {
       else if name == "archived" || name == "pinned" { "boolean" }
       else { match name {
         "limit" | "budget" | "hops" | "start" | "end" => "integer"
+        "cosine_floor" => "number"
         "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" => "object"
         _ => "string"
       } }
@@ -35,9 +36,11 @@ pub fn input_schema(t : Tool) -> Json {
         _ => (0, 2147483647)
       }
       { "type": ty, "minimum": bounds.0, "maximum": bounds.1 }
+    } else if ty == "number" {
+      { "type": ty, "minimum": 0.0, "maximum": 1.0 }
     } else { { "type": ty } }
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
-      "start", "end", "query", "page", "ids"].contains(name) &&
+      "start", "end", "query", "page", "ids", "cosine_floor"].contains(name) &&
       !(name == "context_token" && t.name != "draft-submit") { required.push(name) }
   }
   { "type": "object", "properties": Json::object(properties), "required": required.to_json(), "additionalProperties": false }

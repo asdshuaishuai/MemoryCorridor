@@ -44,7 +44,7 @@ test "identical token sequences nominate similar_text" {
   let bodies = str_map([("concepts/a", long()), ("concepts/b", long() + "\n")])
   let texts = tok_map([("concepts/a", long()), ("concepts/b", long() + "\n")])
   let vectors : Map[String, @index.VectorRecord] = Map([])
-  match redundancy_pair(b, a, texts, bodies, vectors) {
+  match redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) {
     Some((reason, score, signals)) => {
       assert_eq(reason, "similar_text")
       assert_eq(score, 1.0)
@@ -60,7 +60,7 @@ test "short bodies never merge on a coincidental token sequence" {
   let bodies = str_map([("concepts/a", "釉色"), ("concepts/b", "釉色")])
   let texts = tok_map([("concepts/a", "釉色"), ("concepts/b", "釉色")])
   let vectors : Map[String, @index.VectorRecord] = Map([])
-  assert_true(redundancy_pair(b, a, texts, bodies, vectors) is None)
+  assert_true(redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) is None)
 }
 
 test "high vector cosine nominates vector_cosine with the real score" {
@@ -72,7 +72,7 @@ test "high vector cosine nominates vector_cosine with the real score" {
     ("concepts/a", rec("concepts/a", [1.0, 0.0])),
     ("concepts/b", rec("concepts/b", [0.9, 0.1])),
   ])
-  match redundancy_pair(b, a, texts, bodies, vectors) {
+  match redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) {
     Some((reason, score, signals)) => {
       assert_eq(reason, "vector_cosine")
       assert_true(score >= 0.92 && score <= 1.0)
@@ -91,7 +91,7 @@ test "orthogonal vectors nominate nothing without a structural signal" {
     ("concepts/a", rec("concepts/a", [1.0, 0.0])),
     ("concepts/b", rec("concepts/b", [0.0, 1.0])),
   ])
-  assert_true(redundancy_pair(b, a, texts, bodies, vectors) is None)
+  assert_true(redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) is None)
 }
 
 test "shared source plus high term overlap nominates shared_source (weak)" {
@@ -100,7 +100,7 @@ test "shared source plus high term overlap nominates shared_source (weak)" {
   let bodies = str_map([("concepts/a", long()), ("concepts/b", long() + "梅子青")])
   let texts = tok_map([("concepts/a", long()), ("concepts/b", long() + "梅子青")])
   let vectors : Map[String, @index.VectorRecord] = Map([])
-  match redundancy_pair(b, a, texts, bodies, vectors) {
+  match redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) {
     Some((reason, _, _)) => assert_eq(reason, "shared_source")
     None => @base.fail("expected shared_source nomination")
   }
@@ -113,7 +113,7 @@ test "shared source with low term overlap does not nominate" {
   let bodies = str_map([("concepts/a", long()), ("concepts/b", unrelated)])
   let texts = tok_map([("concepts/a", long()), ("concepts/b", unrelated)])
   let vectors : Map[String, @index.VectorRecord] = Map([])
-  assert_true(redundancy_pair(b, a, texts, bodies, vectors) is None)
+  assert_true(redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) is None)
 }
 
 test "similar_text takes priority over vector_cosine" {
@@ -125,7 +125,7 @@ test "similar_text takes priority over vector_cosine" {
     ("concepts/a", rec("concepts/a", [1.0, 0.0])),
     ("concepts/b", rec("concepts/b", [0.9, 0.1])),
   ])
-  match redundancy_pair(b, a, texts, bodies, vectors) {
+  match redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) {
     Some((reason, _, signals)) => {
       assert_eq(reason, "similar_text")
       assert_true(has(signals, "similar_text") && has(signals, "vector_cosine"))
@@ -142,15 +142,66 @@ test "find_keeper files a page under the first matching keeper by id order" {
   let bodies = str_map([("concepts/a", long()), ("concepts/b", long()), ("concepts/c", unrelated)])
   let texts = tok_map([("concepts/a", long()), ("concepts/b", long()), ("concepts/c", unrelated)])
   let vectors : Map[String, @index.VectorRecord] = Map([])
-  match find_keeper(b, [a], texts, bodies, vectors) {
+  match find_keeper(b, [a], texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) {
     Some((keeper, reason, _, _)) => { assert_eq(keeper, "concepts/a"); assert_eq(reason, "similar_text") }
     None => @base.fail("b should file under a")
   }
-  assert_true(find_keeper(c, [a, b], texts, bodies, vectors) is None)
+  assert_true(find_keeper(c, [a, b], texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) is None)
 }
 
 test "term_overlap is the shorter page's distinct-token coverage" {
   assert_true(term_overlap(long(), "龙泉窑青瓷以粉青") >= 0.99)
   let unrelated = "完全不同毫不相关的主题内容讲的是" + "别的东西与青瓷釉料工艺无关"
   assert_true(term_overlap(long(), unrelated) < 0.5)
+}
+
+// 续二十七: the cosine line is an explicit, host-declarable tier.
+test "an explicit high tier drops paraphrases the default would nominate" {
+  let a = page("concepts/a", ["raw/x.md"])
+  let b = page("concepts/b", ["raw/y.md"])
+  // distinct wording (no similar_text), no shared source; cosine ~0.96.
+  let bodies = str_map([("concepts/a", long()), ("concepts/b", other())])
+  let texts = tok_map([("concepts/a", long()), ("concepts/b", other() + "改写措辞完全不同序列")])
+  let vectors = rec_map([
+    ("concepts/a", rec("concepts/a", [1.0, 0.0])),
+    ("concepts/b", rec("concepts/b", [0.96, 0.28])),
+  ])
+  match redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) {
+    Some((reason, score, _)) => {
+      assert_eq(reason, "vector_cosine")
+      assert_true(score > 0.92 && score < 0.999)
+    }
+    None => @base.fail("default tier must nominate the ~0.96 pair")
+  }
+  assert_true(redundancy_pair(b, a, texts, bodies, vectors, 0.999) is None)
+}
+
+test "a lowered tier is honored down to the requested bound" {
+  let a = page("concepts/a", ["raw/x.md"])
+  let b = page("concepts/b", ["raw/y.md"])
+  let bodies = str_map([("concepts/a", long()), ("concepts/b", other())])
+  let texts = tok_map([("concepts/a", long()), ("concepts/b", other() + "改写措辞完全不同序列")])
+  let vectors = rec_map([
+    ("concepts/a", rec("concepts/a", [1.0, 0.0])),
+    ("concepts/b", rec("concepts/b", [0.5, 0.866])),
+  ])
+  // cos = 0.5: below the text default, above the declared visual-ish tier.
+  assert_true(redundancy_pair(b, a, texts, bodies, vectors, REDUNDANCY_COSINE_FLOOR) is None)
+  match redundancy_pair(b, a, texts, bodies, vectors, 0.4) {
+    Some((reason, _, _)) => assert_eq(reason, "vector_cosine")
+    None => @base.fail("declared 0.4 tier must nominate cos 0.5")
+  }
+}
+
+test "bounded_double accepts finite in-range and refuses the rest" {
+  let ok = bounded_double({ "cosine_floor": 0.995 }.to_json(), "cosine_floor", 0.92, 0.0, 1.0)
+  assert_true(ok.is_close(0.995))
+  let empty : Map[String, Json] = Map([])
+  let default = bounded_double(empty.to_json(), "cosine_floor", 0.92, 0.0, 1.0)
+  assert_true(default.is_close(0.92))
+  let bads : Array[Json] = [1.5.to_json(), (-0.01).to_json(), "0.9".to_json(), Json::null(), true.to_json()]
+  for bad in bads {
+    assert_true(try { ignore(bounded_double({ "cosine_floor": bad }.to_json(), "cosine_floor", 0.92, 0.0, 1.0)); false }
+                catch { _ => true })
+  }
 }

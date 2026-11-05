@@ -26,6 +26,16 @@ fn integer(value : Json, key : String, default : Int, low : Int, high : Int) -> 
   }
 }
 
+// Finite bounded Double (named bounded_double so it never shadows the
+// Double::double conversion method used with `x.double()` at call sites).
+fn bounded_double(value : Json, key : String, default : Double, low : Double, high : Double) -> Double raise @base.Fault {
+  match optional(value, key) {
+    None => default
+    Some(Number(n, ..)) if !n.is_nan() && !n.is_inf() && n >= low && n <= high => n
+    _ => raise @base.Fault("invalid_number: " + key + "; \{low}..\{high}")
+  }
+}
+
 fn choice(value : Json, key : String, default : String, allowed : Array[String]) -> String raise @base.Fault {
   match optional(value, key) {
     None => default

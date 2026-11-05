@@ -202,6 +202,15 @@ def main():
         # treat >=0.999 as same-content, not the raw floor. Documented.
         absorbed = next((c for c in vc if c["duplicate"] == "concepts/red"), None)
         assert absorbed is not None and 0.92 <= absorbed["score"] < 0.93, vc
+        # 续二十七 makes the tier declarable: at a visual-space 0.995 the
+        # flat-color cross-nominations vanish and only same-image pairs stay.
+        hi = call("page-redundancy", space=MM_SPACE, cosine_floor=0.995)
+        assert hi["cosine_floor"] == 0.995, hi
+        hi_vc = [c for c in hi["candidates"] if c["reason"] == "vector_cosine"]
+        assert hi_vc, hi["candidates"]
+        assert all(c["score"] >= 0.995 for c in hi_vc), hi_vc
+        assert not any({c["keeper"], c["duplicate"]} == {"concepts/red", "concepts/blue"}
+                       for c in hi_vc), hi_vc
 
     print("multimodal e2e: real CLIP vision/text towers drive image recall, "
           "cross-modal search, untouched bge text default and mm-space redundancy")

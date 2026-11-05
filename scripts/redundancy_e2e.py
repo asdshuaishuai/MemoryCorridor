@@ -144,6 +144,44 @@ def main():
         dup_pairs = [c for c in result["candidates"] if c["reason"] == "similar_text"]
         assert len(dup_pairs) == 1, result["candidates"]
         assert {dup_pairs[0]["keeper"], dup_pairs[0]["duplicate"]} == {"concepts/dup-0", "concepts/dup-1"}, dup_pairs[0]
+
+        # 5. explicit cosine tier (续二十七): a near-orthogonal third vector
+        #    makes the DEFAULT tier meaningful (it must exclude cos 0.0/0.11
+        #    pairs that a 0.0 default would absorb), while the ~0.994 a/b pair
+        #    is nominated at 0.92, dropped at 0.995 and kept at 0.5. The
+        #    deterministic similar_text pair is tier-orthogonal throughout;
+        #    the applied floor is echoed; bounds fail closed; read-only.
+        (vault / "raw/far.md").write_text("远景独立证据。\n", encoding="utf-8")
+        call("scan")
+        of = next(o for o in call("plan") if o["source"] == "raw/far.md")["id"]
+        call("context", order=of)
+        call("analysis-submit", order=of,
+             analysis={"entities": [], "concepts": [], "conflicts": [], "summary": "far"})
+        spf = vault / f"staging/{of}/0.md"
+        spf.write_text('---\ntype: concept\ntitle: 远景\nsources: ["raw/far.md"]\n---\n'
+                       "哥窑开片与龙泉青瓷毫无关联的另一段证据正文恰好够长以通过字节闸。\n", encoding="utf-8")
+        call("commit", order=of, pages=[{"id": "concepts/far", "path": "wiki/concepts/far.md",
+             "staged": f"staging/{of}/0.md"}], at="2026-11-05")
+        plan_now = {it["page"]: it["sha256"] for it in call("embedding-plan", space=SPACE)["items"]}
+        call("embedding-submit", space=SPACE, items=[
+            {"page": "concepts/paraphrase-b", "sha256": plan_now["concepts/paraphrase-b"], "values": [9, 1]},
+            {"page": "concepts/far", "sha256": plan_now["concepts/far"], "values": [0, 1]},
+        ])
+        default_pairs = [c for c in call("page-redundancy", space=SPACE)["candidates"]
+                         if c["reason"] == "vector_cosine"]
+        assert len(default_pairs) == 1, default_pairs
+        high = call("page-redundancy", space=SPACE, cosine_floor=0.995)
+        assert high["cosine_floor"] == 0.995, high
+        assert [c for c in high["candidates"] if c["reason"] == "vector_cosine"] == [], high["candidates"]
+        assert len([c for c in high["candidates"] if c["reason"] == "similar_text"]) == 1, high["candidates"]
+        low = call("page-redundancy", space=SPACE, cosine_floor=0.5)
+        assert low["cosine_floor"] == 0.5 and len([c for c in low["candidates"]
+                                                   if c["reason"] == "vector_cosine"]) == 1, low
+        for bad in (1.5, -0.01, "0.9", True):
+            call("page-redundancy", space=SPACE, cosine_floor=bad, error="invalid_number")
+        tier_before = (vault / "index.mbt.md").read_bytes()
+        call("page-redundancy", space=SPACE, cosine_floor=0.995)
+        assert (vault / "index.mbt.md").read_bytes() == tier_before
     print("redundancy e2e: semantic + deterministic page-redundancy accepted (read-only, version-locked)")
     return 0
 

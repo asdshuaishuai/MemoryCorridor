@@ -15,6 +15,8 @@
 // only for the requested space and only when a page's vector sha256 equals the
 // current page hash (a rewritten page's stale vector must not nominate it).
 
+// Default cosine tier (bge-text tuned); page-redundancy's optional
+// cosine_floor request field overrides it for other modalities.
 const REDUNDANCY_COSINE_FLOOR : Double = 0.92
 const REDUNDANCY_SHARED_OVERLAP_FLOOR : Double = 0.5
 
@@ -25,6 +27,13 @@ pub fn page_redundancy(
   @vault.verify(store, entries)
   let space = @index.space_from_json(@base.field(request, "space"))
   let limit = integer(request, "limit", 200, 1, 1000)
+  // 续二十七: the cosine line is a CALIBRATION, not a truth constant. 0.92 is
+  // tuned for bge-style text spaces; visual spaces (flat images sit ~0.925
+  // apart by color, identical content sits ~1.0) must nominate at the top of
+  // the range. The host declares its tier explicitly; the engine stays
+  // model-agnostic -- no space-name special cases, the applied floor is
+  // echoed in the response so every proposal set is auditable.
+  let cosine_floor = bounded_double(request, "cosine_floor", REDUNDANCY_COSINE_FLOOR, 0.0, 1.0)
   // Active pages only: a stale/archived page is already on its way out, and
   // proposing it would ask the host to re-decide a settled thing.
   let pages = entries.filter(e => @core.is_page(e) && !e.stale)
@@ -55,7 +64,7 @@ pub fn page_redundancy(
   // comparator never calls a raising accessor.
   let found : Array[(String, String, String, Double, Array[String])] = []
   for page in pages {
-    match find_keeper(page, keepers, texts, bodies, vectors) {
+    match find_keeper(page, keepers, texts, bodies, vectors, cosine_floor) {
       Some((kept_id, reason, score, signals)) =>
         found.push((kept_id, page.id, reason, score, signals))
       None => keepers.push(page)
@@ -76,6 +85,7 @@ pub fn page_redundancy(
   {
     "space": space.to_json(),
     "candidates": candidates.to_json(),
+    "cosine_floor": cosine_floor.to_json(),
     "counts": {
       "pages": pages.length(),
       "keepers": keepers.length(),
@@ -90,10 +100,10 @@ pub fn page_redundancy(
 fn find_keeper(
   page : @core.Entry, keepers : Array[@core.Entry],
   texts : Map[String, Array[String]], bodies : Map[String, String],
-  vectors : Map[String, @index.VectorRecord],
+  vectors : Map[String, @index.VectorRecord], cosine_floor : Double,
 ) -> (String, String, Double, Array[String])? raise @base.Fault {
   for kept in keepers {
-    match redundancy_pair(page, kept, texts, bodies, vectors) {
+    match redundancy_pair(page, kept, texts, bodies, vectors, cosine_floor) {
       Some((reason, score, signals)) => return Some((kept.id, reason, score, signals))
       None => ()
     }
@@ -108,7 +118,7 @@ fn find_keeper(
 fn redundancy_pair(
   page : @core.Entry, kept : @core.Entry,
   texts : Map[String, Array[String]], bodies : Map[String, String],
-  vectors : Map[String, @index.VectorRecord],
+  vectors : Map[String, @index.VectorRecord], cosine_floor : Double,
 ) -> (String, Double, Array[String])? raise @base.Fault {
   let signals : Array[String] = []
   let mut primary : (String, Double)? = None
@@ -125,7 +135,7 @@ fn redundancy_pair(
       let hits = @index.brute_force(a.space, a.values, [b], 1)
       if !hits.is_empty() {
         let cos = hits[0].score
-        if cos >= REDUNDANCY_COSINE_FLOOR {
+        if cos >= cosine_floor {
           signals.push("vector_cosine")
           if primary is None { primary = Some(("vector_cosine", cos)) }
         }
