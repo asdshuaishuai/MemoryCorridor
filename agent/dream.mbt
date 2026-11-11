@@ -145,6 +145,11 @@ fn dream_opportunities(
   let rows : Array[(Int, String, Json)] = []
   let lint = lint_result(store, (store.read)("index.mbt.md"))
   for violation in @base.array(@base.field(lint, "violations")) {
+    let predicate = @base.text(@base.field(violation, "predicate"))
+    // Engine bookkeeping warnings (cache staleness, round anchoring) are
+    // operational, not knowledge deficiencies: they stay in metrics but must
+    // never become improvement tasks (writing a task would re-trigger them).
+    if ["cache_missing", "cache_invalid", "dream_round_stale"].contains(predicate) { continue }
     let severity = @base.text(@base.field(violation, "severity"))
     let subject = @base.text(@base.field(violation, "subject"))
     let path = @base.text(@base.field(violation, "path"))
@@ -229,6 +234,12 @@ pub fn dream_plan(store : @vault.Storage, entries : Array[@core.Entry], request 
   }
 }
 
+// Knowledge-only fingerprint: state bookkeeping (rounds, work items, events)
+// must not invalidate the round's opportunity set, while page/source drift must.
+fn dream_knowledge_fingerprint(entries : Array[@core.Entry]) -> String {
+  @vault.fingerprint(entries.filter(e => e.kind != "state"))
+}
+
 fn dream_path(id : String) -> String {
   "state/dreams/" + id + ".json"
 }
@@ -253,6 +264,7 @@ pub fn dream_open(store : @vault.Storage, entries : Array[@core.Entry], request 
   let at = @base.text(@base.field(request, "at"))
   dream_time(at)
   let space_json = dream_space_json(space)
+  let knowledge = dream_knowledge_fingerprint(entries)
   let id = dream_id(baseline, policy, space_json, at)
   let path = dream_path(id)
   // Replay is checked BEFORE the baseline comparison: opening a round writes a
@@ -273,6 +285,7 @@ pub fn dream_open(store : @vault.Storage, entries : Array[@core.Entry], request 
     "id": id,
     "at": at,
     "baseline": baseline,
+    "knowledge": knowledge,
     "policy": policy,
     "space": dream_space_json(space),
     "metrics": dream_metrics_json(metrics),
@@ -343,7 +356,26 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
     if current.uncovered_sources > dream_json_int(base_metrics, "uncovered_sources") {
       @base.fail("dream_compat_evidence_loss")
     }
+    // RSI: unattended work is not consent. A round with open/claimed tasks or
+    // unanswered judgments can be rejected but never retained as done.
+    for work in dream_work_rows(store, entries) {
+      if dream_row_text(work, "round") == id {
+        let work_status = dream_row_text(work, "status")
+        if work_status == "pending" || work_status == "claimed" {
+          @base.fail("dream_compat_unresolved")
+        }
+      }
+    }
   }
+  let driver_set : Map[String, Bool] = Map([])
+  for work in dream_work_rows(store, entries) {
+    if dream_row_text(work, "round") == id {
+      let name = dream_row_text(work, "driver")
+      if name != "" { driver_set[name] = true }
+    }
+  }
+  let drivers = driver_set.keys().to_array()
+  drivers.sort_by(@base.compare)
   let delta : Json = {
     "pages": current.pages - dream_json_int(base_metrics, "pages"),
     "stale_pages": current.stale_pages - dream_json_int(base_metrics, "stale_pages"),
@@ -358,6 +390,7 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
     "id": id,
     "at": @base.text(@base.field(record, "at")),
     "baseline": @base.text(@base.field(record, "baseline")),
+    "knowledge": @base.text(@base.field(record, "knowledge")),
     "policy": @base.field(record, "policy"),
     "space": @base.field(record, "space"),
     "metrics": base_metrics,
@@ -366,7 +399,8 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
     "closed_at": at,
     "decision": decision,
     "note": note,
-    "outcome": { "metrics": dream_metrics_json(current), "delta": delta },
+    "outcome": { "metrics": dream_metrics_json(current), "delta": delta,
+      "drivers": drivers.to_json() },
   }
   let content = @base.canonical(updated)
   let event_path = "state/events/dream-close-" + id + "-" +
@@ -382,7 +416,8 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
     { id: event_path, path: event_path, kind: "state", format: "json",
       sha256: @base.hex_hash(event_content), sources: [], stale: false })
   @vault.commit(store, @vault.fingerprint(entries), next, changes)
-  { "id": id, "status": decision, "replayed": false, "outcome": { "metrics": dream_metrics_json(current), "delta": delta } }
+  { "id": id, "status": decision, "replayed": false,
+    "outcome": { "metrics": dream_metrics_json(current), "delta": delta, "drivers": drivers.to_json() } }
 }
 
 pub fn dream_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
@@ -425,17 +460,398 @@ pub fn dream_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json 
 // longer matches the vault was dreamed on older bytes -- close it or reopen
 // it against the current fingerprint instead of leaving it dangling.
 fn lint_dream_rounds(store : @vault.Storage, entries : Array[@core.Entry], issues : Array[Json]) -> Unit {
-  let current = @vault.fingerprint(entries)
+  // Compare the knowledge-only fingerprint: the round's own bookkeeping (work
+  // items, events) must not make it look stale, while page/source drift must.
+  let current = dream_knowledge_fingerprint(entries)
   for entry in entries {
     if entry.kind != "state" || !entry.path.has_prefix("state/dreams/") { continue }
     let row = try { @base.parse(@vault.required(store, entry.path)) } catch { _ => continue }
     let status = try { @base.text(@base.field(row, "status")) } catch { _ => continue }
-    let baseline = try { @base.text(@base.field(row, "baseline")) } catch { _ => continue }
-    if status == "open" && baseline != current {
+    let knowledge = try { @base.text(@base.field(row, "knowledge")) } catch { _ => continue }
+    if status == "open" && knowledge != current {
       lint_add(issues, "dream_round_stale", entry.id, entry.path,
         "an open dream round was dreamed on an older vault fingerprint",
         "close the round (retained/rejected) or reopen it against the current baseline", "warning")
     }
+  }
+}
+
+// ---- RSI work outbox (续二十九) -------------------------------------------
+// The engine refuses to judge semantics or write prose; a work item is a
+// structured question the external driver answers. Claims carry leases so a
+// dead driver's tasks can be taken over, and retention cannot pass while the
+// round still has open work or unanswered judgments.
+
+const DREAM_WORK_MAX_PENDING : Int = 10
+
+fn dream_work_path(id : String) -> String {
+  "state/dream-work/" + id + ".json"
+}
+
+fn dream_work_id(round : String, kind : String, subject : String) -> String {
+  @base.hex_hash("dream-work-v1\n" + round + "\n" + kind + "\n" + subject)
+}
+
+fn dream_driver(value : String) -> Unit raise @base.Fault {
+  if value.is_empty() || value.length() > 128 || value.contains("\n") || value.contains("\r") {
+    @base.fail("dream_work_driver_invalid")
+  }
+}
+
+fn dream_kind_priority(kind : String) -> Int {
+  match kind {
+    "lint" => 1
+    "uncovered_source" => 2
+    "stale_page" => 3
+    "sparse_topic" => 4
+    _ => 5
+  }
+}
+
+fn dream_set(row : Json, pairs : Array[(String, Json)]) -> Json {
+  match row {
+    Object(fields) => {
+      let copy = fields.copy()
+      for (key, value) in pairs { copy[key] = value }
+      Json::object(copy)
+    }
+    _ => row
+  }
+}
+
+fn dream_row_text(row : Json, key : String) -> String raise @base.Fault {
+  match @base.field(row, key) {
+    String(text) => text
+    _ => ""
+  }
+}
+
+fn dream_work_rows(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[Json] raise @base.Fault {
+  let rows : Array[Json] = []
+  for entry in entries {
+    if entry.kind == "state" && entry.path.has_prefix("state/dream-work/") {
+      rows.push(@base.parse(@vault.required(store, entry.path)))
+    }
+  }
+  rows
+}
+
+// Mirrors core/records.mbt's dream_work_result_shape at the request boundary,
+// so an invalid proposal can never reach the vault (a write that fails the
+// record validator would poison every later load).
+fn dream_work_result_check(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, ["judgments", "proposals"])
+  match @base.field(value, "judgments") {
+    Object(fields) => {
+      if fields.length() > 32 { @base.fail("dream_work_judgments_too_many") }
+      for (key, v) in fields {
+        if key.is_empty() || key.length() > 256 || key.contains("\n") || key.contains("\r") {
+          @base.fail("dream_work_judgment_key_invalid")
+        }
+        match v {
+          Number(_) => ()
+          True => ()
+          False => ()
+          String(text) => if text.length() > 1024 || text.contains("\r") {
+            @base.fail("dream_work_judgment_value_invalid")
+          }
+          _ => raise @base.Fault("dream_work_judgment_value_invalid")
+        }
+      }
+    }
+    _ => raise @base.Fault("dream_work_judgments_invalid")
+  }
+  let items = @base.array(@base.field(value, "proposals"))
+  if items.length() > 32 { @base.fail("dream_work_proposals_too_many") }
+  for item in items {
+    @base.keys(item, ["page", "kind", "staged_path"])
+    let page = @base.text(@base.field(item, "page"))
+    @base.path(page)
+    if !page.has_prefix("wiki/") { @base.fail("dream_work_proposal_page_invalid") }
+    let kind = @base.text(@base.field(item, "kind"))
+    if kind.is_empty() || kind.length() > 64 || kind.contains("\n") || kind.contains("\r") {
+      @base.fail("dream_work_proposal_kind_invalid")
+    }
+    let staged = @base.text(@base.field(item, "staged_path"))
+    @base.path(staged)
+    if !staged.has_prefix("staging/") { @base.fail("dream_work_proposal_staged_invalid") }
+  }
+}
+
+pub fn dream_work_open(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  @base.keys(request, ["op", "vault", "request_id", "round", "at", "limit"])
+  let round = @base.text(@base.field(request, "round"))
+  if !dream_hash_ok(round) { @base.fail("dream_work_round_invalid") }
+  let at = @base.text(@base.field(request, "at"))
+  dream_time(at)
+  let limit = integer(request, "limit", DREAM_WORK_MAX_PENDING, 1, 50)
+  let round_path = dream_path(round)
+  let round_text = match (store.read)(round_path) {
+    None => {
+      @base.fail("dream_not_found: " + round)
+      ""
+    }
+    Some(value) => value
+  }
+  let round_row = @base.parse(round_text)
+  if dream_row_text(round_row, "status") != "open" { @base.fail("dream_work_round_closed") }
+  let baseline = dream_row_text(round_row, "baseline")
+  if dream_row_text(round_row, "knowledge") != dream_knowledge_fingerprint(entries) {
+    @base.fail("dream_stale_baseline")
+  }
+  let space = dream_space_from(@base.field(round_row, "space"))
+  let rows = dream_work_rows(store, entries)
+  let existing : Map[String, Bool] = Map([])
+  let mut pending = 0
+  for row in rows {
+    existing[dream_row_text(row, "id")] = true
+    let status = dream_row_text(row, "status")
+    if status == "pending" || status == "claimed" { pending = pending + 1 }
+  }
+  if pending >= DREAM_WORK_MAX_PENDING { @base.fail("dream_work_backpressure") }
+  let opportunities = dream_opportunities(store, entries, space)
+  let changes : Array[@vault.Change] = []
+  let mut next = entries
+  let created : Array[String] = []
+  let mut skipped = 0
+  let cap = Int::min(limit, DREAM_WORK_MAX_PENDING - pending)
+  for item in opportunities {
+    if created.length() >= cap { break }
+    let kind = @base.text(@base.field(item, "kind"))
+    let subject = @base.text(@base.field(item, "id"))
+    let id = dream_work_id(round, kind, subject)
+    if existing.contains(id) {
+      skipped = skipped + 1
+      continue
+    }
+    let record : Json = {
+      "id": id, "round": round, "baseline": baseline, "kind": kind, "subject": subject,
+      "priority": dream_kind_priority(kind), "status": "pending", "driver": Json::null(),
+      "lease_until": Json::null(), "created_at": at, "closed_at": Json::null(),
+      "result": Json::null(), "error": Json::null(),
+    }
+    let content = @base.canonical(record)
+    let path = dream_work_path(id)
+    let event_path = "state/events/dream-work-open-" + id + "-" + @base.hex_hash(at) + ".json"
+    let event_content = @base.canonical({ "op": "dream-work-open", "work": id, "round": round, "at": at })
+    changes.push({ path, before: None, after: Some(content) })
+    changes.push({ path: event_path, before: None, after: Some(event_content) })
+    next = upsert(upsert(next, { id: path, path, kind: "state", format: "json",
+      sha256: @base.hex_hash(content), sources: [], stale: false }),
+      { id: event_path, path: event_path, kind: "state", format: "json",
+        sha256: @base.hex_hash(event_content), sources: [], stale: false })
+    existing[id] = true
+    created.push(id)
+  }
+  if !changes.is_empty() {
+    @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  }
+  {
+    "round": round,
+    "created": created.length(),
+    "skipped": skipped,
+    "pending": pending + created.length(),
+    "max_pending": DREAM_WORK_MAX_PENDING,
+    "tasks": created.to_json(),
+  }
+}
+
+pub fn dream_work_claim(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  @base.keys(request, ["op", "vault", "request_id", "id", "driver", "lease_until", "at"])
+  let id = @base.text(@base.field(request, "id"))
+  if !dream_hash_ok(id) { @base.fail("dream_work_id_invalid") }
+  let path = dream_work_path(id)
+  let text = match (store.read)(path) {
+    None => {
+      @base.fail("dream_work_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(text)
+  let driver = @base.text(@base.field(request, "driver"))
+  dream_driver(driver)
+  let lease = @base.text(@base.field(request, "lease_until"))
+  dream_time(lease)
+  let at = @base.text(@base.field(request, "at"))
+  dream_time(at)
+  if @base.compare(lease, at) <= 0 { @base.fail("dream_work_lease_invalid") }
+  let status = dream_row_text(row, "status")
+  let old_driver = dream_row_text(row, "driver")
+  let old_lease = dream_row_text(row, "lease_until")
+  if status == "claimed" && old_driver == driver && old_lease == lease {
+    return { "id": id, "status": "claimed", "driver": driver, "lease_until": lease, "replayed": true }
+  }
+  if status != "pending" {
+    if status == "claimed" {
+      if @base.compare(at, old_lease) <= 0 { @base.fail("dream_work_lease_held") }
+    } else {
+      @base.fail("dream_work_terminal: " + id)
+    }
+  }
+  let updated = dream_set(row, [
+    ("status", "claimed".to_json()), ("driver", driver.to_json()), ("lease_until", lease.to_json()),
+  ])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/dream-work-claim-" + id + "-" +
+    @base.hex_hash(driver + "\n" + at) + ".json"
+  let event_content = @base.canonical({ "op": "dream-work-claim", "work": id,
+    "driver": driver, "lease_until": lease, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "claimed", "driver": driver, "lease_until": lease, "replayed": false }
+}
+
+pub fn dream_work_complete(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  @base.keys(request, ["op", "vault", "request_id", "id", "driver", "at", "result"])
+  let id = @base.text(@base.field(request, "id"))
+  if !dream_hash_ok(id) { @base.fail("dream_work_id_invalid") }
+  let path = dream_work_path(id)
+  let text = match (store.read)(path) {
+    None => {
+      @base.fail("dream_work_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(text)
+  let driver = @base.text(@base.field(request, "driver"))
+  dream_driver(driver)
+  let at = @base.text(@base.field(request, "at"))
+  dream_time(at)
+  let result = @base.field(request, "result")
+  dream_work_result_check(result)
+  let status = dream_row_text(row, "status")
+  if status == "done" && dream_row_text(row, "driver") == driver &&
+    dream_row_text(row, "closed_at") == at && @base.field(row, "result") == result {
+    return { "id": id, "status": "done", "replayed": true }
+  }
+  if status != "claimed" { @base.fail("dream_work_terminal: " + id) }
+  if dream_row_text(row, "driver") != driver { @base.fail("dream_work_not_owner") }
+  let lease = dream_row_text(row, "lease_until")
+  if @base.compare(at, lease) > 0 { @base.fail("dream_work_lease_expired") }
+  let updated = dream_set(row, [
+    ("status", "done".to_json()), ("closed_at", at.to_json()), ("result", result),
+  ])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/dream-work-complete-" + id + "-" +
+    @base.hex_hash(driver + "\n" + at) + ".json"
+  let event_content = @base.canonical({ "op": "dream-work-complete", "work": id,
+    "driver": driver, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "done", "replayed": false }
+}
+
+pub fn dream_work_fail(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  @base.keys(request, ["op", "vault", "request_id", "id", "driver", "reason", "at"])
+  let id = @base.text(@base.field(request, "id"))
+  if !dream_hash_ok(id) { @base.fail("dream_work_id_invalid") }
+  let path = dream_work_path(id)
+  let text = match (store.read)(path) {
+    None => {
+      @base.fail("dream_work_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(text)
+  let driver = @base.text(@base.field(request, "driver"))
+  dream_driver(driver)
+  let reason = @base.text(@base.field(request, "reason"))
+  if reason.is_empty() || reason.length() > 1024 || reason.contains("\n") || reason.contains("\r") {
+    @base.fail("dream_work_error_invalid")
+  }
+  let at = @base.text(@base.field(request, "at"))
+  dream_time(at)
+  let status = dream_row_text(row, "status")
+  if status == "failed" && dream_row_text(row, "driver") == driver &&
+    dream_row_text(row, "closed_at") == at && dream_row_text(row, "error") == reason {
+    return { "id": id, "status": "failed", "replayed": true }
+  }
+  if status != "claimed" { @base.fail("dream_work_terminal: " + id) }
+  if dream_row_text(row, "driver") != driver { @base.fail("dream_work_not_owner") }
+  let updated = dream_set(row, [
+    ("status", "failed".to_json()), ("closed_at", at.to_json()), ("error", reason.to_json()),
+  ])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/dream-work-fail-" + id + "-" +
+    @base.hex_hash(driver + "\n" + at + "\n" + reason) + ".json"
+  let event_content = @base.canonical({ "op": "dream-work-fail", "work": id,
+    "driver": driver, "reason": reason, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "failed", "replayed": false }
+}
+
+pub fn dream_work_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  let keyed : Array[(String, Json)] = dream_work_rows(store, entries).map(
+    row => (dream_row_text(row, "id"), row))
+  keyed.sort_by((a, b) => @base.compare(a.0, b.0))
+  let rows = keyed.map(pair => pair.1)
+  let items : Array[Json] = []
+  let mut pending = 0
+  let mut claimed = 0
+  let mut done = 0
+  let mut failed = 0
+  for row in rows {
+    let status = dream_row_text(row, "status")
+    if status == "pending" {
+      pending = pending + 1
+    } else if status == "claimed" {
+      claimed = claimed + 1
+    } else if status == "done" {
+      done = done + 1
+    } else {
+      failed = failed + 1
+    }
+    items.push({
+      "id": dream_row_text(row, "id"),
+      "round": dream_row_text(row, "round"),
+      "kind": dream_row_text(row, "kind"),
+      "subject": dream_row_text(row, "subject"),
+      "priority": @base.field(row, "priority"),
+      "status": status,
+      "driver": @base.field(row, "driver"),
+      "lease_until": @base.field(row, "lease_until"),
+      "created_at": dream_row_text(row, "created_at"),
+      "closed_at": @base.field(row, "closed_at"),
+      "result": @base.field(row, "result"),
+      "error": @base.field(row, "error"),
+    })
+  }
+  {
+    "work": items.to_json(),
+    "counts": { "pending": pending, "claimed": claimed, "done": done, "failed": failed },
+    "backpressure": { "max_pending": DREAM_WORK_MAX_PENDING,
+      "open": pending + claimed, "at_capacity": pending + claimed >= DREAM_WORK_MAX_PENDING },
+    "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -445,6 +861,11 @@ pub fn dream(store : @vault.Storage, entries : Array[@core.Entry], request : Jso
     "dream-open" => dream_open(store, entries, request)
     "dream-close" => dream_close(store, entries, request)
     "dream-list" => dream_list(store, entries)
+    "dream-work-open" => dream_work_open(store, entries, request)
+    "dream-work-claim" => dream_work_claim(store, entries, request)
+    "dream-work-complete" => dream_work_complete(store, entries, request)
+    "dream-work-fail" => dream_work_fail(store, entries, request)
+    "dream-work-list" => dream_work_list(store, entries)
     _ => raise @base.Fault("internal_dream_dispatch")
   }
 }

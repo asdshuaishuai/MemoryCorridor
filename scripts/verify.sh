@@ -25,6 +25,8 @@ python3 scripts/page_history_e2e.py
 python3 scripts/read_source_e2e.py
 python3 scripts/embedding_e2e.py
 python3 scripts/dream_e2e.py
+python3 scripts/dream_work_e2e.py
+python3 scripts/evo_e2e.py
 python3 scripts/provider_e2e.py
 python3 scripts/provider_jobs_e2e.py
 python3 scripts/authoring_e2e.py

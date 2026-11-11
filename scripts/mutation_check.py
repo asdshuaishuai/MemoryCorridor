@@ -781,6 +781,43 @@ MUTATIONS = [
      "dream e2e:",
      "dream_e2e.py"),
 
+    # 续二十九 RSI work outbox: backpressure, dedupe, lease takeover, the
+    # unresolved-retention gate and driver ownership each have an e2e assertion.
+    ("work intake must stop at the pending cap",
+     "agent/dream.mbt",
+     '  if pending >= DREAM_WORK_MAX_PENDING { @base.fail("dream_work_backpressure") }',
+     '  if false { @base.fail("dream_work_backpressure") }',
+     "dream work e2e:",
+     "dream_work_e2e.py"),
+
+    ("work intake must dedupe existing opportunity keys",
+     "agent/dream.mbt",
+     '    if existing.contains(id) {\n      skipped = skipped + 1\n      continue\n    }',
+     '    if false {\n      skipped = skipped + 1\n      continue\n    }',
+     "dream work e2e:",
+     "dream_work_e2e.py"),
+
+    ("a live lease must refuse takeover",
+     "agent/dream.mbt",
+     '      if @base.compare(at, old_lease) <= 0 { @base.fail("dream_work_lease_held") }',
+     '      if false { @base.fail("dream_work_lease_held") }',
+     "dream work e2e:",
+     "dream_work_e2e.py"),
+
+    ("retained rounds may not leave work unattended",
+     "agent/dream.mbt",
+     '        if work_status == "pending" || work_status == "claimed" {\n          @base.fail("dream_compat_unresolved")\n        }',
+     '        if false {\n          @base.fail("dream_compat_unresolved")\n        }',
+     "dream work e2e:",
+     "dream_work_e2e.py"),
+
+    ("only the lease holder may complete a work item",
+     "agent/dream.mbt",
+     '  if dream_row_text(row, "driver") != driver { @base.fail("dream_work_not_owner") }',
+     '  if false { @base.fail("dream_work_not_owner") }',
+     "dream work e2e:",
+     "dream_work_e2e.py"),
+
     # The literate compilation surface: the catalog block is read as the
     # closed MoonBit literal subset. Each guard below is what keeps that
     # grammar closed; dropping one must make the literate-surface tests fail.
@@ -1004,6 +1041,65 @@ MUTATIONS = [
      "    if unit == b'/'.to_uint16() && i + 1 < code.length() && code[i+1] == b'/'.to_uint16() {",
      "    if false {",
      "catalog accepts moon-equivalent formatting, comments and escapes"),
+
+    # 续三十: the evolution subsystem. Each entry names evo_e2e.py because the
+    # defect may only show up after several generations; the MoonBit tests
+    # still carry the direct behavioural assertion.
+    ("evo elite floor must keep at least two genomes",
+     "agent/evo.mbt",
+     "  let elites = ranked[:elite_count]",
+     "  let elites = ranked[:1]",
+     "evo elite floor keeps the top two genomes unchanged",
+     "evo_e2e.py"),
+
+    ("evo tournament must keep the fittest of three draws",
+     "agent/evo.mbt",
+     "    if evo_better(candidate, winner) { winner = candidate }",
+     "    if false { winner = candidate }",
+     "evo tournament selection keeps the fittest of three draws",
+     "evo_e2e.py"),
+
+    ("evo mutation amplitude must rise with rank",
+     "agent/evo.mbt",
+     "  let amplitude = 0.10 + (policy.mutation_max - 0.10) * rank_ratio",
+     "  let amplitude = 0.10",
+     "evo mutation amplitude rises with rank",
+     "evo_e2e.py"),
+
+    ("evo regression detection must compare the checkpoint gap",
+     "agent/evo.mbt",
+     "  let regressed = checkpoint_fitness - best > policy.regression_delta",
+     "  let regressed = false",
+     "evo regression detection needs the checkpoint gap and patience",
+     "evo_e2e.py"),
+
+    ("evo extinct lineages must be fossilized",
+     "agent/evo.mbt",
+     "  let fossil_n = Int::min(policy.fossil_max_per_gen, dying.length())",
+     "  let fossil_n = 0",
+     "evo fossils record extinction with a reason",
+     "evo_e2e.py"),
+
+    ("evo disabled gate must answer every op first",
+     "agent/evo.mbt",
+     '  if op != "evo-policy" && !policy.enabled { @base.fail("evo_disabled") }',
+     '  if false { @base.fail("evo_disabled") }',
+     "evo disabled gate answers every op before touching state",
+     "evo_e2e.py"),
+
+    ("a non-evo module must not read evolution state",
+     "agent/inbox.mbt",
+     "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  @vault.verify(store, entries)",
+     "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  ignore((store.read)(\"state/evo/population.json\"))\n  @vault.verify(store, entries)",
+     "evo isolation: no non-evo module reads evo state",
+     "evo_e2e.py"),
+
+    ("evo held-out gap must be charged",
+     "agent/evo.mbt",
+     "  let holdout_penalty = evo_clamp(hold_gap / 0.25, 0.0, 1.0)",
+     "  let holdout_penalty = 0.0",
+     "evo fitness punishes flat, always-positive and held-out-gap behaviour",
+     "evo_e2e.py"),
 ]
 
 

@@ -6,7 +6,7 @@ pub fn state_directories() -> Array[String] {
   ["state/orders", "state/events", "state/reviews", "state/research",
    "state/suggestions", "state/overview", "state/evidence", "state/memory",
    "state/impacts", "state/providers", "state/provider-jobs", "state/extractions",
-   "state/dreams"]
+   "state/dreams", "state/dream-work", "state/evo"]
 }
 
 // Sidecar text is host-supplied (OCR, PDF text) and could be arbitrarily long.
@@ -317,11 +317,670 @@ fn dream_space_shape(value : Json) -> Unit raise @base.Fault {
   }
 }
 
+// A completed work item carries only structured answers: judgments the engine
+// refuses to make itself, and staged page references it may never write.
+fn dream_work_result_shape(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, ["judgments", "proposals"])
+  let judgments = @base.field(value, "judgments")
+  match judgments {
+    Object(fields) => {
+      if fields.length() > 32 { @base.fail("dream_work_judgments_too_many") }
+      for (key, v) in fields {
+        if key.is_empty() || key.length() > 256 || key.contains("\n") || key.contains("\r") {
+          @base.fail("dream_work_judgment_key_invalid")
+        }
+        match v {
+          Number(_) => ()
+          True => ()
+          False => ()
+          String(text) => if text.length() > 1024 || text.contains("\r") {
+            @base.fail("dream_work_judgment_value_invalid")
+          }
+          _ => raise @base.Fault("dream_work_judgment_value_invalid")
+        }
+      }
+    }
+    _ => raise @base.Fault("dream_work_judgments_invalid")
+  }
+  let items = @base.array(@base.field(value, "proposals"))
+  if items.length() > 32 { @base.fail("dream_work_proposals_too_many") }
+  for item in items {
+    @base.keys(item, ["page", "kind", "staged_path"])
+    let page = @base.text(@base.field(item, "page"))
+    @base.path(page)
+    if !page.has_prefix("wiki/") { @base.fail("dream_work_proposal_page_invalid") }
+    let kind = @base.text(@base.field(item, "kind"))
+    if kind.is_empty() || kind.length() > 64 || kind.contains("\n") || kind.contains("\r") {
+      @base.fail("dream_work_proposal_kind_invalid")
+    }
+    let staged = @base.text(@base.field(item, "staged_path"))
+    @base.path(staged)
+    if !staged.has_prefix("staging/") { @base.fail("dream_work_proposal_staged_invalid") }
+  }
+}
+
+// ---- Evolution records (续三十) ------------------------------------------
+// These helpers own only record shapes, identity derivation and the state
+// machine invariants. The controller (agent/evo.mbt) never derives a hash or
+// accepts a loosely-shaped record on its own: both the writer and this
+// validator call the same recipe, so a stored genome cannot silently mean a
+// different genome than its id claims.
+
+pub const EVO_WEIGHTS : Int = 334
+
+pub fn evo_policy_param_names() -> Array[String] {
+  ["population", "window", "elite_ratio", "protect_ratio", "tournament",
+   "crossover_rate", "mutation_rate", "mutation_max", "immigrants",
+   "regression_delta", "regression_patience", "auto_rollback",
+   "fossil_max_per_gen", "history", "w_stability", "w_responsiveness",
+   "w_growth", "w_novelty", "c_energy", "c_impulse", "c_positive",
+   "c_flatness", "c_holdout"]
+}
+
+fn evo_policy_value(params : Json, name : String) -> Json raise @base.Fault {
+  match params {
+    Object(fields) => match fields.get(name) {
+      Some(value) => value
+      None => raise @base.Fault("evo_policy_incomplete:" + name)
+    }
+    _ => raise @base.Fault("evo_policy_invalid")
+  }
+}
+
+fn evo_policy_int(params : Json, name : String, low : Int, high : Int) -> Int raise @base.Fault {
+  match evo_policy_value(params, name) {
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= low.to_double() &&
+      n <= high.to_double() && n == n.to_int().to_double() => n.to_int()
+    _ => raise @base.Fault("evo_policy_param_invalid:" + name)
+  }
+}
+
+fn evo_policy_number(params : Json, name : String, low : Double, high : Double) -> Double raise @base.Fault {
+  match evo_policy_value(params, name) {
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= low && n <= high => n
+    _ => raise @base.Fault("evo_policy_param_invalid:" + name)
+  }
+}
+
+fn evo_policy_bool(params : Json, name : String) -> Bool raise @base.Fault {
+  match evo_policy_value(params, name) {
+    True => true
+    False => false
+    _ => raise @base.Fault("evo_policy_param_invalid:" + name)
+  }
+}
+
+// The parameter table is closed and bounded. `protect_ratio <= elite_ratio`
+// is the separation between "survives untouched" and "may still be a parent";
+// letting it invert would protect more genomes than the elite floor keeps.
+pub fn evo_policy_params(value : Json) -> Unit raise @base.Fault {
+  match value {
+    Object(_) => ()
+    _ => raise @base.Fault("evo_policy_invalid")
+  }
+  @base.keys(value, evo_policy_param_names())
+  ignore(evo_policy_int(value, "population", 8, 32))
+  ignore(evo_policy_int(value, "window", 16, 512))
+  let elite = evo_policy_number(value, "elite_ratio", 0.10, 0.50)
+  let protect = evo_policy_number(value, "protect_ratio", 0.05, 0.30)
+  ignore(evo_policy_int(value, "tournament", 2, 5))
+  ignore(evo_policy_number(value, "crossover_rate", 0.0, 1.0))
+  ignore(evo_policy_number(value, "mutation_rate", 0.01, 0.50))
+  ignore(evo_policy_number(value, "mutation_max", 0.10, 0.60))
+  ignore(evo_policy_int(value, "immigrants", 1, 3))
+  ignore(evo_policy_number(value, "regression_delta", 0.01, 0.50))
+  ignore(evo_policy_int(value, "regression_patience", 1, 8))
+  ignore(evo_policy_bool(value, "auto_rollback"))
+  ignore(evo_policy_int(value, "fossil_max_per_gen", 1, 8))
+  ignore(evo_policy_int(value, "history", 4, 64))
+  for name in ["w_stability", "w_responsiveness", "w_growth", "w_novelty",
+    "c_energy", "c_impulse", "c_positive", "c_flatness", "c_holdout"] {
+    ignore(evo_policy_number(value, name, 0.0, 1.0))
+  }
+  if protect > elite { @base.fail("evo_policy_elite_invalid") }
+}
+
+pub fn evo_policy_record_shape(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, ["version", "enabled", "params", "updated_at"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault("evo_policy_record_invalid:version")
+  }
+  match @base.field(value, "enabled") {
+    True => ()
+    False => ()
+    _ => raise @base.Fault("evo_policy_record_invalid:enabled")
+  }
+  evo_policy_params(@base.field(value, "params"))
+  let at = match @base.field(value, "updated_at") {
+    String(text) => text
+    _ => raise @base.Fault("evo_policy_record_invalid:updated_at")
+  }
+  if at.length() < 10 || at.contains("\n") || at.contains("\r") {
+    @base.fail("evo_policy_record_invalid:updated_at")
+  }
+}
+
+pub fn evo_policy_hash(record : Json) -> String {
+  @base.hex_hash(@base.canonical(record))
+}
+
+// Weights are compared as IEEE-754 binary32 bit patterns, in index order and
+// little endian. Hashing the JSON text instead would make a formatting change
+// (or a lossy decimal round trip) look like a different genome.
+pub fn evo_weights_validate(weights : Array[Double]) -> Unit raise @base.Fault {
+  if weights.length() != EVO_WEIGHTS { @base.fail("evo_genome_weight_invalid:length") }
+  for weight in weights {
+    if weight.is_nan() || weight.is_inf() || weight < -4.0 || weight > 4.0 {
+      @base.fail("evo_genome_weight_invalid:range")
+    }
+    if Float::from_double(weight).to_double() != weight {
+      @base.fail("evo_genome_weight_invalid:precision")
+    }
+  }
+}
+
+pub fn evo_weights_sha256(weights : Array[Double]) -> String raise @base.Fault {
+  evo_weights_validate(weights)
+  let bytes : Array[Byte] = []
+  for weight in weights {
+    let bits = Float::from_double(weight).reinterpret_as_uint()
+    for i = 0; i < 4; i = i + 1 {
+      bytes.push(((bits >> (i * 8)) & 255U).to_byte())
+    }
+  }
+  @base.sha256_hex(Bytes::from_array(bytes))
+}
+
+pub fn evo_weights_from_json(value : Json) -> Array[Double] raise @base.Fault {
+  let items = match value {
+    Array(values) => values
+    _ => raise @base.Fault("evo_genome_weight_invalid:type")
+  }
+  if items.length() != EVO_WEIGHTS { @base.fail("evo_genome_weight_invalid:length") }
+  let weights : Array[Double] = []
+  for item in items {
+    match item {
+      Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= -4.0 && n <= 4.0 => {
+        if Float::from_double(n).to_double() != n {
+          @base.fail("evo_genome_weight_invalid:precision")
+        }
+        weights.push(n)
+      }
+      _ => raise @base.Fault("evo_genome_weight_invalid:range")
+    }
+  }
+  weights
+}
+
+pub fn evo_genome_id(
+  origin : String, generation : Int, parents : Array[String], weights_sha256 : String,
+) -> String {
+  @base.hex_hash("evo-genome-v1\n" + origin + "\n" + generation.to_string() + "\n" +
+    @base.canonical(parents.to_json()) + "\n" + weights_sha256)
+}
+
+pub fn evo_fossil_id(genome : String, reason : String, died_generation : Int) -> String {
+  @base.hex_hash("evo-fossil-v1\n" + genome + "\n" + reason + "\n" + died_generation.to_string())
+}
+
+pub fn evo_window_hash(window : Array[Json]) -> String {
+  @base.hex_hash(@base.canonical({ "version": 1, "window": window.to_json() }))
+}
+
+fn evo_record_time(value : Json, field : String, code : String) -> String raise @base.Fault {
+  match @base.field(value, field) {
+    String(text) if text.length() >= 10 && !text.contains("\n") && !text.contains("\r") => text
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_record_int(value : Json, field : String, low : Int, high : Int, code : String) -> Int raise @base.Fault {
+  match @base.field(value, field) {
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= low.to_double() &&
+      n <= high.to_double() && n == n.to_int().to_double() => n.to_int()
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_record_number(value : Json, field : String, low : Double, high : Double, code : String) -> Double raise @base.Fault {
+  match @base.field(value, field) {
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= low && n <= high => n
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_record_bool(value : Json, field : String, code : String) -> Bool raise @base.Fault {
+  match @base.field(value, field) {
+    True => true
+    False => false
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_record_hash(value : Json, field : String, code : String) -> String raise @base.Fault {
+  match @base.field(value, field) {
+    String(text) if valid_hash(text) => text
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_record_array(value : Json, field : String, code : String) -> Array[Json] raise @base.Fault {
+  match @base.field(value, field) {
+    Array(items) => items
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_record_vector3(
+  value : Json, field : String, low : Double, high : Double, code : String,
+) -> Unit raise @base.Fault {
+  let items = evo_record_array(value, field, code)
+  if items.length() != 3 { @base.fail(code + ":" + field) }
+  for item in items {
+    match item {
+      Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= low && n <= high => ()
+      _ => raise @base.Fault(code + ":" + field)
+    }
+  }
+}
+
+fn evo_record_subject(value : String, code : String) -> Unit raise @base.Fault {
+  let size = @base.utf8_size(value)
+  if size < 1 || size > 64 || value.contains("\n") || value.contains("\r") {
+    @base.fail(code + ":subject")
+  }
+}
+
+fn evo_optional_int(value : Json, field : String, low : Int, high : Int, code : String) -> Unit raise @base.Fault {
+  match @base.field(value, field) {
+    Null => ()
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= low.to_double() &&
+      n <= high.to_double() && n == n.to_int().to_double() => ()
+    _ => raise @base.Fault(code + ":" + field)
+  }
+}
+
+fn evo_window_entry_shape(value : Json) -> Int raise @base.Fault {
+  let code = "evo_state_window_invalid"
+  @base.keys(value, ["step", "at", "input", "emotion", "impulse", "fired", "subject"])
+  let step = evo_record_int(value, "step", 1, 2147483647, code)
+  ignore(evo_record_time(value, "at", code))
+  let input = evo_record_array(value, "input", code)
+  if input.length() != 16 { @base.fail(code + ":input") }
+  for item in input {
+    match item {
+      Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= -1.0 && n <= 1.0 => ()
+      _ => raise @base.Fault(code + ":input")
+    }
+  }
+  evo_record_vector3(value, "emotion", -1.0, 1.0, code)
+  ignore(evo_record_number(value, "impulse", 0.0, 1.0, code))
+  ignore(evo_record_bool(value, "fired", code))
+  match @base.field(value, "subject") {
+    Null => ()
+    String(subject) => evo_record_subject(subject, code)
+    _ => raise @base.Fault(code + ":subject")
+  }
+  step
+}
+
+fn evo_relation_shape(value : Json) -> String raise @base.Fault {
+  let code = "evo_state_record_invalid"
+  @base.keys(value, ["subject", "trust", "familiarity", "tension"])
+  let subject = match @base.field(value, "subject") {
+    String(text) => text
+    _ => raise @base.Fault(code + ":relation_subject")
+  }
+  evo_record_subject(subject, code)
+  ignore(evo_record_number(value, "trust", 0.0, 1.0, code))
+  ignore(evo_record_number(value, "familiarity", 0.0, 1.0, code))
+  ignore(evo_record_number(value, "tension", 0.0, 1.0, code))
+  subject
+}
+
+fn evo_body_shape(value : Json, code : String) -> Unit raise @base.Fault {
+  @base.keys(value, ["cpu", "memory", "latency", "budget"])
+  for field in ["cpu", "memory", "latency", "budget"] {
+    ignore(evo_record_number(value, field, 0.0, 1.0, code))
+  }
+}
+
+fn evo_last_observe_shape(value : Json) -> Unit raise @base.Fault {
+  if value == Json::null() { return }
+  let code = "evo_state_record_invalid"
+  @base.keys(value, ["step", "payload_sha256", "result"])
+  ignore(evo_record_int(value, "step", 1, 2147483647, code))
+  ignore(evo_record_hash(value, "payload_sha256", code))
+  let result = @base.field(value, "result")
+  @base.keys(result, ["emotion", "impulse", "fired", "action", "threshold"])
+  evo_record_vector3(result, "emotion", -1.0, 1.0, code)
+  ignore(evo_record_number(result, "impulse", 0.0, 1.0, code))
+  ignore(evo_record_bool(result, "fired", code))
+  evo_record_vector3(result, "action", -1.0, 1.0, code)
+  ignore(evo_record_number(result, "threshold", 0.30, 0.95, code))
+}
+
+fn evo_state_record(value : Json) -> Unit raise @base.Fault {
+  let code = "evo_state_record_invalid"
+  @base.keys(value, ["version", "steps", "window", "window_sha256", "emotion",
+    "impulse", "body", "relations", "active_genome", "last_observe",
+    "last_fire_step", "guard_hits", "impulses", "blowups", "created_at", "updated_at"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault(code + ":version")
+  }
+  let steps = evo_record_int(value, "steps", 0, 1000000000, code)
+  let window = evo_record_array(value, "window", code)
+  if window.length() > 512 || window.length() > steps { @base.fail(code + ":window") }
+  let mut expected = -1
+  for entry in window {
+    let step = evo_window_entry_shape(entry)
+    if expected >= 0 && step != expected + 1 { @base.fail("evo_state_window_invalid:step") }
+    expected = step
+  }
+  let expected_hash = evo_window_hash(window)
+  match @base.field(value, "window_sha256") {
+    String(text) if valid_hash(text) && text == expected_hash => ()
+    _ => raise @base.Fault("evo_state_window_hash_mismatch")
+  }
+  evo_record_vector3(value, "emotion", -1.0, 1.0, code)
+  ignore(evo_record_number(value, "impulse", 0.0, 1.0, code))
+  evo_body_shape(@base.field(value, "body"), code)
+  let relations = evo_record_array(value, "relations", code)
+  if relations.length() > 8 { @base.fail(code + ":relations") }
+  let mut previous = ""
+  let seen : Map[String, Bool] = Map([])
+  for relation in relations {
+    let subject = evo_relation_shape(relation)
+    if seen.contains(subject) || (previous != "" && @base.compare(previous, subject) >= 0) {
+      @base.fail(code + ":relations_order")
+    }
+    seen[subject] = true
+    previous = subject
+  }
+  match @base.field(value, "active_genome") {
+    Null => ()
+    String(text) => if !valid_hash(text) { @base.fail(code + ":active_genome") }
+    _ => raise @base.Fault(code + ":active_genome")
+  }
+  evo_last_observe_shape(@base.field(value, "last_observe"))
+  evo_optional_int(value, "last_fire_step", 1, 2147483647, code)
+  for field in ["guard_hits", "impulses", "blowups"] {
+    ignore(evo_record_int(value, field, 0, 1000000000, code))
+  }
+  ignore(evo_record_time(value, "created_at", code))
+  ignore(evo_record_time(value, "updated_at", code))
+}
+
+fn evo_breakdown_shape(value : Json, code : String) -> Unit raise @base.Fault {
+  @base.keys(value, ["stability", "responsiveness", "growth", "novelty",
+    "energy_cost", "impulse_blowups", "positive_penalty", "flatness_penalty",
+    "holdout_penalty", "train", "holdout"])
+  for field in ["stability", "responsiveness", "growth", "novelty", "energy_cost",
+    "impulse_blowups", "positive_penalty", "flatness_penalty", "holdout_penalty"] {
+    ignore(evo_record_number(value, field, 0.0, 1.0, code))
+  }
+  ignore(evo_record_number(value, "train", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "holdout", -1.0, 1.0, code))
+}
+
+fn evo_member_shape(value : Json) -> Unit raise @base.Fault {
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["genome", "fitness", "breakdown", "age",
+    "evaluated_generation", "status"])
+  ignore(evo_record_hash(value, "genome", code))
+  let status = match @base.field(value, "status") {
+    String(text) if text == "alive" || text == "lethal" => text
+    _ => raise @base.Fault(code + ":status")
+  }
+  match @base.field(value, "fitness") {
+    Null => if status == "lethal" { @base.fail(code + ":fitness") }
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= -1.0 && n <= 1.0 => {
+      if status == "lethal" {
+        if n != -1.0 { @base.fail(code + ":fitness") }
+      } else if n <= -1.0 {
+        @base.fail(code + ":fitness")
+      }
+    }
+    _ => raise @base.Fault(code + ":fitness")
+  }
+  match @base.field(value, "breakdown") {
+    Null => ()
+    _ => evo_breakdown_shape(@base.field(value, "breakdown"), code)
+  }
+  ignore(evo_record_int(value, "age", 0, 1000000, code))
+  evo_optional_int(value, "evaluated_generation", 0, 1000000000, code)
+}
+
+fn evo_checkpoint_shape(value : Json) -> Unit raise @base.Fault {
+  if value == Json::null() { return }
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["generation", "genome", "fitness", "at"])
+  ignore(evo_record_int(value, "generation", 0, 1000000000, code))
+  ignore(evo_record_hash(value, "genome", code))
+  ignore(evo_record_number(value, "fitness", -1.0, 1.0, code))
+  ignore(evo_record_time(value, "at", code))
+}
+
+fn evo_history_shape(value : Json) -> Unit raise @base.Fault {
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["generation", "window_sha256", "best", "mean", "worst",
+    "delta", "regressed", "rolled_back"])
+  ignore(evo_record_int(value, "generation", 0, 1000000000, code))
+  ignore(evo_record_hash(value, "window_sha256", code))
+  ignore(evo_record_number(value, "best", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "mean", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "worst", -1.0, 1.0, code))
+  let delta = evo_record_number(value, "delta", -2.0, 2.0, code)
+  ignore(evo_record_bool(value, "regressed", code))
+  ignore(evo_record_bool(value, "rolled_back", code))
+  // The first generation's zero delta is a controller property (tested by
+  // evo_wbtest); the shape layer only bounds the value because a bounded
+  // history may drop the original first entry after many rollbacks.
+  ignore(delta)
+}
+
+fn evo_last_eval_shape(value : Json) -> Unit raise @base.Fault {
+  if value == Json::null() { return }
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["generation", "window_sha256", "at", "best", "mean", "worst", "alive"])
+  ignore(evo_record_int(value, "generation", 0, 1000000000, code))
+  ignore(evo_record_hash(value, "window_sha256", code))
+  ignore(evo_record_time(value, "at", code))
+  ignore(evo_record_number(value, "best", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "mean", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "worst", -1.0, 1.0, code))
+  ignore(evo_record_int(value, "alive", 1, 32, code))
+}
+
+fn evo_last_evolve_shape(value : Json) -> Unit raise @base.Fault {
+  if value == Json::null() { return }
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["from_generation", "to_generation", "window_sha256", "at",
+    "best", "mean", "worst", "delta", "regressed", "rolled_back", "fossils",
+    "extinct", "immigrants", "elite", "protected", "rng_seed"])
+  ignore(evo_record_int(value, "from_generation", 0, 1000000000, code))
+  ignore(evo_record_int(value, "to_generation", 0, 1000000000, code))
+  ignore(evo_record_hash(value, "window_sha256", code))
+  ignore(evo_record_time(value, "at", code))
+  ignore(evo_record_number(value, "best", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "mean", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "worst", -1.0, 1.0, code))
+  ignore(evo_record_number(value, "delta", -2.0, 2.0, code))
+  ignore(evo_record_bool(value, "regressed", code))
+  ignore(evo_record_bool(value, "rolled_back", code))
+  for field in ["fossils", "extinct", "immigrants", "elite", "protected"] {
+    ignore(evo_record_int(value, field, 0, 1000000000, code))
+  }
+  match @base.field(value, "rng_seed") {
+    String(text) if text.length() == 16 && text.iter().all(c =>
+      (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) => ()
+    _ => raise @base.Fault(code + ":rng_seed")
+  }
+}
+
+fn evo_last_rollback_shape(value : Json) -> Unit raise @base.Fault {
+  if value == Json::null() { return }
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["at", "from_generation", "to_generation", "reason",
+    "checkpoint", "fossils"])
+  ignore(evo_record_time(value, "at", code))
+  let from = evo_record_int(value, "from_generation", 0, 1000000000, code)
+  let to = evo_record_int(value, "to_generation", 0, 1000000000, code)
+  if to > from { @base.fail(code + ":to_generation") }
+  match @base.field(value, "reason") {
+    String(text) if text == "manual" || text == "regression" => ()
+    _ => raise @base.Fault(code + ":reason")
+  }
+  ignore(evo_record_hash(value, "checkpoint", code))
+  ignore(evo_record_int(value, "fossils", 0, 1000000000, code))
+}
+
+fn evo_seed_shape(value : Json, code : String) -> Unit raise @base.Fault {
+  match @base.field(value, "seed") {
+    Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= 0.0 && n <= 4294967295.0 &&
+      n == n.to_int().to_double() => ()
+    _ => raise @base.Fault(code + ":seed")
+  }
+}
+
+fn evo_population_record(value : Json) -> Unit raise @base.Fault {
+  let code = "evo_population_record_invalid"
+  @base.keys(value, ["version", "generation", "init", "members", "checkpoint",
+    "history", "regression_streak", "extinct_total", "fossil_total",
+    "regressions_total", "rollbacks_total", "last_eval", "last_evolve",
+    "last_rollback", "updated_at"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault(code + ":version")
+  }
+  ignore(evo_record_int(value, "generation", 0, 1000000000, code))
+  let init = @base.field(value, "init")
+  @base.keys(init, ["seed", "at", "policy_hash"])
+  ignore(evo_seed_shape(init, code))
+  ignore(evo_record_time(init, "at", code))
+  ignore(evo_record_hash(init, "policy_hash", code))
+  let members = evo_record_array(value, "members", code)
+  if members.length() < 1 || members.length() > 32 { @base.fail(code + ":members") }
+  for row in members { evo_member_shape(row) }
+  evo_checkpoint_shape(@base.field(value, "checkpoint"))
+  let history = evo_record_array(value, "history", code)
+  if history.length() > 64 { @base.fail(code + ":history") }
+  for entry in history { evo_history_shape(entry) }
+  if history.length() == 1 {
+    let first = history[0]
+    let generation = evo_record_int(first, "generation", 0, 1000000000, code)
+    let delta = evo_record_number(first, "delta", -2.0, 2.0, code)
+    if generation == 0 && delta != 0.0 { @base.fail(code + ":history_delta") }
+  }
+  ignore(evo_record_int(value, "regression_streak", 0, 1000000, code))
+  for field in ["extinct_total", "fossil_total", "regressions_total", "rollbacks_total"] {
+    ignore(evo_record_int(value, field, 0, 1000000000, code))
+  }
+  evo_last_eval_shape(@base.field(value, "last_eval"))
+  evo_last_evolve_shape(@base.field(value, "last_evolve"))
+  evo_last_rollback_shape(@base.field(value, "last_rollback"))
+  ignore(evo_record_time(value, "updated_at", code))
+}
+
+fn evo_parent_list(value : Json, field : String, code : String) -> Array[String] raise @base.Fault {
+  let items = evo_record_array(value, field, code)
+  if items.length() > 2 { @base.fail(code + ":" + field) }
+  let parents : Array[String] = []
+  for item in items {
+    match item {
+      String(text) if valid_hash(text) => parents.push(text)
+      _ => raise @base.Fault(code + ":" + field)
+    }
+  }
+  parents
+}
+
+fn evo_genome_record(path : String, value : Json) -> Unit raise @base.Fault {
+  let code = "evo_genome_record_invalid"
+  @base.keys(value, ["version", "id", "generation", "parents", "origin",
+    "weights", "weights_sha256", "created_at"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault(code + ":version")
+  }
+  let id = evo_record_hash(value, "id", code)
+  if path != "state/evo/genomes/" + id + ".json" { @base.fail("evo_genome_identity_invalid:path") }
+  let generation = evo_record_int(value, "generation", 0, 1000000000, code)
+  let origin = match @base.field(value, "origin") {
+    String(text) => text
+    _ => raise @base.Fault("evo_genome_origin_invalid")
+  }
+  if !["seed", "crossover", "clone", "immigrant", "checkpoint_clone"].contains(origin) {
+    @base.fail("evo_genome_origin_invalid")
+  }
+  let parents = evo_parent_list(value, "parents", code)
+  let expected_parents = if ["seed", "immigrant"].contains(origin) { 0 }
+    else if ["clone", "checkpoint_clone"].contains(origin) { 1 }
+    else { 2 }
+  if parents.length() != expected_parents { @base.fail("evo_genome_parents_invalid") }
+  for parent in parents {
+    if !valid_hash(parent) || parent == id { @base.fail("evo_genome_parents_invalid") }
+  }
+  let weights = evo_weights_from_json(@base.field(value, "weights"))
+  let weights_sha256 = evo_record_hash(value, "weights_sha256", code)
+  if evo_weights_sha256(weights) != weights_sha256 { @base.fail("evo_genome_weights_hash_mismatch") }
+  if id != evo_genome_id(origin, generation, parents, weights_sha256) {
+    @base.fail("evo_genome_identity_mismatch")
+  }
+  ignore(evo_record_time(value, "created_at", code))
+}
+
+fn evo_fossil_record(path : String, value : Json) -> Unit raise @base.Fault {
+  let code = "evo_fossil_record_invalid"
+  @base.keys(value, ["version", "id", "genome", "generation", "died_generation",
+    "reason", "fitness", "breakdown", "window_sha256", "weights_sha256",
+    "parents", "age", "at"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault(code + ":version")
+  }
+  let id = evo_record_hash(value, "id", code)
+  if path != "state/evo/fossils/" + id + ".json" { @base.fail("evo_fossil_identity_invalid:path") }
+  let genome = evo_record_hash(value, "genome", code)
+  let generation = evo_record_int(value, "generation", 0, 1000000000, code)
+  let died = evo_record_int(value, "died_generation", 0, 1000000000, code)
+  if generation > died { @base.fail(code + ":generation") }
+  let reason = match @base.field(value, "reason") {
+    String(text) => text
+    _ => raise @base.Fault("evo_fossil_reason_invalid")
+  }
+  if !["not_selected", "lethal", "regression_rollback", "manual_rollback"].contains(reason) {
+    @base.fail("evo_fossil_reason_invalid")
+  }
+  ignore(evo_record_number(value, "fitness", -1.0, 1.0, code))
+  evo_breakdown_shape(@base.field(value, "breakdown"), code)
+  ignore(evo_record_hash(value, "window_sha256", code))
+  ignore(evo_record_hash(value, "weights_sha256", code))
+  ignore(evo_parent_list(value, "parents", code))
+  ignore(evo_record_int(value, "age", 0, 1000000000, code))
+  ignore(evo_record_time(value, "at", code))
+  if id != evo_fossil_id(genome, reason, died) { @base.fail("evo_fossil_identity_mismatch") }
+}
+
 pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
   let value = @base.parse(text)
   match value { Object(_) => (); _ => @base.fail("record_object_required: " + entry.path) }
   let string = key => @base.text(@base.field(value, key))
-  if entry.path.has_prefix("state/orders/") {
+  if entry.path == "state/evo/policy.json" {
+    evo_policy_record_shape(value)
+  } else if entry.path == "state/evo/state.json" {
+    evo_state_record(value)
+  } else if entry.path == "state/evo/population.json" {
+    evo_population_record(value)
+  } else if entry.path.has_prefix("state/evo/genomes/") {
+    evo_genome_record(entry.path, value)
+  } else if entry.path.has_prefix("state/evo/fossils/") {
+    evo_fossil_record(entry.path, value)
+  } else if entry.path.has_prefix("state/evo/") {
+    @base.fail("evo_record_path_invalid")
+  } else if entry.path.has_prefix("state/orders/") {
     @base.keys(value, ["id", "source", "source_hash", "baseline", "context_version", "phase", "analysis", "page_hashes"])
     let id = string("id")
     if !valid_hash(id) || entry.path != "state/orders/" + id + ".json" || !valid_hash(string("source_hash")) || !valid_hash(string("baseline")) { @base.fail("order_record_identity_invalid") }
@@ -691,11 +1350,13 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     extraction_body(string("text"))
     event_time(string("submitted_at"))
   } else if entry.path.has_prefix("state/dreams/") {
-    @base.keys(value, ["id", "at", "baseline", "policy", "space", "metrics", "opportunities_hash",
-      "status", "closed_at", "decision", "note", "outcome"])
+    @base.keys(value, ["id", "at", "baseline", "knowledge", "policy", "space", "metrics",
+      "opportunities_hash", "status", "closed_at", "decision", "note", "outcome"])
     let id = string("id")
     let baseline = string("baseline")
-    if !valid_hash(id) || !valid_hash(baseline) { @base.fail("dream_record_hash_invalid") }
+    if !valid_hash(id) || !valid_hash(baseline) || !valid_hash(string("knowledge")) {
+      @base.fail("dream_record_hash_invalid")
+    }
     if entry.path != "state/dreams/" + id + ".json" { @base.fail("dream_record_identity_invalid") }
     if !valid_hash(string("opportunities_hash")) { @base.fail("dream_report_hash_invalid") }
     event_time(string("at"))
@@ -716,15 +1377,92 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(@base.text(closed))
       if @base.text(decision) != status { @base.fail("dream_decision_status_mismatch") }
       if outcome is Object(_) {
-        @base.keys(outcome, ["metrics", "delta"])
+        @base.keys(outcome, ["metrics", "delta", "drivers"])
         dream_metrics_shape(@base.field(outcome, "metrics"))
         dream_delta(@base.field(outcome, "delta"))
+        let drivers = @base.strings(@base.field(outcome, "drivers"))
+        if drivers.length() > 32 { @base.fail("dream_drivers_invalid") }
+        for driver in drivers {
+          if driver.is_empty() || driver.length() > 128 || driver.contains("\n") || driver.contains("\r") {
+            @base.fail("dream_drivers_invalid")
+          }
+        }
       } else {
         @base.fail("dream_outcome_invalid")
       }
       if note != Json::null() {
         let n = @base.text(note)
         if n.length() > 1024 || n.contains("\n") || n.contains("\r") { @base.fail("dream_note_invalid") }
+      }
+    }
+  } else if entry.path.has_prefix("state/dream-work/") {
+    @base.keys(value, ["id", "round", "baseline", "kind", "subject", "priority", "status",
+      "driver", "lease_until", "created_at", "closed_at", "result", "error"])
+    let id = string("id")
+    let round = string("round")
+    let baseline = string("baseline")
+    if !valid_hash(id) || !valid_hash(round) || !valid_hash(baseline) {
+      @base.fail("dream_work_hash_invalid")
+    }
+    if entry.path != "state/dream-work/" + id + ".json" { @base.fail("dream_work_identity_invalid") }
+    let kind = string("kind")
+    if !["lint", "uncovered_source", "stale_page", "sparse_topic", "missing_vector"].contains(kind) {
+      @base.fail("dream_work_kind_invalid")
+    }
+    let subject = string("subject")
+    if subject.is_empty() || subject.length() > 1024 || subject.contains("\n") || subject.contains("\r") {
+      @base.fail("dream_work_subject_invalid")
+    }
+    match @base.field(value, "priority") {
+      Number(n, ..) if n >= 0.0 && n <= 9.0 && n == n.to_int().to_double() => ()
+      _ => raise @base.Fault("dream_work_priority_invalid")
+    }
+    let status = string("status")
+    if !["pending", "claimed", "done", "failed"].contains(status) { @base.fail("dream_work_status_invalid") }
+    event_time(string("created_at"))
+    let driver = @base.field(value, "driver")
+    let lease = @base.field(value, "lease_until")
+    let closed = @base.field(value, "closed_at")
+    let result = @base.field(value, "result")
+    let error = @base.field(value, "error")
+    let driver_text = match driver {
+      Null => ""
+      String(text) => {
+        if text.is_empty() || text.length() > 128 || text.contains("\n") || text.contains("\r") {
+          @base.fail("dream_work_driver_invalid")
+        }
+        text
+      }
+      _ => raise @base.Fault("dream_work_driver_invalid")
+    }
+    if lease != Json::null() {
+      event_time(@base.text(lease))
+      if driver_text == "" { @base.fail("dream_work_lease_without_driver") }
+    }
+    if status == "pending" {
+      if driver != Json::null() || lease != Json::null() || closed != Json::null() ||
+        result != Json::null() || error != Json::null() {
+        @base.fail("dream_work_pending_invalid")
+      }
+    } else if status == "claimed" {
+      if driver_text == "" || lease == Json::null() || closed != Json::null() ||
+        result != Json::null() || error != Json::null() {
+        @base.fail("dream_work_claimed_invalid")
+      }
+    } else if status == "done" {
+      if driver_text == "" || closed == Json::null() || result == Json::null() || error != Json::null() {
+        @base.fail("dream_work_done_invalid")
+      }
+      event_time(@base.text(closed))
+      dream_work_result_shape(result)
+    } else {
+      if driver_text == "" || closed == Json::null() || error == Json::null() || result != Json::null() {
+        @base.fail("dream_work_failed_invalid")
+      }
+      event_time(@base.text(closed))
+      let reason = @base.text(error)
+      if reason.is_empty() || reason.length() > 1024 || reason.contains("\n") || reason.contains("\r") {
+        @base.fail("dream_work_error_invalid")
       }
     }
   } else if entry.path.has_prefix("state/events/") {
@@ -741,7 +1479,10 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "overview-apply", "ingest", "forget", "memory-submit", "memory-supersede",
       "memory-archive", "memory-restore", "memory-pin", "memory-use",
       "impact-open", "impact-resolve", "extraction-submit",
-      "dream-open", "dream-close",
+      "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
+      "dream-work-complete", "dream-work-fail",
+      "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
+      "evo-rollback", "evo-fossilize",
     ]
     if !supported.contains(op) { @base.fail("event_operation_unsupported: " + op) }
     if op == "source-missing" {
@@ -1126,6 +1867,174 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       let expected = "state/events/dream-close-" + dream + "-" +
         @base.hex_hash(decision + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "dream-work-open" {
+      @base.keys(value, ["op", "work", "round", "at"])
+      let work = string("work")
+      let round = string("round")
+      if !valid_hash(work) || !valid_hash(round) { @base.fail("dream_work_event_hash_invalid") }
+      event_time(string("at"))
+      let expected = "state/events/dream-work-open-" + work + "-" + @base.hex_hash(string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_work_event_identity_invalid") }
+    } else if op == "dream-work-claim" {
+      @base.keys(value, ["op", "work", "driver", "lease_until", "at"])
+      let work = string("work")
+      if !valid_hash(work) { @base.fail("dream_work_event_hash_invalid") }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("dream_work_event_driver_invalid")
+      }
+      event_time(string("lease_until"))
+      event_time(string("at"))
+      let expected = "state/events/dream-work-claim-" + work + "-" +
+        @base.hex_hash(driver + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_work_event_identity_invalid") }
+    } else if op == "dream-work-complete" {
+      @base.keys(value, ["op", "work", "driver", "at"])
+      let work = string("work")
+      if !valid_hash(work) { @base.fail("dream_work_event_hash_invalid") }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("dream_work_event_driver_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/dream-work-complete-" + work + "-" +
+        @base.hex_hash(driver + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_work_event_identity_invalid") }
+    } else if op == "dream-work-fail" {
+      @base.keys(value, ["op", "work", "driver", "reason", "at"])
+      let work = string("work")
+      if !valid_hash(work) { @base.fail("dream_work_event_hash_invalid") }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("dream_work_event_driver_invalid")
+      }
+      let reason = string("reason")
+      if reason.is_empty() || reason.length() > 1024 || reason.contains("\n") {
+        @base.fail("dream_work_event_reason_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/dream-work-fail-" + work + "-" +
+        @base.hex_hash(driver + "\n" + string("at") + "\n" + reason) + ".json"
+      if entry.path != expected { @base.fail("dream_work_event_identity_invalid") }
+    } else if op == "evo-policy" {
+      @base.keys(value, ["op", "at", "enabled", "params", "params_hash"])
+      let at = string("at")
+      event_time(at)
+      let enabled = @base.boolean(@base.field(value, "enabled"))
+      let params = @base.field(value, "params")
+      evo_policy_params(params)
+      if string("params_hash") != @base.hex_hash(@base.canonical(params)) {
+        @base.fail("evo_policy_record_invalid:params_hash")
+      }
+      let binding : Json = { "enabled": enabled.to_json(), "params": params }
+      let expected = "state/events/evo-policy-" +
+        @base.hex_hash(@base.canonical(binding) + "\n" + at) + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
+    } else if op == "evo-init" {
+      @base.keys(value, ["op", "at", "seed", "policy_hash"])
+      let at = string("at")
+      event_time(at)
+      match @base.field(value, "seed") {
+        Number(n, ..) if !n.is_nan() && !n.is_inf() && n >= 0.0 && n <= 4294967295.0 &&
+          n == n.to_int().to_double() => ()
+        _ => raise @base.Fault("evo_seed_invalid")
+      }
+      if !valid_hash(string("policy_hash")) { @base.fail("evo_event_identity_invalid:policy_hash") }
+      let seed = match @base.field(value, "seed") {
+        Number(n, ..) => n.to_int()
+        _ => raise @base.Fault("evo_seed_invalid")
+      }
+      let expected = "state/events/evo-init-" +
+        @base.hex_hash(seed.to_string() + "\n" + at) + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
+    } else if op == "evo-evaluate" {
+      @base.keys(value, ["op", "at", "generation", "window_sha256", "best",
+        "mean", "worst", "alive"])
+      let at = string("at")
+      event_time(at)
+      ignore(evo_record_int(value, "generation", 0, 1000000000, "evo_event_invalid"))
+      if !valid_hash(string("window_sha256")) { @base.fail("evo_event_identity_invalid:window_sha256") }
+      for field in ["best", "mean", "worst"] {
+        ignore(evo_record_number(value, field, -1.0, 1.0, "evo_event_invalid"))
+      }
+      ignore(evo_record_int(value, "alive", 1, 32, "evo_event_invalid"))
+      let generation = match @base.field(value, "generation") {
+        Number(n, ..) => n.to_int()
+        _ => raise @base.Fault("evo_event_invalid:generation")
+      }
+      let expected = "state/events/evo-evaluate-" +
+        @base.hex_hash(generation.to_string() + "\n" + string("window_sha256") + "\n" + at) + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
+    } else if op == "evo-evolve" {
+      @base.keys(value, ["op", "at", "from_generation", "to_generation",
+        "window_sha256", "best", "mean", "worst", "delta", "regressed",
+        "rolled_back", "fossils", "extinct"])
+      let at = string("at")
+      event_time(at)
+      let from = evo_record_int(value, "from_generation", 0, 1000000000, "evo_event_invalid")
+      let to = evo_record_int(value, "to_generation", 0, 1000000000, "evo_event_invalid")
+      let rolled_back = evo_record_bool(value, "rolled_back", "evo_event_invalid")
+      if rolled_back {
+        if to > from { @base.fail("evo_event_invalid:to_generation") }
+      } else if to != from + 1 {
+        @base.fail("evo_event_invalid:to_generation")
+      }
+      if !valid_hash(string("window_sha256")) { @base.fail("evo_event_identity_invalid:window_sha256") }
+      for field in ["best", "mean", "worst"] {
+        ignore(evo_record_number(value, field, -1.0, 1.0, "evo_event_invalid"))
+      }
+      ignore(evo_record_number(value, "delta", -2.0, 2.0, "evo_event_invalid"))
+      ignore(evo_record_bool(value, "regressed", "evo_event_invalid"))
+      for field in ["fossils", "extinct"] {
+        ignore(evo_record_int(value, field, 0, 1000000000, "evo_event_invalid"))
+      }
+      let expected = "state/events/evo-evolve-" +
+        @base.hex_hash(from.to_string() + "\n" + string("window_sha256") + "\n" + at) + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
+    } else if op == "evo-regression" {
+      @base.keys(value, ["op", "at", "generation", "window_sha256", "best",
+        "checkpoint", "delta"])
+      let at = string("at")
+      event_time(at)
+      let generation = evo_record_int(value, "generation", 0, 1000000000, "evo_event_invalid")
+      if !valid_hash(string("window_sha256")) { @base.fail("evo_event_identity_invalid:window_sha256") }
+      let best = evo_record_number(value, "best", -1.0, 1.0, "evo_event_invalid")
+      let checkpoint = evo_record_number(value, "checkpoint", -1.0, 1.0, "evo_event_invalid")
+      let delta = evo_record_number(value, "delta", -2.0, 2.0, "evo_event_invalid")
+      if delta >= 0.0 || delta != best - checkpoint { @base.fail("evo_event_invalid:delta") }
+      let expected = "state/events/evo-regression-" +
+        @base.hex_hash(generation.to_string() + "\n" + string("window_sha256") + "\n" + at) + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
+    } else if op == "evo-rollback" {
+      @base.keys(value, ["op", "at", "from_generation", "to_generation",
+        "reason", "checkpoint", "fossils"])
+      let at = string("at")
+      event_time(at)
+      let from = evo_record_int(value, "from_generation", 0, 1000000000, "evo_event_invalid")
+      let to = evo_record_int(value, "to_generation", 0, 1000000000, "evo_event_invalid")
+      if to > from { @base.fail("evo_event_invalid:to_generation") }
+      let reason = string("reason")
+      if !["regression", "manual"].contains(reason) { @base.fail("evo_event_invalid:reason") }
+      if !valid_hash(string("checkpoint")) { @base.fail("evo_event_identity_invalid:checkpoint") }
+      ignore(evo_record_int(value, "fossils", 0, 1000000000, "evo_event_invalid"))
+      let expected = "state/events/evo-rollback-" +
+        @base.hex_hash(to.to_string() + "\n" + reason + "\n" + at) + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
+    } else if op == "evo-fossilize" {
+      @base.keys(value, ["op", "at", "fossil", "genome", "reason", "generation"])
+      let at = string("at")
+      event_time(at)
+      let fossil = string("fossil")
+      if !valid_hash(fossil) || !valid_hash(string("genome")) {
+        @base.fail("evo_event_identity_invalid:fossil")
+      }
+      let reason = string("reason")
+      if !["not_selected", "lethal", "regression_rollback", "manual_rollback"].contains(reason) {
+        @base.fail("evo_fossil_reason_invalid")
+      }
+      ignore(evo_record_int(value, "generation", 0, 1000000000, "evo_event_invalid"))
+      let expected = "state/events/evo-fossilize-" + fossil + ".json"
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     }
   } else if entry.kind == "vector" {
     @base.keys(value, ["page", "sha256", "space", "values"])

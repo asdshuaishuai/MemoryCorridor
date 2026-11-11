@@ -27,9 +27,11 @@
 | 模型空间隔离/向量失效/后端覆盖与回退 | `embedding_e2e.py`、`provider_e2e.py`、`provider_jobs_e2e.py`（注册/心跳/租约/撤销） | pass |
 | 可选多模态向量空间（默认仍文本为核心） | 协议面：`embedding_e2e.py` 多模态段（能力封闭词表、image items、字节版本锁、无图页跳过——CI 恒跑）；真模型面：`multimodal_e2e.py`（CLIP ViT-B/32 int8 双塔以图搜图+跨模态检索+bge 文本面不受扰，缺模型显式 SKIP）；校准发现（扁平色红↔蓝 ≈0.925 恰压文本调参的 0.92 线，同图 ≈1.0）按实钉死，且续二十七已将其接口化为 `page-redundancy cosine_floor` 显式调档（默认 0.92，视觉面 ≥0.995，响应回显生效值） | pass(with scope note：跨模态查询文本塔为英文；中文图文召回由 OCR+bge 文本空间承担，Chinese-CLIP 重量替换项记录于 `docs/vector.md` 不入库) |
 | 梦境轮次与 RSI 保留门禁（续二十八） | 协议/状态面：`dream_e2e.py`（只读 dream-plan 确定性、指纹绑定、重放先于基线、lint 与证据丢失双门禁拒绝、终态重放、记录篡改分支、pack/unpack 往返、只读字节不变）+ `dream_wbtest.mbt`（身份派生/策略封闭/schema 面）+ `transaction_safety_wbtest.mbt` 中断恢复（0..5 写点）；真模型无关：核心零模型调用 | pass(scope note：梦境只做确定性机会汇总与保留记账，创意改写由宿主经既有 commit 流提交；多机阈值仍 open) |
+| RSI 任务出箱与驱动语义（续二十九） | `dream_work_e2e.py`（去重/背压、驱动租约与过期接管、结构化 judgments/proposals、未清工单禁 retained、终态重放、记录篡改分支、pack/unpack、只读字节不变）+ `dream_work_wbtest.mbt`（任务身份/结果封闭/schema） | pass(scope note：页面文本仍由外部驱动生成并经既有 commit 应用，引擎只收结构化提案) |
 | 来源撤销矩阵 | `source_deletion_e2e.py`、`revocation_lifecycle_e2e.py`（页面/证据/记忆/影响全传播） | pass |
 | 冻结问题集的检索与知识质量对照 | 检索：`quality_eval.py` + `multidomain_eval.py`（四领域 fixtures，`docs/quality-report.json`、`docs/multidomain-quality-report.json`）；模型生成知识 A/B：`model_quality_eval.py`（**双领域**：龙泉青瓷 + 光合与产量，`docs/model-quality-report.json`） | pass(with scope note：报告只测检索/溯源记账，不断言语义正确性——scope 字段写明) |
 | 真实资料 | 语料为仓库自有的 PROPOSAL/LICENSE 与领域 fixture（自撰确定性文本），数据集字段如实记录；外部真实原件经 OCR/PDF 通道进入：`adapters/ocr-rs` + IRS 真实 PDF 验证记录在 `docs/ocr.md` | pass |
+| 神经进化：情感/冲动快环与非单调慢环（续三十） | `evo_e2e.py`（默认关闭与开关门禁、23 项封闭参数、init/observe 重放与冲突、同种子双金库逐字节一致、窗口完整性、真实适应度下降→回归→回滚、化石/回滚计数对账、手动回滚、记录篡改分支、`content_changed` 全局完整性、pack/unpack 后继续 observe、跨模块只读对比）+ `evo_wbtest.mbt`（rng/身份/权重 binary32/参数表/控制器钳制/冷却/适应度罚分/精英下限/锦标赛/变异幅度/交叉/回归耐心/化石原因/计数对账/schema/门禁/人工闸/篡改关闭/任意写点崩溃恢复）+ 静态单向扫描与 8 条变异 | pass(scope note：v1 无饱和度检测、独立 checkpoint/fossils op、场景轮换与批量 observe；随机留出为时间后缀 30%，均如实记录在 `docs/neuro-evolution.md`) |
 
 ## P2 互操作
 

@@ -280,6 +280,28 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
             "at": "2026-11-02T15:05:00Z"}})["result"]
         assert conflict["isError"]
         assert conflict["structuredContent"]["result"]["error_code"] == "extraction_conflict"
+        # 续三十: evolution ops cross the real transport, not only the dictionary.
+        evo_params = {
+            "population": 8, "window": 16, "elite_ratio": 0.25, "protect_ratio": 0.10,
+            "tournament": 3, "crossover_rate": 0.65, "mutation_rate": 0.12,
+            "mutation_max": 0.40, "immigrants": 1, "regression_delta": 0.05,
+            "regression_patience": 1, "auto_rollback": True, "fossil_max_per_gen": 4,
+            "history": 16, "w_stability": 0.30, "w_responsiveness": 0.20,
+            "w_growth": 0.15, "w_novelty": 0.10, "c_energy": 0.10,
+            "c_impulse": 0.10, "c_positive": 0.15, "c_flatness": 0.15,
+            "c_holdout": 0.15,
+        }
+        evo_policy = call("tools/call", {"name": "corridor_evo_policy", "arguments": {
+            "vault": work, "enabled": True, "params": evo_params,
+            "at": "2026-11-02T16:00:00Z"}})["result"]
+        assert not evo_policy["isError"], evo_policy
+        assert evo_policy["structuredContent"]["result"]["enabled"] is True
+        assert evo_policy["structuredContent"]["result"]["params"]["window"] == 16
+        evo_status = call("tools/call", {"name": "corridor_evo_status",
+                                         "arguments": {"vault": work}})["result"]
+        assert not evo_status["isError"], evo_status
+        assert evo_status["structuredContent"]["result"]["initialized"] is False
+        assert evo_status["structuredContent"]["result"]["enabled"] is True
         method_error = call("not-a-method")
         assert method_error["error"]["code"] == -32601
         assert method_error["error"]["data"]["error_code"] == "method_not_found"

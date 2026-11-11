@@ -178,7 +178,7 @@ def main():
 
             # MCP stdio 直跑：同一 corridor.wasm 以 JSON-RPC 信封服务。握手
             # initialize → notifications/initialized（静默，由下一行的 id 顺序
-            # 证明）→ tools/list 94 工具 → tools/call；进度令牌产生
+            # 证明）→ tools/list 111 工具 → tools/call；进度令牌产生
             # notifications/progress 行；信封行为与 native MCP 传输一致。
             mcp = subprocess.Popen(
                 [sys.executable, str(HOST), "--module", str(MODULE), "--root", str(root),
@@ -208,7 +208,7 @@ def main():
                 mcp_send({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
                 tools = mcp_read()
                 assert tools["id"] == 3
-                assert len(tools["result"]["tools"]) == 99
+                assert len(tools["result"]["tools"]) == 111
                 # 进度令牌：tools/call 产生 started/completed 通知行 + 回复行
                 mcp_send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                     "name": "corridor_status", "arguments": {"vault": str(root)},
@@ -270,6 +270,7 @@ def main():
             s.call("verify")
             dream = s.call("dream-plan")
             assert dream["metrics"]["pages"] >= 1 and dream["report_hash"], dream
+            assert s.call("dream-work-list")["counts"]["pending"] == 0
             # pack 拒绝覆盖已有导出，因此确定性双跑用两个输出名
             s.call("pack", output="exports/大容器.mcpack")
             pack_one = (root / "exports" / "大容器.mcpack").read_bytes()

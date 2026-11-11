@@ -11,17 +11,20 @@ pub fn input_schema(t : Tool) -> Json {
   for name in t.fields {
     let ty = if ["pages", "items", "queries", "capabilities", "sources", "conditions",
       "kinds", "ids"].contains(name) { "array" }
-      else if name == "archived" || name == "pinned" { "boolean" }
+      else if name == "archived" || name == "pinned" || name == "enabled" { "boolean" }
       else { match name {
-        "limit" | "budget" | "hops" | "start" | "end" => "integer"
-        "cosine_floor" => "number"
-        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" => "object"
+        "limit" | "budget" | "hops" | "start" | "end" | "step" | "seed" => "integer"
+        "cosine_floor" | "salience" | "valence" => "number"
+        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" | "params" | "body" => "object"
         _ => "string"
       } }
     properties[name] = if ty == "array" {
       { "type": ty, "items": if ["queries", "capabilities", "sources", "conditions",
         "kinds", "ids"].contains(name) { { "type": "string" } } else { { "type": "object" } } }
     } else if ty == "integer" {
+      if t.name == "evo-init" && name == "seed" {
+        { "type": ty, "minimum": 0, "maximum": 4294967295.0 }
+      } else {
       let bounds = match (t.name, name) {
         ("read-log", "limit") => (0, 1000)
         ("search", "limit") => (1, 100)
@@ -31,18 +34,27 @@ pub fn input_schema(t : Tool) -> Json {
         ("page-redundancy", "limit") => (1, 1000)
         ("embedding-plan", "limit") => (1, 128)
         ("dream-plan", "limit") => (1, 500)
+        ("dream-work-open", "limit") => (1, 50)
         ("memory-prefetch", "limit") => (1, 50)
         ("read-source", "start") => (0, 16777216)
         ("read-source", "end") => (0, 16777216)
+        ("evo-observe", "step") => (1, 2147483647)
         _ => (0, 2147483647)
       }
       { "type": ty, "minimum": bounds.0, "maximum": bounds.1 }
+      }
     } else if ty == "number" {
-      { "type": ty, "minimum": 0.0, "maximum": 1.0 }
+      let (low, high) = match (t.name, name) {
+        ("evo-observe", "valence") => (-1.0, 1.0)
+        _ => (0.0, 1.0)
+      }
+      { "type": ty, "minimum": low, "maximum": high }
     } else { { "type": ty } }
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
-      "start", "end", "query", "page", "ids", "cosine_floor", "policy"].contains(name) &&
+      "start", "end", "query", "page", "ids", "cosine_floor", "policy",
+      "params", "enabled", "subject"].contains(name) &&
       !(name == "context_token" && t.name != "draft-submit") &&
+      !(name == "at" && t.name == "evo-policy") &&
       !(name == "note" && t.name == "dream-close") { required.push(name) }
   }
   { "type": "object", "properties": Json::object(properties), "required": required.to_json(), "additionalProperties": false }
