@@ -10,7 +10,7 @@
   it with `scripts/release_e2e.py`. The archive and checksum are uploaded as
   `memorycorridor-native-linux`. The gate includes the wasm service e2e
   (`scripts/wasm_service_e2e.py`), which bootstraps a wasmtime venv on the
-  runner. The job budget is `timeout-minutes: 120` (raised from 60 after the
+  runner. The job budget is `timeout-minutes: 240` (raised from 60 after the
   gate grew past one hour with 87 mutation rebuilds and the added evaluation
   suites; a run that hits the budget is reported as `cancelled`, which
   `gh run watch --exit-status` wrongly treats as success — check
