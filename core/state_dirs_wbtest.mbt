@@ -3,7 +3,7 @@ test "every record directory has a validation branch" {
   // `validate_record` would be accepted by the transaction and pack whitelists
   // yet never validated, so its content could drift unnoticed.
   let directories = state_directories()
-  assert_eq(directories.length(), 12)
+  assert_eq(directories.length(), 13)
   let entry = (path : String) => {
     { id: path, path, kind: "state", format: "json", sha256: "0".repeat(64),
       sources: [], stale: false }

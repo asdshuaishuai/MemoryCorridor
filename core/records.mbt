@@ -5,7 +5,8 @@
 pub fn state_directories() -> Array[String] {
   ["state/orders", "state/events", "state/reviews", "state/research",
    "state/suggestions", "state/overview", "state/evidence", "state/memory",
-   "state/impacts", "state/providers", "state/provider-jobs", "state/extractions"]
+   "state/impacts", "state/providers", "state/provider-jobs", "state/extractions",
+   "state/dreams"]
 }
 
 // Sidecar text is host-supplied (OCR, PDF text) and could be arbitrarily long.
@@ -243,6 +244,77 @@ fn analysis(value : Json) -> Unit raise @base.Fault {
   @base.keys(value, ["entities", "concepts", "conflicts", "summary"])
   for key in ["entities", "concepts", "conflicts"] { ignore(@base.strings(@base.field(value, key))) }
   ignore(@base.text(@base.field(value, "summary")))
+}
+
+// Dream round ledger helpers (续二十八). The record binds the exact knowledge
+// baseline a round was dreamed on, the declared policy and a deterministic
+// metrics snapshot. Compatibility gates (lint regression / evidence loss) are
+// enforced by agent/dream.mbt at decision time; this layer pins the shape and
+// the open→retained|rejected state machine.
+fn dream_metric_names() -> Array[String] {
+  ["pages", "stale_pages", "lint_errors", "lint_warnings",
+   "redundant_pages", "uncovered_sources", "sparse_topics", "missing_vectors"]
+}
+
+fn dream_metric(value : Json, field : String) -> Unit raise @base.Fault {
+  match value {
+    Number(n, ..) if n >= 0.0 && n <= 1000000000.0 && n == n.to_int().to_double() => ()
+    _ => raise @base.Fault("dream_metric_invalid: " + field)
+  }
+}
+
+fn dream_metrics_shape(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, dream_metric_names())
+  for field in dream_metric_names() { dream_metric(@base.field(value, field), field) }
+}
+
+fn dream_delta(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, dream_metric_names())
+  for field in dream_metric_names() {
+    match @base.field(value, field) {
+      Number(n, ..) if n >= -1000000000.0 && n <= 1000000000.0 && n == n.to_int().to_double() => ()
+      _ => raise @base.Fault("dream_delta_invalid: " + field)
+    }
+  }
+}
+
+fn dream_policy(value : Json) -> Unit raise @base.Fault {
+  match value {
+    Object(fields) => {
+      if fields.length() > 8 { @base.fail("dream_policy_invalid") }
+      for (key, v) in fields {
+        if key.is_empty() || key.length() > 64 || key.contains("\n") || key.contains("\r") {
+          @base.fail("dream_policy_key_invalid")
+        }
+        match v {
+          Number(_) => ()
+          True => ()
+          False => ()
+          String(text) => if text.length() > 64 || text.contains("\n") || text.contains("\r") {
+            @base.fail("dream_policy_value_invalid")
+          }
+          _ => raise @base.Fault("dream_policy_value_invalid")
+        }
+      }
+    }
+    _ => raise @base.Fault("dream_policy_invalid")
+  }
+}
+
+// The round's vector space is stored so dream-close recomputes missing_vector
+// metrics against the same space the round was dreamed on.
+fn dream_space_shape(value : Json) -> Unit raise @base.Fault {
+  if value == Json::null() { return }
+  match value {
+    Object(_) => ()
+    _ => raise @base.Fault("dream_space_invalid")
+  }
+  let id = @base.text(@base.field(value, "id"))
+  if id.is_empty() || id.length() > 512 { @base.fail("dream_space_invalid") }
+  match @base.field(value, "dimensions") {
+    Number(n, ..) if n >= 1.0 && n <= 8192.0 && n == n.to_int().to_double() => ()
+    _ => @base.fail("dream_space_invalid")
+  }
 }
 
 pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
@@ -618,6 +690,43 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     extraction_token(string("version"), "version")
     extraction_body(string("text"))
     event_time(string("submitted_at"))
+  } else if entry.path.has_prefix("state/dreams/") {
+    @base.keys(value, ["id", "at", "baseline", "policy", "space", "metrics", "opportunities_hash",
+      "status", "closed_at", "decision", "note", "outcome"])
+    let id = string("id")
+    let baseline = string("baseline")
+    if !valid_hash(id) || !valid_hash(baseline) { @base.fail("dream_record_hash_invalid") }
+    if entry.path != "state/dreams/" + id + ".json" { @base.fail("dream_record_identity_invalid") }
+    if !valid_hash(string("opportunities_hash")) { @base.fail("dream_report_hash_invalid") }
+    event_time(string("at"))
+    dream_policy(@base.field(value, "policy"))
+    dream_space_shape(@base.field(value, "space"))
+    dream_metrics_shape(@base.field(value, "metrics"))
+    let status = string("status")
+    if !["open", "retained", "rejected"].contains(status) { @base.fail("dream_status_invalid") }
+    let closed = @base.field(value, "closed_at")
+    let decision = @base.field(value, "decision")
+    let note = @base.field(value, "note")
+    let outcome = @base.field(value, "outcome")
+    if status == "open" {
+      if closed != Json::null() || decision != Json::null() || outcome != Json::null() || note != Json::null() {
+        @base.fail("dream_open_state_invalid")
+      }
+    } else {
+      event_time(@base.text(closed))
+      if @base.text(decision) != status { @base.fail("dream_decision_status_mismatch") }
+      if outcome is Object(_) {
+        @base.keys(outcome, ["metrics", "delta"])
+        dream_metrics_shape(@base.field(outcome, "metrics"))
+        dream_delta(@base.field(outcome, "delta"))
+      } else {
+        @base.fail("dream_outcome_invalid")
+      }
+      if note != Json::null() {
+        let n = @base.text(note)
+        if n.length() > 1024 || n.contains("\n") || n.contains("\r") { @base.fail("dream_note_invalid") }
+      }
+    }
   } else if entry.path.has_prefix("state/events/") {
     let op = string("op")
     if op.is_empty() { @base.fail("event_operation_required") }
@@ -632,6 +741,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "overview-apply", "ingest", "forget", "memory-submit", "memory-supersede",
       "memory-archive", "memory-restore", "memory-pin", "memory-use",
       "impact-open", "impact-resolve", "extraction-submit",
+      "dream-open", "dream-close",
     ]
     if !supported.contains(op) { @base.fail("event_operation_unsupported: " + op) }
     if op == "source-missing" {
@@ -999,6 +1109,23 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("at"))
       let invalidated = @base.strings(@base.field(value, "invalidated"))
       for page in invalidated { @base.path(page) }
+    } else if op == "dream-open" {
+      @base.keys(value, ["op", "dream", "at"])
+      let dream = string("dream")
+      if !valid_hash(dream) { @base.fail("dream_event_id_invalid") }
+      event_time(string("at"))
+      let expected = "state/events/dream-open-" + dream + "-" + @base.hex_hash(string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "dream-close" {
+      @base.keys(value, ["op", "dream", "decision", "at"])
+      let dream = string("dream")
+      if !valid_hash(dream) { @base.fail("dream_event_id_invalid") }
+      let decision = string("decision")
+      if !["retained", "rejected"].contains(decision) { @base.fail("dream_event_decision_invalid") }
+      event_time(string("at"))
+      let expected = "state/events/dream-close-" + dream + "-" +
+        @base.hex_hash(decision + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     }
   } else if entry.kind == "vector" {
     @base.keys(value, ["page", "sha256", "space", "values"])

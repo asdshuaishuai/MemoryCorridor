@@ -567,3 +567,25 @@ test "extraction submit recovers from a crash at any publish point" {
     "text": "哥窑 窑址", "at": "2026-10-29T09:00:00Z" })
   assert_eq(@base.boolean(@base.field(replay, "replayed")), true)
 }
+
+test "dream round recovers from a crash at any publish point" {
+  // dream-open publishes the round record, its event and the transaction
+  // journal; a kill anywhere must recover to one consistent state, and the
+  // retry must replay instead of forking a second round.
+  for fail_after in [0, 1, 2, 3, 4, 5] {
+    let (store, broken, _files) = crashing(fail_after)
+    ignore(initialize(store, "研究陶瓷"))
+    let baseline = @vault.fingerprint(@vault.load(store))
+    let request : Json = { "op": "dream-open", "baseline": baseline, "at": "2026-11-11T00:00:00Z" }
+    let failed = try { ignore(dream_open(broken, @vault.load(broken), request)); false } catch {
+      _ => true
+    }
+    assert_true(failed)
+    ignore(@vault.recover(store))
+    ignore(dream_open(store, @vault.load(store), request))
+    let replay = dream_open(store, @vault.load(store), request)
+    assert_true(@base.boolean(@base.field(replay, "replayed")))
+    let list = dream_list(store, @vault.load(store))
+    assert_eq(@base.array(@base.field(list, "dreams")).length(), 1)
+  }
+}

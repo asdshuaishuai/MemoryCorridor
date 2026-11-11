@@ -409,6 +409,7 @@ pub fn lint_result(store : @vault.Storage, catalog : String?) -> Json raise @bas
           lint_file_entries(store, value, issues)
           lint_extractions(store, value, issues)
           lint_redundant_pages(store, value, issues)
+          lint_dream_rounds(store, value, issues)
           lint_memory_notes(store, value, issues)
           lint_impact_notes(store, value, issues)
           lint_unregistered_files(store, value, issues)

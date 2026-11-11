@@ -15,7 +15,7 @@ pub fn input_schema(t : Tool) -> Json {
       else { match name {
         "limit" | "budget" | "hops" | "start" | "end" => "integer"
         "cosine_floor" => "number"
-        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" => "object"
+        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" => "object"
         _ => "string"
       } }
     properties[name] = if ty == "array" {
@@ -30,6 +30,7 @@ pub fn input_schema(t : Tool) -> Json {
         ("graph", "hops") => (0, 8)
         ("page-redundancy", "limit") => (1, 1000)
         ("embedding-plan", "limit") => (1, 128)
+        ("dream-plan", "limit") => (1, 500)
         ("memory-prefetch", "limit") => (1, 50)
         ("read-source", "start") => (0, 16777216)
         ("read-source", "end") => (0, 16777216)
@@ -40,8 +41,9 @@ pub fn input_schema(t : Tool) -> Json {
       { "type": ty, "minimum": 0.0, "maximum": 1.0 }
     } else { { "type": ty } }
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
-      "start", "end", "query", "page", "ids", "cosine_floor"].contains(name) &&
-      !(name == "context_token" && t.name != "draft-submit") { required.push(name) }
+      "start", "end", "query", "page", "ids", "cosine_floor", "policy"].contains(name) &&
+      !(name == "context_token" && t.name != "draft-submit") &&
+      !(name == "note" && t.name == "dream-close") { required.push(name) }
   }
   { "type": "object", "properties": Json::object(properties), "required": required.to_json(), "additionalProperties": false }
 }

@@ -743,6 +743,44 @@ MUTATIONS = [
      "redundancy e2e:",
      "redundancy_e2e.py"),
 
+    # 续二十八 dream round ledger: the baseline binding, replay precedence,
+    # the two compatibility gates and the event dictionary each have a dream
+    # e2e assertion that fails when the guard is dropped.
+    ("a dream round must bind the exact baseline fingerprint",
+     "agent/dream.mbt",
+     '  if baseline != @vault.fingerprint(entries) { @base.fail("dream_stale_baseline") }',
+     '  if false { @base.fail("dream_stale_baseline") }',
+     "dream e2e:",
+     "dream_e2e.py"),
+
+    ("an existing dream round must replay before the baseline check",
+     "agent/dream.mbt",
+     '      let old = @base.parse(existing)\n      return { "id": id, "status": @base.text(@base.field(old, "status")), "replayed": true, "path": path }',
+     '      ignore(@base.parse(existing))',
+     "dream e2e:",
+     "dream_e2e.py"),
+
+    ("retained rounds may not regress lint errors",
+     "agent/dream.mbt",
+     '    if current.lint_errors > dream_json_int(base_metrics, "lint_errors") { @base.fail("dream_compat_lint_regression") }',
+     '    if false { @base.fail("dream_compat_lint_regression") }',
+     "dream e2e:",
+     "dream_e2e.py"),
+
+    ("retained rounds may not lose evidence coverage",
+     "agent/dream.mbt",
+     '    if current.uncovered_sources > dream_json_int(base_metrics, "uncovered_sources") {\n      @base.fail("dream_compat_evidence_loss")\n    }',
+     '    if false {\n      @base.fail("dream_compat_evidence_loss")\n    }',
+     "dream e2e:",
+     "dream_e2e.py"),
+
+    ("dream events must be registered in the event dictionary",
+     "core/records.mbt",
+     '      "dream-open", "dream-close",',
+     '      "dream-open",',
+     "dream e2e:",
+     "dream_e2e.py"),
+
     # The literate compilation surface: the catalog block is read as the
     # closed MoonBit literal subset. Each guard below is what keeps that
     # grammar closed; dropping one must make the literate-surface tests fail.

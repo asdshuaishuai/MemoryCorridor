@@ -198,6 +198,7 @@ pub fn dispatch_with_catalog(
   let fingerprint = @vault.fingerprint(entries)
   match op {
     "embedding-plan" => embedding_plan(store, entries, request)
+    "dream-plan" | "dream-open" | "dream-close" | "dream-list" => dream(store, entries, request)
     "import" => import_bundle(store, entries, request)
     "export" => export_vault(store, entries, request)
     "pack" => pack_vault(store, entries, request)
