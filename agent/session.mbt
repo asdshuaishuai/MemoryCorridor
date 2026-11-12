@@ -199,7 +199,7 @@ pub fn dispatch_with_catalog(
   match op {
     "embedding-plan" => embedding_plan(store, entries, request)
     "dream-plan" | "dream-open" | "dream-close" | "dream-list" | "dream-work-open" | "dream-work-claim" | "dream-work-complete" | "dream-work-fail" | "dream-work-list" | "dream-policy" | "dream-due" => dream(store, entries, request)
-    "evo-policy" | "evo-init" | "evo-observe" | "evo-evaluate" | "evo-evolve" | "evo-status" | "evo-rollback" | "evo-checkpoint" | "evo-fossils" | "evo-proactive-due" | "evo-proactive-open" | "evo-proactive-complete" | "evo-proactive-fail" | "evo-proactive-ack" | "evo-proactive-list" => evo(store, entries, request)
+    "evo-policy" | "evo-init" | "evo-observe" | "evo-evaluate" | "evo-evolve" | "evo-status" | "evo-rollback" | "evo-checkpoint" | "evo-fossils" | "evo-proactive-due" | "evo-proactive-open" | "evo-proactive-complete" | "evo-proactive-fail" | "evo-proactive-ack" | "evo-proactive-list" | "evo-expression" => evo(store, entries, request)
     "import" => import_bundle(store, entries, request)
     "export" => export_vault(store, entries, request)
     "pack" => pack_vault(store, entries, request)

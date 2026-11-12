@@ -2528,6 +2528,123 @@ fn evo_rollback_op(
 
 // ---- dispatch -------------------------------------------------------------
 
+// ---- anthropomorphic expression (续三十九) --------------------------------
+// The engine emits structured tokens only; wording/voice/rendering stay in the
+// host. Thresholds are deterministic so an expression frame can be replayed.
+fn evo_emotion_label(valence : Double, arousal : Double) -> String {
+  if valence >= 0.55 && arousal >= 0.55 {
+    "excited"
+  } else if valence >= 0.25 {
+    "content"
+  } else if valence <= -0.55 && arousal >= 0.55 {
+    "distressed"
+  } else if valence <= -0.25 {
+    "low"
+  } else if arousal >= 0.60 {
+    "alert"
+  } else {
+    "calm"
+  }
+}
+
+fn evo_expression_posture(will_initiate : Bool, arousal : Double, impulse : Double,
+  valence : Double) -> String {
+  if will_initiate {
+    "speak"
+  } else if arousal >= 0.60 {
+    "lean_in"
+  } else if impulse >= 0.35 {
+    "think"
+  } else if valence <= -0.35 {
+    "still"
+  } else {
+    "idle"
+  }
+}
+
+fn evo_expression_gesture(posture : String) -> String {
+  if posture == "speak" {
+    "open_palm"
+  } else if posture == "lean_in" {
+    "tilt_head"
+  } else if posture == "think" {
+    "still"
+  } else if posture == "still" {
+    "look_down"
+  } else {
+    "none"
+  }
+}
+
+fn evo_expression_face(label : String) -> String {
+  if label == "excited" {
+    "bright"
+  } else if label == "content" {
+    "soft_smile"
+  } else if label == "distressed" {
+    "tense"
+  } else if label == "low" {
+    "subdued"
+  } else if label == "alert" {
+    "focused"
+  } else {
+    "neutral"
+  }
+}
+
+fn evo_body_level(body : Json) -> Double raise @base.Fault {
+  let mut sum = 0.0
+  for key in ["cpu", "memory", "latency", "budget"] {
+    sum = sum + (match @base.field(body, key) {
+      Number(n, ..) => n
+      _ => 0.0
+    })
+  }
+  evo_clamp(sum / 4.0, 0.0, 1.0)
+}
+
+pub fn evo_expression_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "at"])
+  @vault.verify(store, entries)
+  let at = evo_at_text(request)
+  let state_text = match (store.read)("state/evo/state.json") {
+    None => {
+      @base.fail("evo_not_initialized")
+      ""
+    }
+    Some(value) => value
+  }
+  let state = evo_state_from_json(@base.parse(state_text))
+  let due = evo_proactive_due_state(store, entries, at)
+  let valence = if state.emotion.length() > 0 { state.emotion[0] } else { 0.0 }
+  let arousal = if state.emotion.length() > 1 { state.emotion[1] } else { 0.0 }
+  let dominance = if state.emotion.length() > 2 { state.emotion[2] } else { 0.0 }
+  let energy = evo_clamp(1.0 - evo_body_level(state.body), 0.0, 1.0)
+  let label = evo_emotion_label(valence, arousal)
+  let will_initiate = due.due
+  let posture = evo_expression_posture(will_initiate, arousal, state.impulse, valence)
+  {
+    "posture": posture,
+    "emotion": state.emotion.map(v => v.to_json()).to_json(),
+    "emotion_label": label,
+    "prosody": {
+      "rate": evo_clamp(0.85 + arousal * 0.30, 0.5, 1.5),
+      "pitch": evo_clamp(0.90 + valence * 0.15, 0.5, 1.5),
+      "volume": evo_clamp(0.80 + dominance * 0.15 + energy * 0.05, 0.5, 1.0),
+    },
+    "gesture": evo_expression_gesture(posture),
+    "expression": evo_expression_face(label),
+    "will_initiate": will_initiate.to_json(),
+    "reason": due.reason,
+    "next_in_steps": due.next_in_steps,
+    "impulse": state.impulse,
+    "energy": energy,
+    "pending": due.pending,
+    "expired": due.expired,
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
 // ---- read-only inspection ops (续三十二) ----------------------------------
 fn evo_checkpoint_op(
   store : @vault.Storage, entries : Array[@core.Entry],
@@ -3103,6 +3220,7 @@ pub fn evo(
     "evo-proactive-complete" => evo_proactive_complete_op(store, entries, request)
     "evo-proactive-fail" => evo_proactive_fail_op(store, entries, request)
     "evo-proactive-ack" => evo_proactive_ack_op(store, entries, request)
+    "evo-expression" => evo_expression_op(store, entries, request)
     "evo-proactive-list" => evo_proactive_list_op(store, entries)
     _ => raise @base.Fault("operation_not_implemented: " + op)
   }

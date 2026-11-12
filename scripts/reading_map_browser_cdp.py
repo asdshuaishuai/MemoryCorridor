@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 DEFAULT_URL = 'file:///tmp/corridor-rich-reading/.corridor/map-viewer.html'
 WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
@@ -248,14 +249,17 @@ def main():
          '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     state = {'port': None}
+    stderr_tail = []
 
     def watch_stderr():
         for line in process.stderr:
+            stderr_tail.append(line.rstrip())
             match = re.search(r'DevTools listening on ws://127\.0\.0\.1:(\d+)/', line)
             if match:
                 state['port'] = int(match.group(1))
 
     threading.Thread(target=watch_stderr, daemon=True).start()
+    devtools_file = Path(profile) / 'DevToolsActivePort'
 
     def shutdown():
         if process.poll() is None:
@@ -269,14 +273,28 @@ def main():
 
     session = None
     try:
-        for _ in range(100):
+        # CI Chrome can take well over 10s to come up under load. Prefer the
+        # DevToolsActivePort file (written once the endpoint is ready) over
+        # line-scraping stderr, and wait up to 30s.
+        for _ in range(300):
             if state['port']:
+                break
+            try:
+                lines = devtools_file.read_text().splitlines()
+                if lines and lines[0].strip().isdigit():
+                    state['port'] = int(lines[0].strip())
+                    break
+            except (OSError, ValueError):
+                pass
+            if process.poll() is not None:
                 break
             time.sleep(0.1)
         if not state['port']:
-            fail('chrome did not expose a debugging port')
+            detail = ('; '.join(stderr_tail[-5:]) if stderr_tail
+                      else 'no stderr (chrome exited=%s)' % (process.poll(),))
+            fail('chrome did not expose a debugging port: ' + detail)
         port = state['port']
-        for _ in range(50):
+        for _ in range(100):
             time.sleep(0.1)
             try:
                 version = http_get_json(port, '/json/version')

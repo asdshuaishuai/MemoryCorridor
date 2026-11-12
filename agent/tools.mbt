@@ -90,6 +90,7 @@ pub fn tools() -> Array[Tool] {
     { name: "evo-proactive-fail", description: "驱动记录主动请求失败原因；终态保留供经验审计", fields: ["id", "driver", "reason", "at"] },
     { name: "evo-proactive-ack", description: "宿主在真正投递后确认送达（仅 done；同 at 重放幂等，重复投递拒绝）", fields: ["id", "at"] },
     { name: "evo-proactive-list", description: "只读：主动请求队列与状态/送达计数", fields: [] },
+    { name: "evo-expression", description: "只读：把当前情感/身体状态映射为结构化拟人化表达帧（姿态/情绪标签/韵律/手势/表情/will_initiate/能量），引擎只出 token", fields: ["at"] },
     { name: "memory-conflicts", description: "列出 kind 与适用条件相同但正文不一致的 active 记忆笔记冲突候选；两侧都保留，由 memory-supersede 解决", fields: [] },
     { name: "impact-audit", description: "比较持久化工单冻结的输入与当前 vault，把研究主题/目标建议/综述建议/已发布综述的漂移记录为可恢复的 impact；漂移消失则关闭记录", fields: ["at", "key"] },
     { name: "impact-list", description: "列出 change-impact 记录、冻结与当前输入摘要及 open/resolved 状态", fields: [] },

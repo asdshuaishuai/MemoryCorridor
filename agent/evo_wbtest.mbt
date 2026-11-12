@@ -1087,3 +1087,20 @@ test "evo proactive gate needs no pending, cooldown and a reason" {
   assert_false(evo_proactive_ready(0, false, "valence_high"))
   assert_false(evo_proactive_ready(0, true, ""))
 }
+
+test "evo expression maps affect to labels, posture and face tokens" {
+  assert_eq(evo_emotion_label(0.6, 0.6), "excited")
+  assert_eq(evo_emotion_label(0.3, 0.1), "content")
+  assert_eq(evo_emotion_label(-0.6, 0.7), "distressed")
+  assert_eq(evo_emotion_label(-0.3, 0.1), "low")
+  assert_eq(evo_emotion_label(0.0, 0.7), "alert")
+  assert_eq(evo_emotion_label(0.0, 0.1), "calm")
+  assert_eq(evo_expression_posture(true, 0.0, 0.0, 0.0), "speak")
+  assert_eq(evo_expression_posture(false, 0.7, 0.0, 0.0), "lean_in")
+  assert_eq(evo_expression_posture(false, 0.1, 0.5, 0.0), "think")
+  assert_eq(evo_expression_posture(false, 0.1, 0.0, -0.5), "still")
+  assert_eq(evo_expression_posture(false, 0.1, 0.0, 0.0), "idle")
+  assert_eq(evo_expression_gesture("speak"), "open_palm")
+  assert_eq(evo_expression_face("calm"), "neutral")
+  assert_eq(evo_expression_face("excited"), "bright")
+}

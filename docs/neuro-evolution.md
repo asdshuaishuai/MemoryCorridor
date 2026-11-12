@@ -281,6 +281,23 @@ v1.5 知识—情感桥（续三十八，宿主侧，证据见 `scripts/evo_know
 - 这是「情感为记忆服务」的最小闭环：知识张力 → 情感状态 → 主动判定；表达帧与
   daemon 周期见 [soul-layer.md](soul-layer.md)（续三十九/四十）。
 
+v1.6 拟人化表达（续三十九，证据见 `scripts/evo_expression_e2e.py` 与 `evo_wbtest`）：
+
+- 只读 `evo-expression` 把情感/身体状态映射为结构化表达帧：posture、
+  emotion_label、prosody（rate/pitch/volume）、gesture、expression、will_initiate、
+  energy。`will_initiate` 复用主动式闸门；引擎只出 token，文案与渲染在宿主/LLM。
+- 阈值映射是纯函数并有 wbtest；e2e 固定中性帧、到期说话帧、确定性与只读字节不变。
+- 这是 [soul-layer.md](soul-layer.md) 的「拟人化表达」固定点；daemon 周期在续四十。
+
+v1.7 最小 daemon（续四十，宿主侧）：
+
+- `scripts/evo_daemon.py`：一个进程、一个循环、一张调度表。每 tick 先清理自己过期的
+  claimed 占位，再跑知识—情感桥、主动应答（complete + ack）、表达帧，最后在
+  `dream-due` 到期时跑一轮 RSI driver。
+- 引擎仍无线程/时钟/网络；daemon 是宿主适配层。关闭 evo 后 daemon 以
+  `stopped: evo_disabled` 干净退出；崩溃后靠租约/ack/接管恢复。
+- 这是 [soul-layer.md](soul-layer.md) 的「daemon 周期」固定点；具体间隔与编排由宿主配置。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。
@@ -289,6 +306,8 @@ v2 延后（未实现，不得写成已交付）：
 - 批量 observe/内存快路径（v1 固定一拍一条，身份与重放语义不因批处理改变）。
 - NEAT/拓扑变异、基线进化、语言头、LLM 标注者、多轮对话式主动应答（v1.2 只做
   单次结构化请求的主动发起，不做会话内多轮）。
+- 外部知识结果项：把 `dream-close` delta/commit/检索结果直接纳入 `evo-evaluate` 的
+  适应度（当前桥只把结果作为观察输入；适应度仍以情感轨迹为主）。
 
 ## 十三、明确不做（v1）
 

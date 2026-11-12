@@ -1123,6 +1123,20 @@ MUTATIONS = [
      "evo proactive e2e:",
      "evo_proactive_e2e.py"),
 
+    ("expression must not initiate before the proactive gate",
+     "agent/evo.mbt",
+     '  let will_initiate = due.due',
+     '  let will_initiate = true',
+     "evo expression e2e:",
+     "evo_expression_e2e.py"),
+
+    ("expression must speak when the proactive gate opens",
+     "agent/evo.mbt",
+     '  if will_initiate {\n    "speak"',
+     '  if will_initiate {\n    "idle"',
+     "evo expression e2e:",
+     "evo_expression_e2e.py"),
+
     ("a proactive ack must require a completed reply",
      "agent/evo.mbt",
      '  if status != "done" { @base.fail("evo_proactive_not_deliverable: " + id) }',

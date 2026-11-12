@@ -871,3 +871,9 @@
 
 
 - [x] **2026-11-12 续三十八：知识—情感桥（情感为记忆服务的第一刀）**：MemoryCorridor 定位为记忆/资料综合引擎，情感人格层是放大器而非独立灵魂。新增宿主适配器 `scripts/evo_knowledge_bridge.py`：读 `dream-plan` 机会集，按 kind/severity 映射为 `evo-observe`（缺陷 task+负价，未覆盖来源/缺失向量 novel），读 `dream-list` 的已关闭轮次 `outcome.delta` 回灌为观察并按 `(closed_at,id)` 游标去重；每轮末尾只读 `evo-proactive-due` 给宿主看是否该开口。桥只写 evo 状态，不写知识页；关闭 evo 后 `evo-status` 直接 `evo_disabled`，桥退出。新增 `docs/soul-layer.md` 固化数字灵魂定位与固定点（记忆本体、情感/人格/成长/身体、拟人化表达、daemon 周期、主动性闭环、审计恢复），并明确 SoulFlow 仅参考、不迁移 SoulLock/死亡/五层快照/L1–L5/重型治理。验收：`scripts/evo_knowledge_bridge_e2e.py`（未覆盖来源→观察、步数单调、delta 回灌游标去重、知识页零写、禁用门禁）+ 接入 verify.sh。文档：neuro-evolution v1.5、soulflow 映射注记、acceptance 行。**待 CI 落账**。
+
+
+- [x] **2026-11-12/13 续三十九：拟人化表达帧（evo-expression，数字灵魂固定点）**：用户明确拟人化表达与 daemon 周期是固定点，SoulFlow 仅参考不复刻。新增只读 `evo-expression {at}`：从情感/冲动/身体与主动式闸门映射出结构化表达帧 `{posture, emotion, emotion_label, prosody{rate,pitch,volume}, gesture, expression, will_initiate, reason, next_in_steps, impulse, energy, pending, expired, fingerprint}`；引擎只出 token，不生成文案，不写记录。纯函数 `evo_emotion_label`/`evo_expression_posture`/`gesture`/`face` + `evo_body_level`；`will_initiate` 复用 due（阈值/冷却/未过期占位）。验收：`evo_expression_e2e.py`（中性 idle/calm、到期 speak/open_palm、韵律/能量边界、确定性、只读字节不变、禁用门禁）+ `evo_wbtest` 映射断言 + 2 条 mutation（未到期不得 initiate、到期必须 speak）；三面 121→122。文档：protocol 一 op、neuro-evolution v1.6、soul-layer 状态、acceptance 行。**待 CI 落账**。
+
+
+- [x] **2026-11-12/13 续四十：最小数字灵魂 daemon（daemon 周期固定点）**：用户明确 daemon 周期与拟人化表达是固定点。新增宿主侧 `scripts/evo_daemon.py`：一个进程、一个循环、一张调度表；每 tick 清理自己过期 claimed → 知识—情感桥 → 主动应答（due/open/complete/ack）→ `evo-expression` 表达帧 → `dream-due` 到期时跑一轮 RSI driver；状态落 `.corridor/evo-daemon/state.json`（可重建缓存）。引擎仍零线程/零时钟/零模型；关闭 evo 后 daemon 以 `stopped: evo_disabled` 干净退出；崩溃恢复靠租约/ack/接管。新增 `scripts/evo_daemon_e2e.py`（感知→mock 主动应答+ack→表达帧→retained RSI 轮次→第二轮冷却/轮次结果回灌→关闭停止）。`evo_daemon_e2e.py` 已通过；本地全量 e2e 套件通过，mutation 基线 164 全捕获 + 2 条 expression mutation 手测 CAUGHT。**待 CI 落账**。

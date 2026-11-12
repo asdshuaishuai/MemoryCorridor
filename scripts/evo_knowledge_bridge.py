@@ -36,7 +36,7 @@ DEFAULT_CLI = ROOT / "_build/native/debug/build/cli/cli.exe"
 TENSION = {
     "lint": (0.9, -0.7),
     "stale_page": (0.8, -0.6),
-    "uncovered_source": (0.7, -0.5),
+    "uncovered_source": (0.7, 0.35),  # a chance to learn, not only a defect
     "sparse_topic": (0.5, -0.3),
     "missing_vector": (0.4, -0.2),
 }
