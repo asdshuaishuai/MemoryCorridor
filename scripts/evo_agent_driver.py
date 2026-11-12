@@ -4,9 +4,12 @@
 When the emotion/personality subsystem is enabled, its own affect state decides
 to speak: this host-side driver polls `evo-proactive-due`, opens a request,
 calls an OpenAI-compatible LLM, and writes the reply back with
-`evo-proactive-complete`. The MoonBit engine never calls a model; disabling evo
-(`evo-policy enabled=false`) stops the loop because every evo op returns
-`evo_disabled`.
+`evo-proactive-complete`. With `--ack`, a successful print is followed by
+`evo-proactive-ack` (stdout is the delivery channel; omit it when the reply is
+only logged). On restart it fails its own expired claims so a crash cannot
+leave the single in-flight slot blocked forever. The MoonBit engine never calls
+a model; disabling evo (`evo-policy enabled=false`) stops the loop because every
+evo op returns `evo_disabled`.
 
 Environment for real calls:
   EVO_LLM_ENDPOINT  base URL, e.g. https://api.example.com/v1
@@ -87,6 +90,22 @@ def llm(prompt: str):
     return payload["choices"][0]["message"]["content"].strip(), model
 
 
+def sweep_stale(cli: str, vault: str, driver: str) -> None:
+    """Fail this driver's own expired claims so a crash cannot wedge the slot."""
+    rows = call(cli, vault, "evo-proactive-list")["proactive"]
+    stamp = now()
+    for row in rows:
+        lease = row.get("lease_until")
+        if (row["status"] == "claimed" and row["driver"] == driver and
+                lease and lease <= stamp):
+            try:
+                call(cli, vault, "evo-proactive-fail", id=row["id"], driver=driver,
+                     reason="driver lease expired before delivery", at=stamp)
+                print(f"driver: released stale claim {row['id'][:12]}", file=sys.stderr)
+            except RuntimeError as error:
+                print(f"driver: stale claim release skipped: {error}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Proactive agent driver for the evo subsystem")
     parser.add_argument("--vault", required=True)
@@ -96,10 +115,13 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--mock", action="store_true",
                         help="skip the network and return a deterministic mock reply (tests)")
+    parser.add_argument("--ack", action="store_true",
+                        help="acknowledge delivery after printing (stdout is the delivery channel)")
     args = parser.parse_args()
     while True:
         at = now()
         try:
+            sweep_stale(args.cli, args.vault, args.driver)
             due = call(args.cli, args.vault, "evo-proactive-due", at=at)
         except RuntimeError as error:
             print(f"driver: skip ({error})", file=sys.stderr)
@@ -132,6 +154,8 @@ def main() -> int:
         call(args.cli, args.vault, "evo-proactive-complete", id=opened["id"],
              driver=args.driver, at=now(), result={"text": text, "model": model})
         print(text)
+        if args.ack:
+            call(args.cli, args.vault, "evo-proactive-ack", id=opened["id"], at=now())
         if args.once:
             return 0
         time.sleep(args.interval)

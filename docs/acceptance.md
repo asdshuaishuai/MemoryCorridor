@@ -31,6 +31,8 @@
 | RSI 到期契约（续三十一） | `dream_e2e.py` 第 9 段：policy 默认/写入/重放/越界拒绝；`dream-due` 在无开轮时为 due、开一轮后 `open_rounds_capacity` 拒绝、关闭后（冷却 0）恢复 due；`dream_wbtest` 覆盖严格 ISO 解析与参数边界 | pass |
 | 自进化饱和度与只读审计（续三十二） | `evo_wbtest` 覆盖 `evo_no_improve_step` 的耐心/重置/首代语义；`evo_e2e.py` 覆盖 `evo-checkpoint`/`evo-fossils` 字段与只读字节不变，三面计数 115 | pass |
 | RSI 宿主自治驱动（续三十四） | `rsi_driver_e2e.py`（policy 到期→plan→open→work-open→claim→mock LLM judgments→complete→retained；outcome.drivers 记录驱动；无到期机会时零写 no-op；知识漂移时降级 rejected）+ `dream_e2e.py` 回归（`dream-list` 跳过 policy.json）+ mutation「dream-list 必须跳过节奏记录」| pass(scope note：真实模式只提交结构化 judgments；页面暂存与 commit 仍由宿主负责，驱动不写知识页) |
+| 知识—情感桥（续三十八） | `evo_knowledge_bridge_e2e.py`（`dream-plan` 未覆盖来源→`evo-observe` task/novel、步数单调、轮次 delta 回灌且游标去重、知识页零写、关闭 evo 后桥在 `evo_disabled` 停止）+ 桥脚本静态检查 | pass(scope note：桥是宿主适配层，只写 evo 状态；不做页面提案或 commit) |
+| 主动驱动投递闭环（续三十七） | `evo_proactive_e2e.py`（`--ack` 后 delivered 计数与 `delivered_at`；重启驱动清理自己过期 claimed 并记录失败原因）+ 3 条引擎侧 ack/接管 mutation | pass(scope note：stdout 作为参考投递通道；真实宿主应在实际发送后自行 ack) |
 | 主动式租约过期接管（续三十六） | `evo_proactive_e2e.py`（过期 claimed 不计 pending、`due.expired=1`、open 同 id 接管 `reclaimed:true`、旧驱动 not_owner、新驱动完成）+ mutation「过期不得阻塞」「过期必须接管」 | pass |
 | 主动式应答送达确认（续三十五） | `evo_proactive_e2e.py`（claimed/failed 不可 ack、早于 closed_at 拒绝、同 at 重放、二次投递拒绝、`delivered/undelivered` 计数）+ mutation「ack 仅 done」「不得二次投递」「不得早于回复」 | pass(scope note：ack 表示宿主已投递；引擎不判断用户是否真正看到) |
 | 情感人格主动式应答（续三十三） | `evo_proactive_e2e.py`（情感/冲动状态自主触发 due、1 条背压、8 步冷却、driver+lease 归属与过期、complete/fail 重放、关闭开关后五 op 全部 `evo_disabled`、宿主驱动 `--mock --once` 真实发起并回写、list 只读）+ `evo_wbtest`（主动式判定/身份/结果边界）+ mutation 冷却门与 pending 背压 | pass(scope note：引擎只写结构化请求，LLM 调用在宿主驱动；v1.2 为单次主动发起，不做会话内多轮) |

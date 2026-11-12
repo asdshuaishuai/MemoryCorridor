@@ -121,15 +121,32 @@ def main():
         # 4. the host driver itself: with evo enabled it initiates the reply.
         call("evo-policy", enabled=True, at=at(4100))
         observe_until_due()
-        before = call("evo-proactive-list")["counts"]["done"]
+        before = call("evo-proactive-list")["counts"]
         run = subprocess.run([sys.executable, str(DRIVER), "--vault", str(vault),
-                              "--cli", str(EXE), "--once", "--mock", "--driver", "driver-c"],
+                              "--cli", str(EXE), "--once", "--mock", "--ack",
+                              "--driver", "driver-c"],
                              capture_output=True, text=True, timeout=120)
         assert run.returncode == 0, (run.stdout, run.stderr)
         assert "mock 主动应答" in run.stdout, run.stdout
         after = call("evo-proactive-list")
-        assert after["counts"]["done"] == before + 1, after["counts"]
-        assert any(row["driver"] == "driver-c" for row in after["proactive"]), after
+        assert after["counts"]["done"] == before["done"] + 1, after["counts"]
+        assert after["counts"]["delivered"] == before["delivered"] + 1, after["counts"]
+        assert any(row["driver"] == "driver-c" and row["delivered_at"]
+                   for row in after["proactive"]), after
+
+        # 4b. a restarted driver releases its own expired claim instead of
+        #     wedging the single in-flight slot.
+        observe_until_due()
+        stale = call("evo-proactive-open", driver="driver-stale",
+                     lease_until="1970-01-01T00:00:01Z", at="1970-01-01T00:00:00Z")
+        run = subprocess.run([sys.executable, str(DRIVER), "--vault", str(vault),
+                              "--cli", str(EXE), "--once", "--mock", "--driver", "driver-stale"],
+                             capture_output=True, text=True, timeout=120)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+        stale_row = next(row for row in call("evo-proactive-list")["proactive"]
+                         if row["id"] == stale["id"])
+        assert stale_row["status"] == "failed", stale_row
+        assert "driver lease expired" in stale_row["error"], stale_row
 
         # 5. an expired claim is taken over, not duplicated or left blocking.
         observe_until_due()

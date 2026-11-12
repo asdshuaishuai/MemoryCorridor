@@ -7,8 +7,12 @@
 >
 > 续三十二已补：饱和度检测（连续 3 代无提升 → 变异 ×1.5 + 额外移民 + `evo-saturation`
 > 事件）与只读 `evo-checkpoint` / `evo-fossils`。
+> 续三十三至三十七已补：主动式 outbox（due/open/complete/fail/list）、送达确认
+> `evo-proactive-ack`、过期租约接管、宿主主动驱动。拟人化表达帧与最小 daemon 周期
+> 是**固定点**，设计见 [soul-layer.md](soul-layer.md)，尚未实现前不写成已交付。
 > 未实现（明确延后，见 §十二/§十三）：独立 `checkpoint.json` 与 `evaluation/<gen>.json`、
-> 场景轮换调度器、批量 observe、NEAT/拓扑变异、语言头、LLM 标注者、SoulFlow 冲动 outbox。
+> 场景轮换调度器、批量 observe、NEAT/拓扑变异、语言头、LLM 标注者。
+> 定位：本子系统是**记忆/资料系统的放大器与主动性调度层**，不是 SoulFlow 灵魂本体的复刻。
 >
 > 目标：让「情感冲动、人格、成长、身体」这些**慢变量**由本地计算与持续进化驱动，
 > 不把它们的控制权交给 LLM。LLM 最多是可选的标注者/评审者，**不是必需环节**。
@@ -254,6 +258,9 @@ v1.3 已覆盖（续三十五，证据见 `scripts/evo_proactive_e2e.py`）：
 - `evo-proactive-list` 增加 `delivered_at` 与 `delivered/undelivered` 计数；驱动在
   `complete` 时不自动 ack——是否已真正交给用户由宿主决定（引擎不猜测投递）。
 - 旧记录缺少 `delivered_at` 时按未送达读取，升级不破坏既有 outbox。
+- 参考驱动 `scripts/evo_agent_driver.py` 支持 `--ack`（stdout 即投递通道时，打印成功后
+  确认送达）与启动时清理自己过期的 claimed 占位（失败原因
+  `driver lease expired before delivery`），崩溃重启不会永久占住唯一在飞槽位。
 
 v1.4 已覆盖（续三十六，证据见 `scripts/evo_proactive_e2e.py`）：
 
@@ -262,6 +269,17 @@ v1.4 已覆盖（续三十六，证据见 `scripts/evo_proactive_e2e.py`）：
   旧持有者在新租约下 complete 按 `evo_proactive_not_owner` 拒绝。
 - 没有过期占位时行为不变（`reclaimed:false`）；未过期占位仍按
   `evo_proactive_backpressure` 拒绝，避免两个驱动同时回答同一请求。
+
+v1.5 知识—情感桥（续三十八，宿主侧，证据见 `scripts/evo_knowledge_bridge_e2e.py`）：
+
+- `scripts/evo_knowledge_bridge.py` 把 `dream-plan` 的确定性机会集映射为
+  `evo-observe`：缺陷类（lint/stale/sparse）用 `task` + 负价，未覆盖来源/缺失向量用
+  `novel`；salience/valence 按 kind 与 severity 固定映射。
+- 已关闭轮次的 `outcome.delta` 回灌为观察，按 `(closed_at,id)` 游标去重；重复 tick
+  不会重复计同一轮结果。
+- 桥只写 `state/evo`，不写知识页；关闭 evo 后桥在 `evo_disabled` 停止。
+- 这是「情感为记忆服务」的最小闭环：知识张力 → 情感状态 → 主动判定；表达帧与
+  daemon 周期见 [soul-layer.md](soul-layer.md)（续三十九/四十）。
 
 v2 延后（未实现，不得写成已交付）：
 
