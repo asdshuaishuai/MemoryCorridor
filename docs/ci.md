@@ -24,3 +24,10 @@ failed at native link with unresolved Winsock symbols) and the
 `windows-filesystem` clang-cl syntax check were removed together with those
 branches; git history keeps both, and the first green Linux run remains
 41050582660 (2026-10-30).
+
+Flake note: `reading_fixture --with-map` launches headless Chrome and speaks CDP
+over a hand-rolled WebSocket. Earlier CI runs failed with
+`chrome did not expose a debugging port` when Chrome took longer than the old
+10-second window. The launcher now waits up to 30 seconds and prefers the
+`DevToolsActivePort` file written by Chrome, with stderr retained in the error
+for diagnosis. This was an environment startup race, not a product failure.
