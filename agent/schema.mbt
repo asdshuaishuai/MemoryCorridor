@@ -14,7 +14,7 @@ pub fn input_schema(t : Tool) -> Json {
       else if name == "archived" || name == "pinned" || name == "enabled" { "boolean" }
       else { match name {
         "limit" | "budget" | "hops" | "start" | "end" | "step" | "seed" => "integer"
-        "cosine_floor" | "salience" | "valence" => "number"
+        "cosine_floor" | "salience" | "valence" | "outcome" => "number"
         "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" | "params" | "body" => "object"
         _ => "string"
       } }
@@ -48,14 +48,14 @@ pub fn input_schema(t : Tool) -> Json {
       }
     } else if ty == "number" {
       let (low, high) = match (t.name, name) {
-        ("evo-observe", "valence") => (-1.0, 1.0)
+        ("evo-observe", "valence") | ("evo-observe", "outcome") => (-1.0, 1.0)
         _ => (0.0, 1.0)
       }
       { "type": ty, "minimum": low, "maximum": high }
     } else { { "type": ty } }
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
       "start", "end", "query", "page", "ids", "cosine_floor", "policy",
-      "params", "enabled", "subject", "due_after_seconds", "min_opportunities",
+      "params", "enabled", "subject", "outcome", "due_after_seconds", "min_opportunities",
       "max_open_rounds"].contains(name) &&
       !(name == "context_token" && t.name != "draft-submit") &&
       !(name == "at" && t.name == "evo-policy") &&

@@ -31,6 +31,7 @@
 | RSI 到期契约（续三十一） | `dream_e2e.py` 第 9 段：policy 默认/写入/重放/越界拒绝；`dream-due` 在无开轮时为 due、开一轮后 `open_rounds_capacity` 拒绝、关闭后（冷却 0）恢复 due；`dream_wbtest` 覆盖严格 ISO 解析与参数边界 | pass |
 | 自进化饱和度与只读审计（续三十二） | `evo_wbtest` 覆盖 `evo_no_improve_step` 的耐心/重置/首代语义；`evo_e2e.py` 覆盖 `evo-checkpoint`/`evo-fossils` 字段与只读字节不变，三面计数 115 | pass |
 | RSI 宿主自治驱动（续三十四） | `rsi_driver_e2e.py`（policy 到期→plan→open→work-open→claim→mock LLM judgments→complete→retained；outcome.drivers 记录驱动；无到期机会时零写 no-op；知识漂移时降级 rejected）+ `dream_e2e.py` 回归（`dream-list` 跳过 policy.json）+ mutation「dream-list 必须跳过节奏记录」| pass(scope note：真实模式只提交结构化 judgments；页面暂存与 commit 仍由宿主负责，驱动不写知识页) |
+| 知识结果适应度（续四十一） | `evo_outcome_e2e.py`（outcome 进窗口、每成员 `knowledge`/`has_outcome`、成员间有差异、重放、越界拒绝）+ `evo_wbtest` 对齐函数 + 3 条 mutation（成员输出/失配惩罚/窗口携带） | pass(scope note：仅窗口带非零 outcome 时启用 0.10 权重；旧窗口零影响) |
 | 最小数字灵魂 daemon（续四十） | `evo_daemon_e2e.py`（感知→mock 主动应答+ack→表达帧→retained RSI 轮次→第二轮冷却/轮次结果回灌→关闭 `evo_disabled` 停止）+ 桥/表达 e2e | pass(scope note：参考宿主 daemon；真实 LLM、投递通道与渲染由宿主配置) |
 | 拟人化表达帧（续三十九） | `evo_expression_e2e.py`（中性 idle/calm、到期 speak/open_palm、韵律与能量边界、确定性重放、只读字节不变、关闭后 `evo_disabled`）+ `evo_wbtest` 标签/姿态/手势/表情映射 + 2 条 mutation | pass(scope note：引擎只出 token；文案和渲染由宿主/LLM 负责) |
 | 知识—情感桥（续三十八） | `evo_knowledge_bridge_e2e.py`（`dream-plan` 未覆盖来源→`evo-observe` task/novel、步数单调、轮次 delta 回灌且游标去重、知识页零写、关闭 evo 后桥在 `evo_disabled` 停止）+ 桥脚本静态检查 | pass(scope note：桥是宿主适配层，只写 evo 状态；不做页面提案或 commit) |

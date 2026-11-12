@@ -179,7 +179,7 @@ fn evo_test_window(count : Int, valence : Double) -> Array[Json] {
     input[4] = 0.5
     input[5] = valence
     window.push(evo_window_entry_json(i + 1, "2026-11-12T00:00:00Z", input,
-      [0.0, 0.0, 0.0], 0.0, false, None))
+      [0.0, 0.0, 0.0], 0.0, false, None, 0.0))
   }
   window
 }
@@ -448,12 +448,12 @@ test "evo fitness punishes flat, always-positive and held-out-gap behaviour" {
   let good : EvoSegment = {
     stability: 1.0, responsiveness: 1.0, growth: 1.0, novelty: 1.0,
     energy_cost: 0.0, impulse_blowups: 0.0, positive_penalty: 0.0,
-    flatness_penalty: 0.0,
+    flatness_penalty: 0.0, knowledge: 0.0, has_outcome: false,
   }
   let bad : EvoSegment = {
     stability: 0.0, responsiveness: 0.0, growth: 0.0, novelty: 0.0,
     energy_cost: 1.0, impulse_blowups: 1.0, positive_penalty: 1.0,
-    flatness_penalty: 1.0,
+    flatness_penalty: 1.0, knowledge: 0.0, has_outcome: false,
   }
   let (fitness, train, _holdout, penalty) = evo_fitness_from_segments(good, bad, params)
   assert_true(penalty > 0.0)
@@ -1103,4 +1103,16 @@ test "evo expression maps affect to labels, posture and face tokens" {
   assert_eq(evo_expression_gesture("speak"), "open_palm")
   assert_eq(evo_expression_face("calm"), "neutral")
   assert_eq(evo_expression_face("excited"), "bright")
+}
+
+test "evo knowledge alignment rewards matching valence and ignores absent outcomes" {
+  let (perfect, has_perfect) = evo_knowledge_alignment([0.5, -0.5], [0.5, -0.5])
+  assert_true(has_perfect)
+  assert_eq(perfect, 1.0)
+  let (mixed, has_mixed) = evo_knowledge_alignment([0.5, 0.5], [-0.5, 0.5])
+  assert_true(has_mixed)
+  assert_true(mixed < 1.0)
+  let (none, has_none) = evo_knowledge_alignment([0.5], [0.0])
+  assert_false(has_none)
+  assert_eq(none, 0.0)
 }

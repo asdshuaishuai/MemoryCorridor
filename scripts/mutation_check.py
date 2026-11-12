@@ -1123,6 +1123,27 @@ MUTATIONS = [
      "evo proactive e2e:",
      "evo_proactive_e2e.py"),
 
+    ("knowledge alignment must score the member's emotion, not the host input",
+     "agent/evo.mbt",
+     '  let member_valence = trajectory.emotion.map(row => row[0])',
+     '  let member_valence = trajectory.valence',
+     "evo outcome e2e:",
+     "evo_outcome_e2e.py"),
+
+    ("knowledge alignment must penalize a mismatched valence",
+     "agent/evo.mbt",
+     '      let diff = (valence[index] - observed).abs()',
+     '      let diff = 0.0',
+     "evo knowledge alignment rewards matching valence and ignores absent outcomes",
+     "evo_outcome_e2e.py"),
+
+    ("a knowledge outcome must ride on the window entry",
+     "agent/evo.mbt",
+     '    "subject": match subject { None => Json::null(); Some(value) => value.to_json() },\n    "outcome": outcome,',
+     '    "subject": match subject { None => Json::null(); Some(value) => value.to_json() },\n    "outcome": 0.0,',
+     "evo outcome e2e:",
+     "evo_outcome_e2e.py"),
+
     ("expression must not initiate before the proactive gate",
      "agent/evo.mbt",
      '  let will_initiate = due.due',

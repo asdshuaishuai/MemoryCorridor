@@ -16,6 +16,8 @@ const EVO_OUTPUT : Int = 10
 // 续三十二: saturation re-arms exploration when the population stops improving.
 const EVO_SATURATION_PATIENCE : Int = 3
 const EVO_SATURATION_BOOST : Double = 1.5
+// Optional knowledge-outcome term: only active when a window carries outcomes.
+const EVO_W_KNOWLEDGE : Double = 0.10
 
 priv struct EvoParams {
   population : Int
@@ -179,6 +181,7 @@ priv struct EvoTrajectory {
   trust_delta : Array[Double]
   has_subject : Array[Bool]
   valence : Array[Double]
+  outcome : Array[Double]
   nonfinite : Bool
 }
 
@@ -191,6 +194,8 @@ priv struct EvoSegment {
   impulse_blowups : Double
   positive_penalty : Double
   flatness_penalty : Double
+  knowledge : Double
+  has_outcome : Bool
 }
 
 priv struct EvoBatch {
@@ -482,10 +487,25 @@ fn evo_body_value(body : Json, field : String) -> Double raise @base.Fault {
   }
 }
 
-fn evo_payload(kind : String, salience : Double, valence : Double, body : Json, subject : String?) -> Json {
-  {
+fn evo_payload(kind : String, salience : Double, valence : Double, body : Json,
+  subject : String?, outcome : Double) -> Json {
+  let base : Json = {
     "kind": kind, "salience": salience, "valence": valence, "body": body,
     "subject": match subject { None => Json::null(); Some(value) => value.to_json() },
+  }
+  // Keep the historical payload byte-identical when no outcome is supplied, so
+  // replaying a pre-upgrade step still matches its stored payload hash.
+  if outcome == 0.0 {
+    base
+  } else {
+    match base {
+      Object(fields) => {
+        let copy = fields.copy()
+        copy["outcome"] = outcome.to_json()
+        Json::object(copy)
+      }
+      _ => base
+    }
   }
 }
 
@@ -752,13 +772,14 @@ fn evo_load_genome(
 
 fn evo_window_entry_json(
   step : Int, at : String, input : Array[Double], emotion : Array[Double],
-  impulse : Double, fired : Bool, subject : String?,
+  impulse : Double, fired : Bool, subject : String?, outcome : Double,
 ) -> Json {
   {
     "step": step, "at": at, "input": input.map(value => value.to_json()).to_json(),
     "emotion": emotion.map(value => value.to_json()).to_json(),
     "impulse": impulse, "fired": fired.to_json(),
     "subject": match subject { None => Json::null(); Some(value) => value.to_json() },
+    "outcome": outcome,
   }
 }
 
@@ -871,6 +892,24 @@ fn evo_relations_sort(relations : Array[EvoRelation]) -> Array[EvoRelation] {
 
 // ---- fitness --------------------------------------------------------------
 
+// Knowledge alignment: only steps with a non-zero host outcome count. A member
+// whose emotional valence tracks the outcome (same sign, close magnitude) is
+// rewarded; members are otherwise free to differ in their affect trajectory.
+fn evo_knowledge_alignment(valence : Array[Double], outcome : Array[Double]) -> (Double, Bool) {
+  let count = Int::min(valence.length(), outcome.length())
+  let mut scored = 0
+  let mut total = 0.0
+  for index = 0; index < count; index = index + 1 {
+    let observed = outcome[index]
+    if observed != 0.0 {
+      scored = scored + 1
+      let diff = (valence[index] - observed).abs()
+      total = total + (1.0 - evo_clamp(diff / 2.0, 0.0, 1.0))
+    }
+  }
+  if scored == 0 { (0.0, false) } else { (total / scored.to_double(), true) }
+}
+
 fn evo_segment(
   trajectory : EvoTrajectory, mean : Array[Array[Double]], start : Int, end : Int,
 ) -> EvoSegment {
@@ -916,10 +955,15 @@ fn evo_segment(
   }
   let deviation = (variance / steps).sqrt()
   let flatness = evo_clamp(1.0 - deviation / 0.15, 0.0, 1.0)
+  // The member's *output* emotion, not the host input valence: the same window
+  // must be able to rank members by how their affect tracks the outcome.
+  let member_valence = trajectory.emotion.map(row => row[0])
+  let (knowledge, has_outcome) = evo_knowledge_alignment(member_valence, trajectory.outcome)
   {
     stability, responsiveness, growth: growth_score, novelty: novelty_score,
     energy_cost: energy, impulse_blowups: blowup_score,
     positive_penalty, flatness_penalty: flatness,
+    knowledge, has_outcome,
   }
 }
 
@@ -963,7 +1007,8 @@ fn evo_segment_score(segment : EvoSegment, params : EvoParams) -> Double {
     params.c_energy * segment.energy_cost -
     params.c_impulse * segment.impulse_blowups -
     params.c_positive * segment.positive_penalty -
-    params.c_flatness * segment.flatness_penalty
+    params.c_flatness * segment.flatness_penalty +
+    (if segment.has_outcome { EVO_W_KNOWLEDGE * segment.knowledge } else { 0.0 })
 }
 
 // Fitness is trained on the temporal prefix and charged for a large gap to the
@@ -987,6 +1032,7 @@ fn evo_segment_breakdown(segment : EvoSegment, train : Double, holdout : Double)
     "energy_cost": segment.energy_cost, "impulse_blowups": segment.impulse_blowups,
     "positive_penalty": segment.positive_penalty,
     "flatness_penalty": segment.flatness_penalty,
+    "knowledge": segment.knowledge, "has_outcome": segment.has_outcome.to_json(),
     "holdout_penalty": 0.0, "train": train, "holdout": holdout,
   }
 }
@@ -1014,6 +1060,7 @@ fn evo_trajectory(
   let trust_delta : Array[Double] = []
   let has_subject : Array[Bool] = []
   let valence : Array[Double] = []
+  let outcome : Array[Double] = []
   let trust : Map[String, Double] = Map([])
   let mut vitals = [0.0, 0.0, 0.0]
   let mut impulse = 0.0
@@ -1024,6 +1071,10 @@ fn evo_trajectory(
     let input = evo_window_input(entry)
     let subject = evo_window_subject(entry)
     valence.push(input[5])
+    outcome.push(match evo_optional(entry, "outcome") {
+      Some(Number(n, ..)) => n
+      _ => 0.0
+    })
     let result = evo_apply(weights, vitals, impulse, last, input, step)
     if result.nonfinite { nonfinite = true }
     vitals = result.emotion
@@ -1049,7 +1100,7 @@ fn evo_trajectory(
       }
     }
   }
-  { emotion, fired, blowups, trust_delta, has_subject, valence, nonfinite }
+  { emotion, fired, blowups, trust_delta, has_subject, valence, outcome, nonfinite }
 }
 
 fn evo_mean_trajectory(trajectories : Array[EvoTrajectory], count : Int) -> Array[Array[Double]] {
@@ -1359,7 +1410,7 @@ fn evo_observe_op(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   evo_request_keys(request, ["step", "kind", "salience", "valence", "body",
-    "subject", "at"])
+    "subject", "outcome", "at"])
   let policy = evo_load_policy(store)
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
@@ -1369,6 +1420,11 @@ fn evo_observe_op(
   if !["social", "task", "body", "novel"].contains(kind) { @base.fail("evo_kind_invalid") }
   let salience = evo_request_number(request, "salience", 0.0, 1.0)
   let valence = evo_request_number(request, "valence", -1.0, 1.0)
+  let outcome = match evo_optional(request, "outcome") {
+    None => 0.0
+    Some(Number(n, ..)) if n >= -1.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => n
+    Some(_) => raise @base.Fault("evo_outcome_invalid")
+  }
   let body = evo_body_arg(request)
   let subject = evo_subject_arg(request)
   let state_text = match (store.read)("state/evo/state.json") {
@@ -1382,7 +1438,7 @@ fn evo_observe_op(
   let state = evo_state_from_json(@base.parse(state_text))
   if state.active_genome is None { @base.fail("evo_genome_not_found") }
   if state.window.length() > policy.params.window { @base.fail("evo_state_corrupt") }
-  let identity = evo_payload(kind, salience, valence, body, subject)
+  let identity = evo_payload(kind, salience, valence, body, subject, outcome)
   let payload_sha256 = @base.hex_hash(@base.canonical(identity))
   if step == state.steps {
     let same = match state.last_observe {
@@ -1398,6 +1454,7 @@ fn evo_observe_op(
       "fired": @base.field(result, "fired"),
       "action": @base.field(result, "action"),
       "threshold": @base.field(result, "threshold"),
+      "outcome": match evo_optional(result, "outcome") { Some(Number(n, ..)) => n.to_json(); _ => 0.0.to_json() },
       "window": { "have": state.window.length(), "capacity": policy.params.window },
       "replayed": true, "fingerprint": @vault.fingerprint(entries),
     }
@@ -1446,7 +1503,7 @@ fn evo_observe_op(
   let mut window : Array[Json] = []
   for entry in state.window { window.push(entry) }
   window.push(evo_window_entry_json(step, at, input, result.emotion,
-    result.impulse, result.fired, subject))
+    result.impulse, result.fired, subject, outcome))
   while window.length() > policy.params.window {
     window = window[1:].to_owned()
   }
@@ -1456,7 +1513,7 @@ fn evo_observe_op(
       "emotion": result.emotion.map(value => value.to_json()).to_json(),
       "impulse": result.impulse, "fired": result.fired.to_json(),
       "action": result.action.map(value => value.to_json()).to_json(),
-      "threshold": result.threshold,
+      "threshold": result.threshold, "outcome": outcome,
     },
   }
   let updated_state : EvoState = {
@@ -1475,7 +1532,7 @@ fn evo_observe_op(
     "emotion": result.emotion.map(value => value.to_json()).to_json(),
     "impulse": result.impulse, "fired": result.fired.to_json(),
     "action": result.action.map(value => value.to_json()).to_json(),
-    "threshold": result.threshold,
+    "threshold": result.threshold, "outcome": outcome,
     "window": { "have": window.length(), "capacity": policy.params.window },
     "replayed": false, "fingerprint": @vault.fingerprint(batch.next.val),
   }
@@ -1812,7 +1869,7 @@ fn evo_emit_fossil(
       let segment : EvoSegment = {
         stability: 0.0, responsiveness: 0.0, growth: 0.0, novelty: 0.0,
         energy_cost: 0.0, impulse_blowups: 0.0, positive_penalty: 0.0,
-        flatness_penalty: 0.0,
+        flatness_penalty: 0.0, knowledge: 0.0, has_outcome: false,
       }
       evo_segment_breakdown(segment, 0.0, 0.0)
     }

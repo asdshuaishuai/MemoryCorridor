@@ -603,7 +603,7 @@ fn evo_optional_int(value : Json, field : String, low : Int, high : Int, code : 
 
 fn evo_window_entry_shape(value : Json) -> Int raise @base.Fault {
   let code = "evo_state_window_invalid"
-  @base.keys(value, ["step", "at", "input", "emotion", "impulse", "fired", "subject"])
+  @base.keys(value, ["step", "at", "input", "emotion", "impulse", "fired", "subject", "outcome"])
   let step = evo_record_int(value, "step", 1, 2147483647, code)
   ignore(evo_record_time(value, "at", code))
   let input = evo_record_array(value, "input", code)
@@ -617,6 +617,12 @@ fn evo_window_entry_shape(value : Json) -> Int raise @base.Fault {
   evo_record_vector3(value, "emotion", -1.0, 1.0, code)
   ignore(evo_record_number(value, "impulse", 0.0, 1.0, code))
   ignore(evo_record_bool(value, "fired", code))
+  // Optional knowledge outcome: old windows predate it and read as 0.
+  match optional_record_field(value, "outcome") {
+    None => ()
+    Some(Number(n, ..)) if n >= -1.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => ()
+    Some(_) => raise @base.Fault(code + ":outcome")
+  }
   match @base.field(value, "subject") {
     Null => ()
     String(subject) => evo_record_subject(subject, code)
@@ -653,12 +659,17 @@ fn evo_last_observe_shape(value : Json) -> Unit raise @base.Fault {
   ignore(evo_record_int(value, "step", 1, 2147483647, code))
   ignore(evo_record_hash(value, "payload_sha256", code))
   let result = @base.field(value, "result")
-  @base.keys(result, ["emotion", "impulse", "fired", "action", "threshold"])
+  @base.keys(result, ["emotion", "impulse", "fired", "action", "threshold", "outcome"])
   evo_record_vector3(result, "emotion", -1.0, 1.0, code)
   ignore(evo_record_number(result, "impulse", 0.0, 1.0, code))
   ignore(evo_record_bool(result, "fired", code))
   evo_record_vector3(result, "action", -1.0, 1.0, code)
   ignore(evo_record_number(result, "threshold", 0.30, 0.95, code))
+  match optional_record_field(result, "outcome") {
+    None => ()
+    Some(Number(n, ..)) if n >= -1.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => ()
+    Some(_) => raise @base.Fault(code + ":result_outcome")
+  }
 }
 
 // Proactive request (续三十三): the affect system's structured "I want to act"
@@ -810,13 +821,24 @@ fn evo_state_record(value : Json) -> Unit raise @base.Fault {
 fn evo_breakdown_shape(value : Json, code : String) -> Unit raise @base.Fault {
   @base.keys(value, ["stability", "responsiveness", "growth", "novelty",
     "energy_cost", "impulse_blowups", "positive_penalty", "flatness_penalty",
-    "holdout_penalty", "train", "holdout"])
+    "holdout_penalty", "train", "holdout", "knowledge", "has_outcome"])
   for field in ["stability", "responsiveness", "growth", "novelty", "energy_cost",
     "impulse_blowups", "positive_penalty", "flatness_penalty", "holdout_penalty"] {
     ignore(evo_record_number(value, field, 0.0, 1.0, code))
   }
   ignore(evo_record_number(value, "train", -1.0, 1.0, code))
   ignore(evo_record_number(value, "holdout", -1.0, 1.0, code))
+  // Optional for breakdowns written before the knowledge-outcome term existed.
+  match optional_record_field(value, "knowledge") {
+    None => ()
+    Some(Number(n, ..)) if n >= 0.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => ()
+    Some(_) => raise @base.Fault(code + ":knowledge")
+  }
+  match optional_record_field(value, "has_outcome") {
+    None => ()
+    Some(True) | Some(False) => ()
+    Some(_) => raise @base.Fault(code + ":has_outcome")
+  }
 }
 
 fn evo_member_shape(value : Json) -> Unit raise @base.Fault {

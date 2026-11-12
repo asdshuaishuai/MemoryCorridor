@@ -298,6 +298,15 @@ v1.7 最小 daemon（续四十，宿主侧）：
   `stopped: evo_disabled` 干净退出；崩溃后靠租约/ack/接管恢复。
 - 这是 [soul-layer.md](soul-layer.md) 的「daemon 周期」固定点；具体间隔与编排由宿主配置。
 
+v1.8 知识结果适应度（续四十一，证据见 `scripts/evo_outcome_e2e.py` 与 `evo_wbtest`）：
+
+- `evo-observe` 可选 `outcome`（-1..1）随窗口条目保存；它不进入控制器输入，只用于评估。
+- `evo-evaluate` 的 `breakdown` 增加 `knowledge`/`has_outcome`：成员输出的情感价态与宿主
+  知识结果的接近度（同号且幅度接近得分高），仅在有非零 outcome 的步上计分；窗口带
+  outcome 时适应度加 `0.10 × knowledge`，旧窗口无 outcome 时该项为 0。
+- 这把「情感为记忆服务」从输入层推进到选择压力层：不同成员在同一知识窗口下按
+  情感-结果对齐度被区分，而不是所有成员共享同一个外部分数。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。
@@ -306,8 +315,8 @@ v2 延后（未实现，不得写成已交付）：
 - 批量 observe/内存快路径（v1 固定一拍一条，身份与重放语义不因批处理改变）。
 - NEAT/拓扑变异、基线进化、语言头、LLM 标注者、多轮对话式主动应答（v1.2 只做
   单次结构化请求的主动发起，不做会话内多轮）。
-- 外部知识结果项：把 `dream-close` delta/commit/检索结果直接纳入 `evo-evaluate` 的
-  适应度（当前桥只把结果作为观察输入；适应度仍以情感轨迹为主）。
+- 外部知识结果的更多来源（commit/检索命中）；当前只把轮次 delta 作为 outcome 传入，
+  权重固定 0.10、未做成可调策略参数。
 
 ## 十三、明确不做（v1）
 

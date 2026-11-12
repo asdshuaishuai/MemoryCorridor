@@ -77,7 +77,7 @@ pub fn tools() -> Array[Tool] {
     { name: "dream-due", description: "只读到期判定：按策略、开轮数、待处理工单与机会数返回 {due,reasons,next_due_in_seconds}；宿主 tick 决定是否开轮", fields: ["at"] },
     { name: "evo-policy", description: "读取或设置进化开关与 23 项封闭参数；唯一在禁用态仍可执行的进化操作，参数仅在状态初始化前可写，存在人工闸待办时自动写被暂停", fields: ["enabled", "params", "at"] },
     { name: "evo-init", description: "按当前策略种子化初代种群（Xavier 均匀、精确 binary32 权重）并建立情感/冲动状态；同参重放幂等", fields: ["seed", "at"] },
-    { name: "evo-observe", description: "快环一步：本地小网络把感知/身体/关系输入转为有界情感与冲动；同一步同载荷重放，窗口满后环形丢弃最旧", fields: ["step", "kind", "salience", "valence", "body", "subject", "at"] },
+    { name: "evo-observe", description: "快环一步：本地小网络把感知/身体/关系输入转为有界情感与冲动；同一步同载荷重放，窗口满后环形丢弃最旧", fields: ["step", "kind", "salience", "valence", "outcome", "body", "subject", "at"] },
     { name: "evo-evaluate", description: "对固定窗口离线回放全部存活基因组：稳定性/响应/成长/新颖度减能量、冷却违规、正向与平坦罚分，并用时间后缀留出窗口扣除过拟合", fields: ["at"] },
     { name: "evo-evolve", description: "前进一代：精英保留、锦标赛/交叉/排名自适应变异/移民，灭绝谱系入化石；连续回归超过耐心则回滚到最佳检查点并保留失败记录", fields: ["at"] },
     { name: "evo-status", description: "只读进化状态：代数、种群、检查点、最近评估、历史、窗口、化石与回归/回滚计数，并核对跨记录不变量", fields: [] },

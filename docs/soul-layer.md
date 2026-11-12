@@ -92,7 +92,9 @@
   v1.2 主动 outbox、v1.3 送达确认、v1.4 过期接管；RSI 宿主驱动。
 - 续三十八（进行中）：知识—情感桥，把 `dream-plan` 张力与轮次结果回灌为 evo 观察。
 - 续三十九（已交付）：`evo-expression` 结构化拟人化表达帧（posture/emotion_label/prosody/gesture/expression/will_initiate/energy），引擎只出 token。
-- 续四十（已实现，e2e 通过，CI 落账中）：`scripts/evo_daemon.py` 最小 daemon
-  （主动→感知→表达→一轮 RSI；含租约清理、投递确认与关闭开关）。
+- 续四十（已交付）：`scripts/evo_daemon.py` 最小 daemon（主动→感知→表达→一轮 RSI；
+  含租约清理、投递确认与关闭开关）。
+- 续四十一（实现完成，e2e/手测通过）：`evo-observe` 的 `outcome` 进入评估，成员按
+  情感-知识结果对齐度获得选择压力。
 
 本页只描述已交付与明确计划；未实现项不得写成已交付。

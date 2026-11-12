@@ -124,7 +124,8 @@ def outcome_feeling(row):
     gain = (delta.get("pages", 0) + delta.get("lint_errors", 0) * -1
             + delta.get("uncovered_sources", 0) * -1 + delta.get("stale_pages", 0) * -1)
     score = max(-5.0, min(5.0, float(gain)))
-    return "task", min(1.0, abs(score) / 3.0), max(-1.0, min(1.0, score / 3.0))
+    normalized = max(-1.0, min(1.0, score / 3.0))
+    return "task", min(1.0, abs(score) / 3.0), normalized, normalized
 
 
 def run_pass(cli: str, vault: str, limit: int, outcomes: bool) -> dict:
@@ -135,14 +136,14 @@ def run_pass(cli: str, vault: str, limit: int, outcomes: bool) -> dict:
     at = now()
     observed = []
 
-    def observe(evo_kind, salience, valence, subject, source):
+    def observe(evo_kind, salience, valence, subject, source, outcome=0.0):
         nonlocal step
         step += 1
         call(cli, vault, "evo-observe", step=step, kind=evo_kind,
              salience=salience, valence=valence, subject=short_subject(subject[0], subject[1]),
-             body=body(), at=at)
+             outcome=outcome, body=body(), at=at)
         observed.append({"step": step, "kind": evo_kind, "salience": salience,
-                         "valence": valence, "source": source})
+                         "valence": valence, "outcome": outcome, "source": source})
 
     for opportunity in knowledge_tensions(cli, vault, limit):
         evo_kind, salience, valence = classify(opportunity)
@@ -155,10 +156,10 @@ def run_pass(cli: str, vault: str, limit: int, outcomes: bool) -> dict:
         cursor = load_cursor(vault)
         fresh = closed_rounds(cli, vault, cursor, limit)
         for row in fresh:
-            evo_kind, salience, valence = outcome_feeling(row)
+            evo_kind, salience, valence, outcome = outcome_feeling(row)
             observe(evo_kind, salience, valence, ("dream", row["id"]),
                     {"round": row["id"], "decision": row.get("decision"),
-                     "delta": (row.get("outcome") or {}).get("delta")})
+                     "delta": (row.get("outcome") or {}).get("delta")}, outcome)
             outcomes_seen.append(row["id"])
         if fresh:
             save_cursor(vault, {"last_closed_at": fresh[-1]["closed_at"],

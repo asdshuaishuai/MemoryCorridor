@@ -877,3 +877,6 @@
 
 
 - [x] **2026-11-12/13 续四十：最小数字灵魂 daemon（daemon 周期固定点）**：用户明确 daemon 周期与拟人化表达是固定点。新增宿主侧 `scripts/evo_daemon.py`：一个进程、一个循环、一张调度表；每 tick 清理自己过期 claimed → 知识—情感桥 → 主动应答（due/open/complete/ack）→ `evo-expression` 表达帧 → `dream-due` 到期时跑一轮 RSI driver；状态落 `.corridor/evo-daemon/state.json`（可重建缓存）。引擎仍零线程/零时钟/零模型；关闭 evo 后 daemon 以 `stopped: evo_disabled` 干净退出；崩溃恢复靠租约/ack/接管。新增 `scripts/evo_daemon_e2e.py`（感知→mock 主动应答+ack→表达帧→retained RSI 轮次→第二轮冷却/轮次结果回灌→关闭停止）。`evo_daemon_e2e.py` 已通过；本地全量 e2e 套件通过，mutation 基线 164 全捕获 + 2 条 expression mutation 手测 CAUGHT。**CI 落账**：run 43272062341（63649d3）conclusion=success（2026-11-12）；完整门禁 166 mutation 全部捕获（164 CAUGHT + 2 COMPILE，0 SURVIVED）。 CI 日志确认 evo daemon e2e 通过。
+
+
+- [x] **2026-11-12/13 续四十一：知识结果适应度（情感为记忆服务的第二刀）**：把知识结果从「观察输入」推进到「选择压力」。`evo-observe` 新增可选 `outcome`（-1..1），随窗口条目保存但不进入 16 维控制器输入；`evo-evaluate` 用成员**输出情感价态**与 outcome 的接近度计算 `knowledge`（同号且幅度接近得分高），仅在非零 outcome 的步上计分，窗口带 outcome 时适应度加 `0.10 × knowledge`；`breakdown` 回显 `knowledge`/`has_outcome`。旧窗口/旧记录缺失 outcome 时读 0，行为不变；replay payload 对 outcome=0 保持历史字节形状。桥把 closed-round delta 归一化后作为 outcome 传入。验收：`evo_outcome_e2e.py`（outcome 进窗口、每成员 breakdown、成员间差异、重放、越界拒绝）+ `evo_wbtest` 对齐函数 + 3 条 mutation（成员输出/失配惩罚/窗口携带）全部手测 CAUGHT；接进 verify.sh。文档：protocol observe/evaluate、neuro-evolution v1.8、soul-layer、acceptance 行。**待 CI 落账**。
