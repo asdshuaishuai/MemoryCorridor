@@ -183,6 +183,11 @@ def main():
                        max_open_rounds=1, at="2026-11-12T00:00:00Z")
         assert written["changed"] is True and written["policy"]["max_open_rounds"] == 1, written
         assert call("dream-policy")["policy"]["due_after_seconds"] == 0
+        # Regression (续三十四): policy.json is a cadence record, not a round;
+        # the ledger must skip it instead of demanding a `status` field.
+        listed = call("dream-list")
+        assert all(row["id"] != "state/dreams/policy.json" for row in listed["dreams"]), listed
+        assert listed["counts"]["open"] == 0, listed
         assert call("dream-policy", due_after_seconds=0, min_opportunities=0,
                     max_open_rounds=1, at="2026-11-12T00:00:01Z")["replayed"] is True
         call("dream-policy", max_open_rounds=9, at="2026-11-12T00:00:02Z",

@@ -422,7 +422,10 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
 
 pub fn dream_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/dreams/"))
+  // `policy.json` is a cadence record, not a round; listing must skip it or
+  // the ledger reader would demand a `status` field it does not have.
+  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/dreams/") &&
+    e.path != "state/dreams/policy.json")
   rows.sort_by((a, b) => @base.compare(a.id, b.id))
   let dreams : Array[Json] = []
   let mut open = 0

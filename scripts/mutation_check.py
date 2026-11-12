@@ -746,6 +746,13 @@ MUTATIONS = [
     # 续二十八 dream round ledger: the baseline binding, replay precedence,
     # the two compatibility gates and the event dictionary each have a dream
     # e2e assertion that fails when the guard is dropped.
+    ("dream-list must skip the cadence policy record",
+     "agent/dream.mbt",
+     '  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/dreams/") &&\n    e.path != "state/dreams/policy.json")',
+     '  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/dreams/"))',
+     "dream e2e:",
+     "dream_e2e.py"),
+
     ("a dream round must bind the exact baseline fingerprint",
      "agent/dream.mbt",
      '  if baseline != @vault.fingerprint(entries) { @base.fail("dream_stale_baseline") }',

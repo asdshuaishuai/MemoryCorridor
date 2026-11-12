@@ -67,6 +67,28 @@ dream-work-list                              # 队列视图（含背压计数/�
 `YYYY-MM-DDTHH:MM:SSZ`；非规范时间按无冷却处理并在文档标注。引擎仍无线程/时钟，
 调度器在宿主侧。
 
+## 三·六、宿主自治驱动（续三十四已交付）
+
+`scripts/rsi_agent_driver.py` 把上述契约串成可运行的一圈，引擎仍零模型调用：
+
+1. 有 open 轮次则处理它；否则 `dream-due`，只在到期时 `dream-plan` →
+   `dream-open`（baseline 取 plan 的精确指纹）。
+2. `dream-work-open` 从机会集生成工单，`dream-work-claim` 以 driver+lease 认领；
+   真实模式把任务视图交给 OpenAI 兼容端点，模型只返回
+   `{"judgments": {...}}` 标量判断；`--mock` 用确定性判断替代网络。
+3. `dream-work-complete` 回写结构化 judgments；失败则 `dream-work-fail` 记录原因。
+4. 无 pending/claimed 后 `dream-close`：全成功判 `retained`，有失败判 `rejected`；
+   若轮次知识基线在开启后漂移（`dream_stale_baseline`）或保留门禁失败
+   （`dream_compat_*`），驱动降级为 `rejected` 并把原因写入 note，不假装成功。
+
+边界：驱动只写 `state/dreams` 与 `state/dream-work` 的记录，**绝不写知识页**；页面
+提案仍由宿主暂存并经既有 commit 流应用。驱动是宿主适配层，不进入 MoonBit 核心，
+也不改变「引擎不调用模型」的分层。
+
+另修复一处续三十一遗留：`dream-list` 曾把 `state/dreams/policy.json` 当轮次读取，
+导致写入节奏策略后列举报 `missing_field: status`；现按 `dream-due` 同样的规则跳过，
+`dream_e2e` 增加回归断言。
+
 ## 四、验收草案（RSI 侧）
 
 - `dream_work_wbtest`：机会 key 去重、背压上限、租约接管、未清 judgments 门禁。
