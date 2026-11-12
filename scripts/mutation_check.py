@@ -1087,6 +1087,27 @@ MUTATIONS = [
      "evo disabled gate answers every op before touching state",
      "evo_e2e.py"),
 
+    # 续三十一/三十二 cadence + saturation: the due capacity guard and the
+    # saturation state machine each have a focused test/e2e that fails on drop.
+    ("due must respect the open-round capacity",
+     "agent/dream.mbt",
+     '  let open_ok = open_rounds < max_open',
+     '  let open_ok = true',
+     "dream e2e:",
+     "dream_e2e.py"),
+
+    ("saturation must fire only after the documented patience",
+     "agent/evo.mbt",
+     '  let saturated = next >= EVO_SATURATION_PATIENCE',
+     '  let saturated = next >= 1',
+     "evo saturation re-arms after a patience of non-improving generations"),
+
+    ("saturation must reset the streak when it fires",
+     "agent/evo.mbt",
+     '  if saturated { (0, true) } else { (next, false) }',
+     '  if saturated { (next, true) } else { (next, false) }',
+     "evo saturation re-arms after a patience of non-improving generations"),
+
     ("a non-evo module must not read evolution state",
      "agent/inbox.mbt",
      "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  @vault.verify(store, entries)",

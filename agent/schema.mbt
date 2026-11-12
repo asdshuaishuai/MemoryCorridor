@@ -35,6 +35,9 @@ pub fn input_schema(t : Tool) -> Json {
         ("embedding-plan", "limit") => (1, 128)
         ("dream-plan", "limit") => (1, 500)
         ("dream-work-open", "limit") => (1, 50)
+        ("dream-policy", "due_after_seconds") => (0, 2592000)
+        ("dream-policy", "min_opportunities") => (0, 500)
+        ("dream-policy", "max_open_rounds") => (1, 8)
         ("memory-prefetch", "limit") => (1, 50)
         ("read-source", "start") => (0, 16777216)
         ("read-source", "end") => (0, 16777216)
@@ -52,7 +55,8 @@ pub fn input_schema(t : Tool) -> Json {
     } else { { "type": ty } }
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
       "start", "end", "query", "page", "ids", "cosine_floor", "policy",
-      "params", "enabled", "subject"].contains(name) &&
+      "params", "enabled", "subject", "due_after_seconds", "min_opportunities",
+      "max_open_rounds"].contains(name) &&
       !(name == "context_token" && t.name != "draft-submit") &&
       !(name == "at" && t.name == "evo-policy") &&
       !(name == "note" && t.name == "dream-close") { required.push(name) }

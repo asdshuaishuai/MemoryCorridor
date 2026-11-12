@@ -726,7 +726,8 @@ test "evo regression detection needs the checkpoint gap and patience" {
         "best": 0.0, "mean": 0.0, "worst": 0.0, "delta": 0.0,
         "regressed": false, "rolled_back": false,
       }],
-      "regression_streak": 0, "extinct_total": 0, "fossil_total": 0,
+      "regression_streak": 0, "no_improve_streak": 0, "saturations_total": 0,
+      "extinct_total": 0, "fossil_total": 0,
       "regressions_total": 0, "rollbacks_total": 0,
       "last_eval": Json::null(), "last_evolve": Json::null(),
       "last_rollback": Json::null(), "updated_at": "2026-11-12T00:00:00Z",
@@ -838,7 +839,8 @@ test "evo population exhaustion is terminal" {
     generation: 0,
     init: { "seed": 1, "at": "2026-11-12T00:00:00Z", "policy_hash": "0".repeat(64) },
     members: flagged, checkpoint: Json::null(), history: [],
-    regression_streak: 0, extinct_total: 0, fossil_total: 0,
+    regression_streak: 0, no_improve_streak: 0, saturations_total: 0,
+    extinct_total: 0, fossil_total: 0,
     regressions_total: 0, rollbacks_total: 0, last_eval: Json::null(),
     last_evolve: Json::null(), last_rollback: Json::null(),
   }
@@ -1051,4 +1053,22 @@ test "evo observe recovers from a crash at any publish point" {
   assert_eq(@base.array(@base.field(state, "window")).length(), 1)
   let replay = dispatch(store, request)
   assert_eq(@base.boolean(@base.field(replay, "replayed")), true)
+}
+test "evo saturation re-arms after a patience of non-improving generations" {
+  match evo_no_improve_step(0.2, 5, 0) {
+    (streak, saturated) => { assert_eq(streak, 0); assert_false(saturated) }
+  }
+  match evo_no_improve_step(0.0, 5, 0) {
+    (streak, saturated) => { assert_eq(streak, 1); assert_false(saturated) }
+  }
+  match evo_no_improve_step(-0.3, 5, 1) {
+    (streak, saturated) => { assert_eq(streak, 2); assert_false(saturated) }
+  }
+  match evo_no_improve_step(-0.3, 5, 2) {
+    (streak, saturated) => { assert_eq(streak, 0); assert_true(saturated) }
+  }
+  // The first generation has no previous best to improve on; it never saturates.
+  match evo_no_improve_step(0.0, 0, 2) {
+    (streak, saturated) => { assert_eq(streak, 0); assert_false(saturated) }
+  }
 }

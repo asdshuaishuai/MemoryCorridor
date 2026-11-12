@@ -74,3 +74,38 @@ test "dream tools are advertised with the closed schema surface" {
   assert_true(close_required.contains("decision"))
   assert_true(!close_required.contains("note"))
 }
+test "dream epoch parses canonical timestamps and rejects noise" {
+  match dream_epoch("1970-01-01T00:00:00Z") {
+    Some(value) => assert_eq(value, 0)
+    None => @base.fail("epoch must parse 1970-01-01T00:00:00Z")
+  }
+  match dream_epoch("2026-11-12T00:00:00Z") {
+    Some(value) => assert_true(value > 1793000000)
+    None => @base.fail("epoch must parse a modern timestamp")
+  }
+  let bads : Array[String] = ["2026-11-12T00:00:00", "not-a-time", "2026-13-01T00:00:00Z",
+    "2026-11-12T24:00:00Z", "2026-11-12 00:00:00Z"]
+  for bad in bads { assert_true(dream_epoch(bad) == None) }
+}
+
+test "dream policy fields stay inside their documented bounds" {
+  let current : Json = Json::number(5.0)
+  let empty : Map[String, Json] = Map([])
+  match dream_opt_bounded(empty.to_json(), "due_after_seconds", current, 0, 10) {
+    Number(n, ..) => assert_true(n == 5.0)
+    _ => @base.fail("default must pass through")
+  }
+  match dream_opt_bounded({ "due_after_seconds": 0 }.to_json(),
+    "due_after_seconds", current, 0, 10) {
+    Number(n, ..) => assert_true(n == 0.0)
+    _ => @base.fail("explicit value must pass through")
+  }
+  let bads : Array[Json] = [Json::number(11.0), Json::number(-1.0), Json::number(1.5)]
+  for bad in bads {
+    assert_true(try {
+      ignore(dream_opt_bounded({ "due_after_seconds": bad }.to_json(),
+        "due_after_seconds", current, 0, 10))
+      false
+    } catch { _ => true })
+  }
+}

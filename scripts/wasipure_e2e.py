@@ -265,6 +265,7 @@ def main():
         dream = s.call("dream-plan")
         assert dream["metrics"]["pages"] >= 1 and dream["report_hash"], dream
         assert s.call("dream-work-list")["counts"]["pending"] == 0
+        assert "due" in s.call("dream-due", at="2026-11-12T00:00:00Z")
         s.call("commit", order=second, at="2026-10-31", pages=[
             {"id": "concepts/共享", "path": "wiki/concepts/共享.md", "staged": f"staging/{second}/0.md"}])
         assert len(s.call("list-pages")) == 4
@@ -406,7 +407,7 @@ def main():
         assert mcp_lines[0]["result"]["protocolVersion"] == "2024-11-05"
         assert mcp_lines[1]["error"]["data"]["error_code"] == "initialization_required"
         # 通知静默：第三行必须是 id=3 的 tools/list 回复
-        assert mcp_lines[2]["id"] == 3 and len(mcp_lines[2]["result"]["tools"]) == 111
+        assert mcp_lines[2]["id"] == 3 and len(mcp_lines[2]["result"]["tools"]) == 115
         init_reply = mcp_lines[3]
         assert init_reply["result"]["isError"] is True
         fault = init_reply["result"]["structuredContent"]["result"]["error"]

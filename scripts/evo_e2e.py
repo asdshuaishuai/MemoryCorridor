@@ -589,11 +589,28 @@ def main():
         disabled_status = call("status")
         assert strip_fingerprint(disabled_status) == strip_fingerprint(enabled_status)
 
+        # 续三十二: read-only inspection ops and the saturation surface.
+        call("evo-policy", enabled=True, at="2026-11-12T01:15:00Z")
+        checkpoint = call("evo-checkpoint")
+        assert checkpoint["checkpoint"] is not None, checkpoint
+        assert checkpoint["history"], checkpoint
+        assert checkpoint["saturations"] >= 0 and checkpoint["no_improve_streak"] >= 0
+        fossils = call("evo-fossils")
+        assert fossils["count"] >= 1, fossils
+        for row in fossils["fossils"]:
+            assert {"id", "genome", "reason", "died_generation", "fitness",
+                    "weights_sha256", "at"} <= set(row), row
+        before = (vault / "index.mbt.md").read_bytes()
+        call("evo-checkpoint")
+        call("evo-fossils")
+        assert (vault / "index.mbt.md").read_bytes() == before
+
         tools = call("list-tools")
-        assert len(tools) == 111, len(tools)
+        assert len(tools) == 115, len(tools)
         names = {tool["name"] for tool in tools}
         for name in ["evo-policy", "evo-init", "evo-observe", "evo-evaluate",
-                     "evo-evolve", "evo-status", "evo-rollback"]:
+                     "evo-evolve", "evo-status", "evo-rollback",
+                     "evo-checkpoint", "evo-fossils", "dream-policy", "dream-due"]:
             assert name in names, name
 
     print("evo e2e: default-off gate, policy bootstrap, fast-loop replay, "

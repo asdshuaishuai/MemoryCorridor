@@ -59,6 +59,14 @@ dream-work-list                              # 队列视图（含背压计数/�
 6. **簿记噪声不入箱**：`cache_missing`/`cache_invalid`/`dream_round_stale` 等引擎内部
    告警保留在 metrics，但不会变成改进任务（写任务会再次触发它们，形成自指噪声）。
 
+## 三·五、到期契约（续三十一已交付）
+
+宿主不再猜「何时该开轮」：`dream-policy` 持久化 `due_after_seconds` /
+`min_opportunities` / `max_open_rounds`，`dream-due {at}` 汇总开轮数、待处理工单、
+机会数与最近关闭时间，返回 `{due,reasons,next_due_in_seconds}`。冷却算术只接受严格
+`YYYY-MM-DDTHH:MM:SSZ`；非规范时间按无冷却处理并在文档标注。引擎仍无线程/时钟，
+调度器在宿主侧。
+
 ## 四、验收草案（RSI 侧）
 
 - `dream_work_wbtest`：机会 key 去重、背压上限、租约接管、未清 judgments 门禁。

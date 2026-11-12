@@ -13,6 +13,9 @@
 const EVO_INPUT : Int = 16
 const EVO_HIDDEN : Int = 12
 const EVO_OUTPUT : Int = 10
+// 续三十二: saturation re-arms exploration when the population stops improving.
+const EVO_SATURATION_PATIENCE : Int = 3
+const EVO_SATURATION_BOOST : Double = 1.5
 
 priv struct EvoParams {
   population : Int
@@ -88,6 +91,8 @@ priv struct EvoPopulation {
   checkpoint : Json
   history : Array[Json]
   regression_streak : Int
+  no_improve_streak : Int
+  saturations_total : Int
   extinct_total : Int
   fossil_total : Int
   regressions_total : Int
@@ -624,6 +629,8 @@ fn evo_population_from_json(record : Json) -> EvoPopulation raise @base.Fault {
     checkpoint: @base.field(record, "checkpoint"),
     history: @base.array(@base.field(record, "history")),
     regression_streak: evo_json_int(record, "regression_streak", code),
+    no_improve_streak: evo_json_int(record, "no_improve_streak", code),
+    saturations_total: evo_json_int(record, "saturations_total", code),
     extinct_total: evo_json_int(record, "extinct_total", code),
     fossil_total: evo_json_int(record, "fossil_total", code),
     regressions_total: evo_json_int(record, "regressions_total", code),
@@ -641,6 +648,8 @@ fn evo_population_json(population : EvoPopulation, updated_at : String) -> Json 
     "checkpoint": population.checkpoint,
     "history": population.history.to_json(),
     "regression_streak": population.regression_streak,
+    "no_improve_streak": population.no_improve_streak,
+    "saturations_total": population.saturations_total,
     "extinct_total": population.extinct_total,
     "fossil_total": population.fossil_total,
     "regressions_total": population.regressions_total,
@@ -1313,7 +1322,7 @@ fn evo_init_op(
     "init": { "seed": seed, "at": at, "policy_hash": policy_hash },
     "members": members.map(evo_member_json).to_json(),
     "checkpoint": Json::null(), "history": empty_history.to_json(),
-    "regression_streak": 0,
+    "regression_streak": 0, "no_improve_streak": 0, "saturations_total": 0,
     "extinct_total": 0, "fossil_total": 0, "regressions_total": 0,
     "rollbacks_total": 0, "last_eval": Json::null(),
     "last_evolve": Json::null(), "last_rollback": Json::null(),
@@ -1906,6 +1915,8 @@ fn evo_rebuild_from_checkpoint(
     fossil_total: evo_fossil_count(entries) + fossil_ids.length(),
     rollbacks_total: population.rollbacks_total + 1,
     regression_streak: if reason == "regression" { 0 } else { streak },
+    no_improve_streak: 0,
+    saturations_total: population.saturations_total,
     last_eval: Json::null(),
     last_rollback,
   }
@@ -1951,6 +1962,14 @@ fn evo_plan_elites(
     }
   }
   (chosen, protect_count, elite_count)
+}
+
+// Pure saturation step: a patience of non-improving generations re-arms
+// exploration (streak resets to 0 when it fires). Generation 0 never saturates.
+fn evo_no_improve_step(delta : Double, generation : Int, streak : Int) -> (Int, Bool) {
+  let next = if delta <= 0.0 && generation > 0 { streak + 1 } else { 0 }
+  let saturated = next >= EVO_SATURATION_PATIENCE
+  if saturated { (0, true) } else { (next, false) }
 }
 
 fn evo_evolve_op(
@@ -2005,6 +2024,8 @@ fn evo_evolve_op(
   let window_changed = !population.history.is_empty() &&
     @base.text(@base.field(population.history[population.history.length() - 1],
       "window_sha256")) != last.window_sha256
+  let (no_improve_streak, saturated) = evo_no_improve_step(
+    delta, population.generation, population.no_improve_streak)
   let batch = evo_batch(entries)
   let rng_seed = evo_rng_seed_text(evo_json_int(population.init, "seed",
     "evo_population_record_invalid"), population.generation)
@@ -2058,7 +2079,8 @@ fn evo_evolve_op(
       remaining, "not_selected", population.generation, state.window_sha256, at)
     for id in lethal_ids { fossils.push(id) }
     for id in normal_ids { fossils.push(id) }
-    let immigrant_count = Int::min(policy.params.immigrants,
+    let immigrant_count = Int::min(
+      policy.params.immigrants + (if saturated { 1 } else { 0 }),
       Int::max(0, alive.length() - elites.length() - 1))
     let offspring_count = Int::max(0, alive.length() - elites.length() - immigrant_count)
     let parent_pool = if ranked.length() > protect_count {
@@ -2090,7 +2112,8 @@ fn evo_evolve_op(
         let worse = Int::max(left_rank, right_rank)
         worse.to_double() / (alive.length() - 1).to_double()
       }
-      let amplitude = evo_amplitude(policy.params, rank_ratio)
+      let amplitude = evo_amplitude(policy.params, rank_ratio) *
+        (if saturated { EVO_SATURATION_BOOST } else { 1.0 })
       let weights = evo_child_weights(rng, left_genome.weights, right_weights,
         crossover, policy.params.mutation_rate, amplitude)
       let parents : Array[String] = if crossover {
@@ -2126,6 +2149,8 @@ fn evo_evolve_op(
       fossil_total: evo_fossil_count(entries) + fossils.length(),
       regressions_total: population.regressions_total + (if regressed { 1 } else { 0 }),
       regression_streak: streak,
+      no_improve_streak,
+      saturations_total: population.saturations_total + (if saturated { 1 } else { 0 }),
       last_evolve: Json::null(),
     }
     elite = elites.length()
@@ -2151,6 +2176,15 @@ fn evo_evolve_op(
     "regressed": regressed.to_json(), "rolled_back": rolled_back.to_json(),
     "fossils": fossils.length(), "extinct": extinct,
   })
+  if saturated {
+    let saturation_path = "state/events/evo-saturation-" + @base.hex_hash(
+      population.generation.to_string() + "\n" + EVO_SATURATION_PATIENCE.to_string() +
+        "\n" + at) + ".json"
+    evo_emit_event(batch, saturation_path, {
+      "op": "evo-saturation", "at": at, "generation": population.generation,
+      "streak": EVO_SATURATION_PATIENCE, "best": best,
+    })
+  }
   if regressed {
     let regression_path = "state/events/evo-regression-" + @base.hex_hash(
       population.generation.to_string() + "\n" + state.window_sha256 + "\n" + at) + ".json"
@@ -2194,6 +2228,8 @@ fn evo_evolve_op(
     "regression_streak": updated.regression_streak,
     "rolled_back": rolled_back.to_json(), "elite": elite, "protected": protected_count,
     "offspring": offspring, "immigrants": immigrants, "extinct": extinct,
+    "saturated": saturated.to_json(),
+    "no_improve_streak": updated.no_improve_streak,
     "fossils": fossils.to_json(), "rng_seed": rng_seed, "replayed": false,
     "fingerprint": @vault.fingerprint(batch.next.val),
   }
@@ -2492,6 +2528,62 @@ fn evo_rollback_op(
 
 // ---- dispatch -------------------------------------------------------------
 
+// ---- read-only inspection ops (续三十二) ----------------------------------
+fn evo_checkpoint_op(
+  store : @vault.Storage, entries : Array[@core.Entry],
+) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let text = match (store.read)("state/evo/population.json") {
+    None => {
+      @base.fail("evo_not_initialized")
+      ""
+    }
+    Some(value) => value
+  }
+  let population = evo_population_from_json(@base.parse(text))
+  {
+    "generation": population.generation,
+    "checkpoint": population.checkpoint,
+    "history": population.history.to_json(),
+    "regressions": population.regressions_total,
+    "rollbacks": population.rollbacks_total,
+    "saturations": population.saturations_total,
+    "no_improve_streak": population.no_improve_streak,
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
+fn evo_fossils_op(
+  store : @vault.Storage, entries : Array[@core.Entry],
+) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/evo/fossils/"))
+  let keyed : Array[(String, @core.Entry)] = rows.map(entry => {
+    let row = @base.parse(@vault.required(store, entry.path))
+    (@base.text(@base.field(row, "id")), entry)
+  })
+  keyed.sort_by((a, b) => @base.compare(a.0, b.0))
+  let fossils : Array[Json] = []
+  for pair in keyed {
+    let row = @base.parse(@vault.required(store, pair.1.path))
+    fossils.push({
+      "id": @base.text(@base.field(row, "id")),
+      "genome": @base.text(@base.field(row, "genome")),
+      "reason": @base.text(@base.field(row, "reason")),
+      "died_generation": @base.field(row, "died_generation"),
+      "fitness": @base.field(row, "fitness"),
+      "weights_sha256": @base.text(@base.field(row, "weights_sha256")),
+      "at": @base.text(@base.field(row, "at")),
+    })
+  }
+  {
+    "fossils": fossils.to_json(),
+    "count": fossils.length(),
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
 pub fn evo(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
@@ -2506,6 +2598,8 @@ pub fn evo(
     "evo-evolve" => evo_evolve_op(store, entries, request)
     "evo-status" => evo_status_op(store, entries, request)
     "evo-rollback" => evo_rollback_op(store, entries, request)
+    "evo-checkpoint" => evo_checkpoint_op(store, entries)
+    "evo-fossils" => evo_fossils_op(store, entries)
     _ => raise @base.Fault("operation_not_implemented: " + op)
   }
 }

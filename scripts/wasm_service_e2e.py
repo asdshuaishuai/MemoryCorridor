@@ -208,7 +208,7 @@ def main():
                 mcp_send({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
                 tools = mcp_read()
                 assert tools["id"] == 3
-                assert len(tools["result"]["tools"]) == 111
+                assert len(tools["result"]["tools"]) == 115
                 # 进度令牌：tools/call 产生 started/completed 通知行 + 回复行
                 mcp_send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                     "name": "corridor_status", "arguments": {"vault": str(root)},
@@ -271,6 +271,7 @@ def main():
             dream = s.call("dream-plan")
             assert dream["metrics"]["pages"] >= 1 and dream["report_hash"], dream
             assert s.call("dream-work-list")["counts"]["pending"] == 0
+            assert "due" in s.call("dream-due", at="2026-11-12T00:00:00Z")
             # pack 拒绝覆盖已有导出，因此确定性双跑用两个输出名
             s.call("pack", output="exports/大容器.mcpack")
             pack_one = (root / "exports" / "大容器.mcpack").read_bytes()

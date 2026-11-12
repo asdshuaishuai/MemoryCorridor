@@ -5,9 +5,10 @@
 > 回滚，以及 `evo-policy` 默认关闭开关与 23 项封闭参数表。核心零模型、零网络、零
 > 时钟；随机性只来自文件内 xorshift128。
 >
-> 未实现（明确延后，见 §十二/§十三）：饱和度检测与 σ 提升、`evo-checkpoint` /
-> `evo-fossils` 独立 op、独立 `checkpoint.json` 与 `evaluation/<gen>.json`、场景轮换
-> 调度器、NEAT/拓扑变异、语言头、LLM 标注者、SoulFlow 冲动 outbox。
+> 续三十二已补：饱和度检测（连续 3 代无提升 → 变异 ×1.5 + 额外移民 + `evo-saturation`
+> 事件）与只读 `evo-checkpoint` / `evo-fossils`。
+> 未实现（明确延后，见 §十二/§十三）：独立 `checkpoint.json` 与 `evaluation/<gen>.json`、
+> 场景轮换调度器、批量 observe、NEAT/拓扑变异、语言头、LLM 标注者、SoulFlow 冲动 outbox。
 >
 > 目标：让「情感冲动、人格、成长、身体」这些**慢变量**由本地计算与持续进化驱动，
 > 不把它们的控制权交给 LLM。LLM 最多是可选的标注者/评审者，**不是必需环节**。
@@ -151,7 +152,7 @@ fitness = w_stab·stability + w_resp·responsiveness + w_grow·growth
    直接失败；这是「好日子不会一直有」的机制化。
 3. **全局回归检测（RSIGame）**：连续 K 代最优适应度低于最佳检查点 δ → 记
    `regression` 事件，种群回滚到最佳检查点（**回滚不是删除**：失败谱系进化石层）。
-4. **饱和检测（v2，未实现）**：连续 S 代无提升 → 记 `saturation`，提高变异 σ 并注入移民。
+4. **饱和检测（续三十二已实现）**：连续 3 代 delta ≤ 0 → `evo-saturation` 事件，该代变异幅度 ×1.5、额外 +1 移民，`saturations_total` 累加、streak 清零。
 5. **谱系灭绝**：未被选中的基因组死亡（记录谱系与死因）；不设「无限复活」。
 6. **负向状态一等公民**：情感为负、信任下降、冲动爆发失败都写入 `decline events`，
    并影响后续动力学（scarring：负向记忆提高相关刺激的增益），不被「正能量」规则抹平。
@@ -181,7 +182,8 @@ fitness = w_stab·stability + w_resp·responsiveness + w_grow·growth
 
 - v1 op：`evo-policy`（读/设开关与参数）、`evo-init`、`evo-observe`（快环一步）、
   `evo-evaluate`（窗口打分）、`evo-evolve`（一代/回归回滚）、`evo-status`、
-  `evo-rollback`（手动回滚）。`evo-checkpoint` / `evo-fossils` 独立 op 延后。
+  `evo-rollback`（手动回滚）；续三十二补 `evo-checkpoint`（检查点/历史/计数只读）与
+  `evo-fossils`（化石列举只读）。
 - 与 SoulFlow 线：快环的情感/冲动输出可作为冲动 outbox 的来源；v1 只回给宿主，
   **不写入其它子系统**，也不依赖 LLM。
 - 与 RSI 线：慢环的评估窗口与回归检测复用 dream 轮次的账本思路，但两者独立验收；
@@ -222,11 +224,15 @@ v1 已覆盖（证据见 `agent/evo_wbtest.mbt` 与 `scripts/evo_e2e.py`）：
 - 手动回滚即时 noop、评估/进化后成功、`manual_rollback` 化石、同 at 重放。
 - 记录篡改精确分支码、基因组字节篡改 `content_changed`、pack/unpack 后继续 observe。
 
+v1.1 已覆盖（续三十二，证据见 `evo_wbtest` 的 `evo_no_improve_step` 与 `evo_e2e`）：
+
+- 饱和状态机：耐心 3 代、触发后 streak 清零、首代不饱和；触发代 `saturated:true`、
+  变异 ×1.5、额外移民、`evo-saturation` 事件与 `saturations_total` 计数。
+- `evo-checkpoint` / `evo-fossils` 只读 op：返回检查点/历史/计数与按 id 排序的化石；
+  调用前后 `index.mbt.md` 字节不变。
+
 v2 延后（未实现，不得写成已交付）：
 
-- 饱和度检测与 σ 提升/额外移民注入（事件表不含 `evo-saturation`）。
-- `evo-checkpoint` / `evo-fossils` 独立 op；v1 的检查点与最近评估折叠在
-  `population.json`，化石只给计数、不提供列举 op。
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。
 - 场景轮换调度器（v1 只有单一窗口，环境漂移由宿主追加新观察触发）。
 - 随机留出切分与多窗口评估（v1 是窗口时间后缀 30%，文档如实标注）。

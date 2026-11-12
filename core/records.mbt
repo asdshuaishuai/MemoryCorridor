@@ -848,9 +848,9 @@ fn evo_seed_shape(value : Json, code : String) -> Unit raise @base.Fault {
 fn evo_population_record(value : Json) -> Unit raise @base.Fault {
   let code = "evo_population_record_invalid"
   @base.keys(value, ["version", "generation", "init", "members", "checkpoint",
-    "history", "regression_streak", "extinct_total", "fossil_total",
-    "regressions_total", "rollbacks_total", "last_eval", "last_evolve",
-    "last_rollback", "updated_at"])
+    "history", "regression_streak", "no_improve_streak", "saturations_total",
+    "extinct_total", "fossil_total", "regressions_total", "rollbacks_total",
+    "last_eval", "last_evolve", "last_rollback", "updated_at"])
   match @base.field(value, "version") {
     Number(n, ..) if n == 1.0 => ()
     _ => raise @base.Fault(code + ":version")
@@ -875,7 +875,9 @@ fn evo_population_record(value : Json) -> Unit raise @base.Fault {
     if generation == 0 && delta != 0.0 { @base.fail(code + ":history_delta") }
   }
   ignore(evo_record_int(value, "regression_streak", 0, 1000000, code))
-  for field in ["extinct_total", "fossil_total", "regressions_total", "rollbacks_total"] {
+  ignore(evo_record_int(value, "no_improve_streak", 0, 1000000, code))
+  for field in ["saturations_total", "extinct_total", "fossil_total",
+    "regressions_total", "rollbacks_total"] {
     ignore(evo_record_int(value, field, 0, 1000000000, code))
   }
   evo_last_eval_shape(@base.field(value, "last_eval"))
@@ -1350,6 +1352,27 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     extraction_body(string("text"))
     event_time(string("submitted_at"))
   } else if entry.path.has_prefix("state/dreams/") {
+    if entry.path == "state/dreams/policy.json" {
+      @base.keys(value, ["version", "due_after_seconds", "min_opportunities",
+        "max_open_rounds", "updated_at"])
+      match @base.field(value, "version") {
+        Number(n, ..) if n == 1.0 => ()
+        _ => raise @base.Fault("dream_policy_record_invalid:version")
+      }
+      match @base.field(value, "due_after_seconds") {
+        Number(n, ..) if n >= 0.0 && n <= 2592000.0 && n == n.to_int().to_double() => ()
+        _ => raise @base.Fault("dream_policy_record_invalid:due_after_seconds")
+      }
+      match @base.field(value, "min_opportunities") {
+        Number(n, ..) if n >= 0.0 && n <= 500.0 && n == n.to_int().to_double() => ()
+        _ => raise @base.Fault("dream_policy_record_invalid:min_opportunities")
+      }
+      match @base.field(value, "max_open_rounds") {
+        Number(n, ..) if n >= 1.0 && n <= 8.0 && n == n.to_int().to_double() => ()
+        _ => raise @base.Fault("dream_policy_record_invalid:max_open_rounds")
+      }
+      event_time(string("updated_at"))
+    } else {
     @base.keys(value, ["id", "at", "baseline", "knowledge", "policy", "space", "metrics",
       "opportunities_hash", "status", "closed_at", "decision", "note", "outcome"])
     let id = string("id")
@@ -1395,6 +1418,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         if n.length() > 1024 || n.contains("\n") || n.contains("\r") { @base.fail("dream_note_invalid") }
       }
     }
+  }
   } else if entry.path.has_prefix("state/dream-work/") {
     @base.keys(value, ["id", "round", "baseline", "kind", "subject", "priority", "status",
       "driver", "lease_until", "created_at", "closed_at", "result", "error"])
@@ -1480,7 +1504,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "memory-archive", "memory-restore", "memory-pin", "memory-use",
       "impact-open", "impact-resolve", "extraction-submit",
       "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
-      "dream-work-complete", "dream-work-fail",
+      "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
       "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
       "evo-rollback", "evo-fossilize",
     ]
@@ -1900,6 +1924,31 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       let expected = "state/events/dream-work-complete-" + work + "-" +
         @base.hex_hash(driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_work_event_identity_invalid") }
+    } else if op == "dream-policy" {
+      @base.keys(value, ["op", "at", "due_after_seconds", "min_opportunities", "max_open_rounds"])
+      event_time(string("at"))
+      let params : Json = {
+        "due_after_seconds": @base.field(value, "due_after_seconds"),
+        "min_opportunities": @base.field(value, "min_opportunities"),
+        "max_open_rounds": @base.field(value, "max_open_rounds"),
+      }
+      let expected = "state/events/dream-policy-" +
+        @base.hex_hash(@base.canonical(params) + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-saturation" {
+      @base.keys(value, ["op", "at", "generation", "streak", "best"])
+      event_time(string("at"))
+      let generation = match @base.field(value, "generation") {
+        Number(n, ..) if n >= 0.0 && n == n.to_int().to_double() => n.to_int()
+        _ => raise @base.Fault("evo_saturation_event_invalid")
+      }
+      let streak = match @base.field(value, "streak") {
+        Number(n, ..) if n >= 0.0 && n == n.to_int().to_double() => n.to_int()
+        _ => raise @base.Fault("evo_saturation_event_invalid")
+      }
+      let expected = "state/events/evo-saturation-" +
+        @base.hex_hash(generation.to_string() + "\n" + streak.to_string() + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "dream-work-fail" {
       @base.keys(value, ["op", "work", "driver", "reason", "at"])
       let work = string("work")

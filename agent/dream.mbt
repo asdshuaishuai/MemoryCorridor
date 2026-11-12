@@ -855,6 +855,202 @@ pub fn dream_work_list(store : @vault.Storage, entries : Array[@core.Entry]) -> 
   }
 }
 
+// ---- cadence contract (续三十一) ------------------------------------------
+const DREAM_DEFAULT_DUE_AFTER : Int = 86400
+const DREAM_DEFAULT_MIN_OPPORTUNITIES : Int = 1
+const DREAM_DEFAULT_MAX_OPEN_ROUNDS : Int = 1
+
+fn dream_policy_default() -> Json {
+  {
+    "due_after_seconds": DREAM_DEFAULT_DUE_AFTER,
+    "min_opportunities": DREAM_DEFAULT_MIN_OPPORTUNITIES,
+    "max_open_rounds": DREAM_DEFAULT_MAX_OPEN_ROUNDS,
+  }
+}
+
+fn dream_policy_load(store : @vault.Storage) -> (Json, Bool, Json) raise @base.Fault {
+  match (store.read)("state/dreams/policy.json") {
+    None => (dream_policy_default(), true, Json::null())
+    Some(text) => {
+      let row = @base.parse(text)
+      ({
+        "due_after_seconds": @base.field(row, "due_after_seconds"),
+        "min_opportunities": @base.field(row, "min_opportunities"),
+        "max_open_rounds": @base.field(row, "max_open_rounds"),
+      }, false, @base.field(row, "updated_at"))
+    }
+  }
+}
+
+fn dream_opt_bounded(request : Json, key : String, current : Json, low : Int, high : Int) -> Json raise @base.Fault {
+  match optional(request, key) {
+    None => current
+    Some(value) => match value {
+      Number(n, ..) if n >= low.to_double() && n <= high.to_double() && n == n.to_int().to_double() => n.to_json()
+      _ => raise @base.Fault("invalid_integer: " + key + "; \{low}..\{high}")
+    }
+  }
+}
+
+pub fn dream_policy_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "due_after_seconds",
+    "min_opportunities", "max_open_rounds", "at"])
+  @vault.verify(store, entries)
+  let (current, default, updated_at) = dream_policy_load(store)
+  let has_arg = optional(request, "due_after_seconds") is Some(_) ||
+    optional(request, "min_opportunities") is Some(_) ||
+    optional(request, "max_open_rounds") is Some(_)
+  if !has_arg {
+    return { "policy": current, "default": default.to_json(), "updated_at": updated_at }
+  }
+  let at = @base.text(@base.field(request, "at"))
+  dream_time(at)
+  let due = dream_opt_bounded(request, "due_after_seconds",
+    @base.field(current, "due_after_seconds"), 0, 2592000)
+  let min_opp = dream_opt_bounded(request, "min_opportunities",
+    @base.field(current, "min_opportunities"), 0, 500)
+  let max_open = dream_opt_bounded(request, "max_open_rounds",
+    @base.field(current, "max_open_rounds"), 1, 8)
+  let params : Json = {
+    "due_after_seconds": due, "min_opportunities": min_opp, "max_open_rounds": max_open,
+  }
+  if @base.canonical(params) == @base.canonical(current) {
+    return { "policy": params, "default": false.to_json(), "changed": false.to_json(),
+      "replayed": true.to_json(), "updated_at": updated_at }
+  }
+  let path = "state/dreams/policy.json"
+  let record : Json = {
+    "version": 1, "due_after_seconds": due, "min_opportunities": min_opp,
+    "max_open_rounds": max_open, "updated_at": at,
+  }
+  let content = @base.canonical(record)
+  let event_path = "state/events/dream-policy-" +
+    @base.hex_hash(@base.canonical(params) + "\n" + at) + ".json"
+  let event_content = @base.canonical({
+    "op": "dream-policy", "at": at, "due_after_seconds": due,
+    "min_opportunities": min_opp, "max_open_rounds": max_open,
+  })
+  let changes : Array[@vault.Change] = [
+    { path, before: (store.read)(path), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "policy": params, "default": false.to_json(), "changed": true.to_json(),
+    "replayed": false.to_json(), "updated_at": at,
+    "fingerprint": @vault.fingerprint(next) }
+}
+
+fn dream_digit(value : String, pos : Int) -> Int? {
+  if pos >= value.length() { return None }
+  let c = value[pos].to_int()
+  if c >= 48 && c <= 57 { Some(c - 48) } else { None }
+}
+
+fn dream_two(value : String, pos : Int) -> Int? {
+  match (dream_digit(value, pos), dream_digit(value, pos + 1)) {
+    (Some(a), Some(b)) => Some(a * 10 + b)
+    _ => None
+  }
+}
+
+// Strict YYYY-MM-DDTHH:MM:SSZ; anything else means "no cooldown arithmetic".
+fn dream_epoch(value : String) -> Int? {
+  if value.length() != 20 { return None }
+  if value[4].to_int() != 45 || value[7].to_int() != 45 || value[10].to_int() != 84 ||
+    value[13].to_int() != 58 || value[16].to_int() != 58 || value[19].to_int() != 90 {
+    return None
+  }
+  let year = match (dream_two(value, 0), dream_two(value, 2)) {
+    (Some(a), Some(b)) => Some(a * 100 + b)
+    _ => None
+  }
+  let month = dream_two(value, 5)
+  let day = dream_two(value, 8)
+  let hour = dream_two(value, 11)
+  let minute = dream_two(value, 14)
+  let second = dream_two(value, 17)
+  match (year, month, day, hour, minute, second) {
+    (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) => {
+      if mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59 { return None }
+      let yy = if mo <= 2 { y - 1 } else { y }
+      let era = if yy >= 0 { yy / 400 } else { (yy - 399) / 400 }
+      let yoe = yy - era * 400
+      let mp = if mo > 2 { mo - 3 } else { mo + 9 }
+      let doy = (153 * mp + 2) / 5 + d - 1
+      let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+      let days = era * 146097 + doe - 719468
+      Some(days * 86400 + h * 3600 + mi * 60 + s)
+    }
+    _ => None
+  }
+}
+
+pub fn dream_due_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "at"])
+  @vault.verify(store, entries)
+  let at = @base.text(@base.field(request, "at"))
+  dream_time(at)
+  let (policy, default, updated_at) = dream_policy_load(store)
+  let due_after = dream_json_int(policy, "due_after_seconds")
+  let min_opp = dream_json_int(policy, "min_opportunities")
+  let max_open = dream_json_int(policy, "max_open_rounds")
+  let mut open_rounds = 0
+  let mut last_closed = ""
+  for entry in entries {
+    if entry.kind == "state" && entry.path.has_prefix("state/dreams/") &&
+      entry.path != "state/dreams/policy.json" {
+      let row = @base.parse(@vault.required(store, entry.path))
+      if dream_row_text(row, "status") == "open" { open_rounds = open_rounds + 1 }
+      let closed = match optional(row, "closed_at") {
+        Some(Json::String(value)) => value
+        _ => ""
+      }
+      if closed != "" && (last_closed == "" || @base.compare(closed, last_closed) > 0) {
+        last_closed = closed
+      }
+    }
+  }
+  let mut pending_work = 0
+  for row in dream_work_rows(store, entries) {
+    let status = dream_row_text(row, "status")
+    if status == "pending" || status == "claimed" { pending_work = pending_work + 1 }
+  }
+  let opportunities = dream_opportunities(store, entries, None).length()
+  let open_ok = open_rounds < max_open
+  let opp_ok = opportunities >= min_opp
+  let at_epoch = dream_epoch(at)
+  let last_epoch = if last_closed == "" { None } else { dream_epoch(last_closed) }
+  let cooldown_ok = match (at_epoch, last_epoch) {
+    (Some(current), Some(last)) => current >= last + due_after
+    _ => true
+  }
+  let next_due_in_seconds : Json = match (at_epoch, last_epoch) {
+    (Some(current), Some(last)) => Int::max(0, last + due_after - current).to_json()
+    _ => Json::null()
+  }
+  let reasons : Array[String] = []
+  if !open_ok { reasons.push("open_rounds_capacity") }
+  if !opp_ok { reasons.push("insufficient_opportunities") }
+  if !cooldown_ok { reasons.push("cooldown") }
+  {
+    "due": (open_ok && opp_ok && cooldown_ok).to_json(),
+    "reasons": reasons.to_json(),
+    "open_rounds": open_rounds,
+    "pending_work": pending_work,
+    "opportunities": opportunities,
+    "last_closed_at": if last_closed == "" { Json::null() } else { last_closed.to_json() },
+    "next_due_in_seconds": next_due_in_seconds,
+    "policy": policy,
+    "default": default.to_json(),
+    "updated_at": updated_at,
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
 pub fn dream(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   match @base.text(@base.field(request, "op")) {
     "dream-plan" => dream_plan(store, entries, request)
@@ -866,6 +1062,8 @@ pub fn dream(store : @vault.Storage, entries : Array[@core.Entry], request : Jso
     "dream-work-complete" => dream_work_complete(store, entries, request)
     "dream-work-fail" => dream_work_fail(store, entries, request)
     "dream-work-list" => dream_work_list(store, entries)
+    "dream-policy" => dream_policy_op(store, entries, request)
+    "dream-due" => dream_due_op(store, entries, request)
     _ => raise @base.Fault("internal_dream_dispatch")
   }
 }

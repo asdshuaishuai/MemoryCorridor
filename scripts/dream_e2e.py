@@ -175,6 +175,28 @@ def main():
         assert len(restored_list["dreams"]) == 4, restored_list
         assert restored_list["fingerprint"] == answer["result"]["vault_fingerprint"], answer
 
+        # 9. cadence contract (续三十一): policy read/write, replay, due reasons.
+        default_policy = call("dream-policy")
+        assert default_policy["default"] is True, default_policy
+        assert default_policy["policy"]["due_after_seconds"] == 86400, default_policy
+        written = call("dream-policy", due_after_seconds=0, min_opportunities=0,
+                       max_open_rounds=1, at="2026-11-12T00:00:00Z")
+        assert written["changed"] is True and written["policy"]["max_open_rounds"] == 1, written
+        assert call("dream-policy")["policy"]["due_after_seconds"] == 0
+        assert call("dream-policy", due_after_seconds=0, min_opportunities=0,
+                    max_open_rounds=1, at="2026-11-12T00:00:01Z")["replayed"] is True
+        call("dream-policy", max_open_rounds=9, at="2026-11-12T00:00:02Z",
+             error="invalid_integer: max_open_rounds")
+        due = call("dream-due", at="2026-11-12T00:00:03Z")
+        assert due["due"] is True and due["open_rounds"] == 0 and due["default"] is False, due
+        fp = call("dream-plan")["fingerprint"]
+        open_id = call("dream-open", baseline=fp, at="2026-11-12T00:00:04Z")["id"]
+        blocked = call("dream-due", at="2026-11-12T00:00:05Z")
+        assert blocked["due"] is False and "open_rounds_capacity" in blocked["reasons"], blocked
+        call("dream-close", id=open_id, decision="rejected", at="2026-11-12T00:00:06Z")
+        reopened = call("dream-due", at="2026-11-12T00:00:07Z")
+        assert reopened["due"] is True, reopened
+
     print("dream e2e: deterministic dream plan, fingerprint-bound rounds, "
           "compatibility-gated retention and tamper branches passed")
     return 0
