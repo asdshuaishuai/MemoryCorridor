@@ -184,7 +184,8 @@ fitness = w_stab·stability + w_resp·responsiveness + w_grow·growth
   `evo-evaluate`（窗口打分）、`evo-evolve`（一代/回归回滚）、`evo-status`、
   `evo-rollback`（手动回滚）；续三十二补 `evo-checkpoint`（检查点/历史/计数只读）与
   `evo-fossils`（化石列举只读）；续三十三补 `evo-proactive-due/open/complete/fail/list`
-  （主动式 outbox：判定、认领、回写、失败与只读列举）。
+  （主动式 outbox：判定、认领、回写、失败与只读列举）；续三十五补
+  `evo-proactive-ack`（宿主真正投递后的送达确认）。
 - 与 SoulFlow 线：快环的情感/冲动输出可作为冲动 outbox 的来源。续三十三实现主动式
   outbox：`enabled=true` 时，情感/冲动状态可自主发起一次 LLM 调用——引擎只写结构化
   请求（`evo-proactive-open`），由宿主驱动（`scripts/evo_agent_driver.py`）认领、调用
@@ -244,6 +245,14 @@ v1.2 已覆盖（续三十三，证据见 `scripts/evo_proactive_e2e.py` 与 `ev
   complete/fail；同载荷重放零写；失败原因进入记录与事件。
 - 宿主驱动：`scripts/evo_agent_driver.py` 轮询 due → open → 调 LLM（测试用 mock，
   无网络）→ complete；引擎侧无模型/网络调用，`evo-proactive-list` 只读。
+
+v1.3 已覆盖（续三十五，证据见 `scripts/evo_proactive_e2e.py`）：
+
+- 送达确认：`evo-proactive-ack` 只接受 `done` 回复；同 `at` 重放零写，不同 `at`
+  的二次投递按 `evo_proactive_already_delivered` 拒绝，早于 `closed_at` 的确认拒绝。
+- `evo-proactive-list` 增加 `delivered_at` 与 `delivered/undelivered` 计数；驱动在
+  `complete` 时不自动 ack——是否已真正交给用户由宿主决定（引擎不猜测投递）。
+- 旧记录缺少 `delivered_at` 时按未送达读取，升级不破坏既有 outbox。
 
 v2 延后（未实现，不得写成已交付）：
 

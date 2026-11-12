@@ -31,6 +31,7 @@
 | RSI 到期契约（续三十一） | `dream_e2e.py` 第 9 段：policy 默认/写入/重放/越界拒绝；`dream-due` 在无开轮时为 due、开一轮后 `open_rounds_capacity` 拒绝、关闭后（冷却 0）恢复 due；`dream_wbtest` 覆盖严格 ISO 解析与参数边界 | pass |
 | 自进化饱和度与只读审计（续三十二） | `evo_wbtest` 覆盖 `evo_no_improve_step` 的耐心/重置/首代语义；`evo_e2e.py` 覆盖 `evo-checkpoint`/`evo-fossils` 字段与只读字节不变，三面计数 115 | pass |
 | RSI 宿主自治驱动（续三十四） | `rsi_driver_e2e.py`（policy 到期→plan→open→work-open→claim→mock LLM judgments→complete→retained；outcome.drivers 记录驱动；无到期机会时零写 no-op；知识漂移时降级 rejected）+ `dream_e2e.py` 回归（`dream-list` 跳过 policy.json）+ mutation「dream-list 必须跳过节奏记录」| pass(scope note：真实模式只提交结构化 judgments；页面暂存与 commit 仍由宿主负责，驱动不写知识页) |
+| 主动式应答送达确认（续三十五） | `evo_proactive_e2e.py`（claimed/failed 不可 ack、早于 closed_at 拒绝、同 at 重放、二次投递拒绝、`delivered/undelivered` 计数）+ mutation「ack 仅 done」「不得二次投递」「不得早于回复」 | pass(scope note：ack 表示宿主已投递；引擎不判断用户是否真正看到) |
 | 情感人格主动式应答（续三十三） | `evo_proactive_e2e.py`（情感/冲动状态自主触发 due、1 条背压、8 步冷却、driver+lease 归属与过期、complete/fail 重放、关闭开关后五 op 全部 `evo_disabled`、宿主驱动 `--mock --once` 真实发起并回写、list 只读）+ `evo_wbtest`（主动式判定/身份/结果边界）+ mutation 冷却门与 pending 背压 | pass(scope note：引擎只写结构化请求，LLM 调用在宿主驱动；v1.2 为单次主动发起，不做会话内多轮) |
 | 来源撤销矩阵 | `source_deletion_e2e.py`、`revocation_lifecycle_e2e.py`（页面/证据/记忆/影响全传播） | pass |
 | 冻结问题集的检索与知识质量对照 | 检索：`quality_eval.py` + `multidomain_eval.py`（四领域 fixtures，`docs/quality-report.json`、`docs/multidomain-quality-report.json`）；模型生成知识 A/B：`model_quality_eval.py`（**双领域**：龙泉青瓷 + 光合与产量，`docs/model-quality-report.json`） | pass(with scope note：报告只测检索/溯源记账，不断言语义正确性——scope 字段写明) |

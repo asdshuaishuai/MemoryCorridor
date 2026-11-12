@@ -72,6 +72,9 @@ def main():
         opened = call("evo-proactive-open", driver="driver-a",
                       lease_until=at(100000), at=at(2000))
         assert opened["id"] and opened["context"]["genome"], opened
+        # A claimed reply is not deliverable yet.
+        call("evo-proactive-ack", id=opened["id"], at=at(2001),
+             error="evo_proactive_not_deliverable")
         assert opened["urgency"] > 0.0, opened
         # pending request is backpressure for a second open.
         call("evo-proactive-open", driver="driver-b", lease_until=at(100001),
@@ -86,8 +89,17 @@ def main():
                     at=at(2003), result={"text": "主动问候", "model": "mock"})["status"] == "done"
         assert call("evo-proactive-complete", id=opened["id"], driver="driver-a",
                     at=at(2003), result={"text": "主动问候", "model": "mock"})["replayed"] is True
+        # Delivery ack: cannot precede the reply, is idempotent at the same
+        # time, and refuses a second delivery at a different time.
+        call("evo-proactive-ack", id=opened["id"], at=at(2002),
+             error="evo_proactive_ack_time_invalid")
+        acked = call("evo-proactive-ack", id=opened["id"], at=at(2004))
+        assert acked["status"] == "acknowledged" and acked["delivered_at"] == at(2004), acked
+        assert call("evo-proactive-ack", id=opened["id"], at=at(2004))["replayed"] is True
+        call("evo-proactive-ack", id=opened["id"], at=at(2005),
+             error="evo_proactive_already_delivered")
         counts = call("evo-proactive-list")["counts"]
-        assert counts["done"] == 1, counts
+        assert counts["done"] == 1 and counts["delivered"] == 1 and counts["undelivered"] == 0, counts
 
         # 2. cooldown gates the next request; after enough steps a failure is
         #    recorded distinctly from a completed reply.
@@ -99,6 +111,8 @@ def main():
         call("evo-proactive-fail", id=second["id"], driver="driver-a",
              reason="model unavailable", at=at(3001))
         assert call("evo-proactive-list")["counts"]["failed"] == 1
+        call("evo-proactive-ack", id=second["id"], at=at(3002),
+             error="evo_proactive_not_deliverable")
 
         # 3. disabling the subsystem stops the loop at the gate.
         call("evo-policy", enabled=False, at=at(4000))

@@ -1109,6 +1109,27 @@ MUTATIONS = [
      '  let saturated = next >= 1',
      "evo saturation re-arms after a patience of non-improving generations"),
 
+    ("a proactive ack must require a completed reply",
+     "agent/evo.mbt",
+     '  if status != "done" { @base.fail("evo_proactive_not_deliverable: " + id) }',
+     '  if false { @base.fail("evo_proactive_not_deliverable: " + id) }',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
+    ("a delivered proactive reply must not be delivered twice",
+     "agent/evo.mbt",
+     '  if delivered != Json::null() {',
+     '  if false {',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
+    ("a delivery ack may not precede the reply",
+     "agent/evo.mbt",
+     '  if @base.compare(at, closed) < 0 { @base.fail("evo_proactive_ack_time_invalid") }',
+     '  if false { @base.fail("evo_proactive_ack_time_invalid") }',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
     ("proactive cooldown must gate the next request",
      "agent/evo.mbt",
      '  let cooldown_ok = steps - last_step >= EVO_PROACTIVE_COOLDOWN_STEPS',

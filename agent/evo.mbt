@@ -2778,7 +2778,8 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
     "state_sha256": @base.hex_hash(state_text), "reason": due.reason,
     "urgency": due.urgency, "context": due.context, "status": "claimed",
     "driver": driver.to_json(), "lease_until": lease.to_json(), "created_at": at,
-    "closed_at": Json::null(), "result": Json::null(), "error": Json::null(),
+    "closed_at": Json::null(), "delivered_at": Json::null(),
+    "result": Json::null(), "error": Json::null(),
   }
   let content = @base.canonical(record)
   let event_path = "state/events/evo-proactive-open-" + id + "-" +
@@ -2921,14 +2922,21 @@ pub fn evo_proactive_list_op(store : @vault.Storage, entries : Array[@core.Entry
   let mut claimed = 0
   let mut done = 0
   let mut failed = 0
+  let mut delivered_count = 0
+  let mut undelivered = 0
   for pair in keyed {
     let status = @base.text(@base.field(pair.1, "status"))
+    let delivered = match evo_optional(pair.1, "delivered_at") {
+      None => Json::null()
+      Some(value) => value
+    }
     if status == "pending" {
       pending = pending + 1
     } else if status == "claimed" {
       claimed = claimed + 1
     } else if status == "done" {
       done = done + 1
+      if delivered == Json::null() { undelivered = undelivered + 1 } else { delivered_count = delivered_count + 1 }
     } else {
       failed = failed + 1
     }
@@ -2940,15 +2948,66 @@ pub fn evo_proactive_list_op(store : @vault.Storage, entries : Array[@core.Entry
       "lease_until": @base.field(pair.1, "lease_until"),
       "created_at": @base.text(@base.field(pair.1, "created_at")),
       "closed_at": @base.field(pair.1, "closed_at"),
+      "delivered_at": delivered,
       "result": @base.field(pair.1, "result"),
       "error": @base.field(pair.1, "error"),
     })
   }
   {
     "proactive": items.to_json(),
-    "counts": { "pending": pending, "claimed": claimed, "done": done, "failed": failed },
+    "counts": { "pending": pending, "claimed": claimed, "done": done, "failed": failed,
+      "delivered": delivered_count, "undelivered": undelivered },
     "fingerprint": @vault.fingerprint(entries),
   }
+}
+
+// At-least-once delivery: the host acknowledges a completed reply only after it
+// has actually handed it to the user. Replaying the same ack is a no-op; a
+// second delivery of the same reply is refused.
+pub fn evo_proactive_ack_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "id", "at"])
+  @vault.verify(store, entries)
+  let id = @base.text(@base.field(request, "id"))
+  if !evo_proactive_hash_ok(id) { @base.fail("evo_proactive_id_invalid") }
+  let path = "state/evo/proactive/" + id + ".json"
+  let text = match (store.read)(path) {
+    None => {
+      @base.fail("evo_proactive_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(text)
+  let at = evo_at_text(request)
+  let status = @base.text(@base.field(row, "status"))
+  if status != "done" { @base.fail("evo_proactive_not_deliverable: " + id) }
+  let delivered = match evo_optional(row, "delivered_at") {
+    None => Json::null()
+    Some(value) => value
+  }
+  if delivered != Json::null() {
+    if @base.text(delivered) == at {
+      return { "id": id, "status": "acknowledged", "delivered_at": at, "replayed": true }
+    }
+    @base.fail("evo_proactive_already_delivered: " + id)
+  }
+  let closed = @base.text(@base.field(row, "closed_at"))
+  if @base.compare(at, closed) < 0 { @base.fail("evo_proactive_ack_time_invalid") }
+  let updated = evo_proactive_set(row, [("delivered_at", at.to_json())])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/evo-proactive-ack-" + id + "-" +
+    @base.hex_hash(at) + ".json"
+  let event_content = @base.canonical({ "op": "evo-proactive-ack", "proactive": id, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "acknowledged", "delivered_at": at, "replayed": false }
 }
 
 pub fn evo(
@@ -2971,6 +3030,7 @@ pub fn evo(
     "evo-proactive-open" => evo_proactive_open_op(store, entries, request)
     "evo-proactive-complete" => evo_proactive_complete_op(store, entries, request)
     "evo-proactive-fail" => evo_proactive_fail_op(store, entries, request)
+    "evo-proactive-ack" => evo_proactive_ack_op(store, entries, request)
     "evo-proactive-list" => evo_proactive_list_op(store, entries)
     _ => raise @base.Fault("operation_not_implemented: " + op)
   }

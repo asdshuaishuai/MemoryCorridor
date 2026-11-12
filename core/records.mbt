@@ -668,7 +668,7 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
   let code = "evo_proactive_record_invalid"
   @base.keys(value, ["version", "id", "step", "genome", "state_sha256", "reason",
     "urgency", "context", "status", "driver", "lease_until", "created_at",
-    "closed_at", "result", "error"])
+    "closed_at", "delivered_at", "result", "error"])
   match @base.field(value, "version") {
     Number(n, ..) if n == 1.0 => ()
     _ => raise @base.Fault(code + ":version")
@@ -696,6 +696,9 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
   let driver = @base.field(value, "driver")
   let lease = @base.field(value, "lease_until")
   let closed = @base.field(value, "closed_at")
+  // `delivered_at` is optional so records written before the ack op remain
+  // readable; a present value must be a timestamp no earlier than closed_at.
+  let delivered = optional_record_field(value, "delivered_at").unwrap_or(Json::null())
   let result = @base.field(value, "result")
   let error = @base.field(value, "error")
   let driver_text = match driver {
@@ -714,12 +717,12 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
   }
   if status == "pending" {
     if driver != Json::null() || lease != Json::null() || closed != Json::null() ||
-      result != Json::null() || error != Json::null() {
+      delivered != Json::null() || result != Json::null() || error != Json::null() {
       @base.fail(code + ":pending")
     }
   } else if status == "claimed" {
     if driver_text == "" || lease == Json::null() || closed != Json::null() ||
-      result != Json::null() || error != Json::null() {
+      delivered != Json::null() || result != Json::null() || error != Json::null() {
       @base.fail(code + ":claimed")
     }
   } else if status == "done" {
@@ -727,13 +730,20 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
       @base.fail(code + ":done")
     }
     event_time(@base.text(closed))
+    if delivered != Json::null() {
+      event_time(@base.text(delivered))
+      if @base.compare(@base.text(delivered), @base.text(closed)) < 0 {
+        @base.fail(code + ":delivered_at")
+      }
+    }
     @base.keys(result, ["text", "model"])
     let text = @base.text(@base.field(result, "text"))
     if text.length() > 8192 || text.contains("\r") { @base.fail(code + ":result_text") }
     let model = @base.text(@base.field(result, "model"))
     if model.is_empty() || model.length() > 128 || model.contains("\n") { @base.fail(code + ":result_model") }
   } else {
-    if driver_text == "" || closed == Json::null() || result != Json::null() || error == Json::null() {
+    if driver_text == "" || closed == Json::null() || delivered != Json::null() ||
+      result != Json::null() || error == Json::null() {
       @base.fail(code + ":failed")
     }
     event_time(@base.text(closed))
@@ -1592,6 +1602,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
       "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
       "evo-proactive-open", "evo-proactive-complete", "evo-proactive-fail",
+      "evo-proactive-ack",
       "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
       "evo-rollback", "evo-fossilize",
     ]
@@ -2045,6 +2056,14 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("at"))
       let expected = "state/events/" + op + "-" + proactive + "-" +
         @base.hex_hash(driver + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-proactive-ack" {
+      @base.keys(value, ["op", "proactive", "at"])
+      let proactive = string("proactive")
+      if !valid_hash(proactive) { @base.fail("evo_proactive_event_invalid") }
+      event_time(string("at"))
+      let expected = "state/events/evo-proactive-ack-" + proactive + "-" +
+        @base.hex_hash(string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-saturation" {
       @base.keys(value, ["op", "at", "generation", "streak", "best"])
