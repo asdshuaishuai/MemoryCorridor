@@ -183,9 +183,14 @@ fitness = w_stab·stability + w_resp·responsiveness + w_grow·growth
 - v1 op：`evo-policy`（读/设开关与参数）、`evo-init`、`evo-observe`（快环一步）、
   `evo-evaluate`（窗口打分）、`evo-evolve`（一代/回归回滚）、`evo-status`、
   `evo-rollback`（手动回滚）；续三十二补 `evo-checkpoint`（检查点/历史/计数只读）与
-  `evo-fossils`（化石列举只读）。
-- 与 SoulFlow 线：快环的情感/冲动输出可作为冲动 outbox 的来源；v1 只回给宿主，
-  **不写入其它子系统**，也不依赖 LLM。
+  `evo-fossils`（化石列举只读）；续三十三补 `evo-proactive-due/open/complete/fail/list`
+  （主动式 outbox：判定、认领、回写、失败与只读列举）。
+- 与 SoulFlow 线：快环的情感/冲动输出可作为冲动 outbox 的来源。续三十三实现主动式
+  outbox：`enabled=true` 时，情感/冲动状态可自主发起一次 LLM 调用——引擎只写结构化
+  请求（`evo-proactive-open`），由宿主驱动（`scripts/evo_agent_driver.py`）认领、调用
+  OpenAI 兼容端点并把 `{text,model}` 回写（`evo-proactive-complete`）。引擎零模型/零网络；
+  关闭开关后所有 `evo-proactive-*` 立即 `evo_disabled`，循环停止。请求带 1 条背压、
+  8 观察步冷却与 driver+lease 归属；**evo 仍不写入任何其它子系统状态**。
 - 与 RSI 线：慢环的评估窗口与回归检测复用 dream 轮次的账本思路，但两者独立验收；
   evo 记录是普通 state 条目，因此每次写都会移动目录指纹，`impact-audit` 与 dream
   过期判定使用的知识指纹不含 state，不受影响。
@@ -231,13 +236,23 @@ v1.1 已覆盖（续三十二，证据见 `evo_wbtest` 的 `evo_no_improve_step`
 - `evo-checkpoint` / `evo-fossils` 只读 op：返回检查点/历史/计数与按 id 排序的化石；
   调用前后 `index.mbt.md` 字节不变。
 
+v1.2 已覆盖（续三十三，证据见 `scripts/evo_proactive_e2e.py` 与 `evo_wbtest`）：
+
+- 主动式闸门：情感/冲动达到阈值或上次触发跨过最近请求时才 `due`；冷却 8 个观察步、
+  1 条 pending/claimed 背压；关闭 evo 后五个主动式 op 全部 `evo_disabled`。
+- 归属与恢复：`evo-proactive-open` 原子认领（driver+lease），仅持有者可在租约内
+  complete/fail；同载荷重放零写；失败原因进入记录与事件。
+- 宿主驱动：`scripts/evo_agent_driver.py` 轮询 due → open → 调 LLM（测试用 mock，
+  无网络）→ complete；引擎侧无模型/网络调用，`evo-proactive-list` 只读。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。
 - 场景轮换调度器（v1 只有单一窗口，环境漂移由宿主追加新观察触发）。
 - 随机留出切分与多窗口评估（v1 是窗口时间后缀 30%，文档如实标注）。
 - 批量 observe/内存快路径（v1 固定一拍一条，身份与重放语义不因批处理改变）。
-- NEAT/拓扑变异、基线进化、语言头、LLM 标注者、SoulFlow 冲动 outbox。
+- NEAT/拓扑变异、基线进化、语言头、LLM 标注者、多轮对话式主动应答（v1.2 只做
+  单次结构化请求的主动发起，不做会话内多轮）。
 
 ## 十三、明确不做（v1）
 
@@ -246,5 +261,6 @@ v2 延后（未实现，不得写成已交付）：
 - 不把「持续变好」写进任何报表；拒绝单调叙事——`evo-evolve` 返回可为负的 delta、
   回归标记与化石计数。
 - 不做桌面应用、桌面控制器或专用桌面集成（AGENTS 明确不实现）。
-- 不把 v2 清单中的能力写成已交付：饱和检测、独立检查点/化石 op、场景轮换、
-  随机留出、批量 observe、拓扑变异、语言头与 LLM 标注者均未实现。
+- 不把 v2 清单中的能力写成已交付：场景轮换、随机留出、批量 observe、拓扑变异、
+  语言头与 LLM 标注者均未实现（饱和检测与独立检查点/化石 op 已在续三十二交付，
+  主动式 outbox 已在续三十三交付）。

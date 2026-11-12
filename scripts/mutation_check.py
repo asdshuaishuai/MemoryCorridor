@@ -1102,6 +1102,20 @@ MUTATIONS = [
      '  let saturated = next >= 1',
      "evo saturation re-arms after a patience of non-improving generations"),
 
+    ("proactive cooldown must gate the next request",
+     "agent/evo.mbt",
+     '  let cooldown_ok = steps - last_step >= EVO_PROACTIVE_COOLDOWN_STEPS',
+     '  let cooldown_ok = true',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
+    ("a pending proactive request must apply backpressure",
+     "agent/evo.mbt",
+     '  if due.pending > 0 { @base.fail("evo_proactive_backpressure") }',
+     '  if false { @base.fail("evo_proactive_backpressure") }',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
     ("saturation must reset the streak when it fires",
      "agent/evo.mbt",
      '  if saturated { (0, true) } else { (next, false) }',

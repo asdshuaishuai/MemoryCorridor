@@ -208,7 +208,7 @@ def main():
                 mcp_send({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
                 tools = mcp_read()
                 assert tools["id"] == 3
-                assert len(tools["result"]["tools"]) == 115
+                assert len(tools["result"]["tools"]) == 120
                 # 进度令牌：tools/call 产生 started/completed 通知行 + 回复行
                 mcp_send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                     "name": "corridor_status", "arguments": {"vault": str(root)},

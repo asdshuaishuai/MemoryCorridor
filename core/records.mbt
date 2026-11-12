@@ -661,6 +661,90 @@ fn evo_last_observe_shape(value : Json) -> Unit raise @base.Fault {
   ignore(evo_record_number(result, "threshold", 0.30, 0.95, code))
 }
 
+// Proactive request (续三十三): the affect system's structured "I want to act"
+// envelope for the host driver. The engine stores it; a host-side driver claims
+// it, calls the LLM and completes it. No engine module reads these records.
+fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
+  let code = "evo_proactive_record_invalid"
+  @base.keys(value, ["version", "id", "step", "genome", "state_sha256", "reason",
+    "urgency", "context", "status", "driver", "lease_until", "created_at",
+    "closed_at", "result", "error"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault(code + ":version")
+  }
+  let id = @base.text(@base.field(value, "id"))
+  if !valid_hash(id) || path != "state/evo/proactive/" + id + ".json" {
+    @base.fail(code + ":id")
+  }
+  ignore(evo_record_int(value, "step", 0, 1000000000, code))
+  for field in ["genome", "state_sha256"] {
+    if !valid_hash(@base.text(@base.field(value, field))) { @base.fail(code + ":" + field) }
+  }
+  let reason = @base.text(@base.field(value, "reason"))
+  if !["impulse", "valence_high", "valence_low"].contains(reason) { @base.fail(code + ":reason") }
+  match @base.field(value, "urgency") {
+    Number(n, ..) if n >= 0.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => ()
+    _ => raise @base.Fault(code + ":urgency")
+  }
+  let context = @base.field(value, "context")
+  @base.keys(context, ["step", "emotion", "impulse", "body", "relations", "window_sha256", "genome"])
+  ignore(evo_record_hash(context, "window_sha256", code))
+  let status = @base.text(@base.field(value, "status"))
+  if !["pending", "claimed", "done", "failed"].contains(status) { @base.fail(code + ":status") }
+  event_time(@base.text(@base.field(value, "created_at")))
+  let driver = @base.field(value, "driver")
+  let lease = @base.field(value, "lease_until")
+  let closed = @base.field(value, "closed_at")
+  let result = @base.field(value, "result")
+  let error = @base.field(value, "error")
+  let driver_text = match driver {
+    Null => ""
+    String(text) => {
+      if text.is_empty() || text.length() > 128 || text.contains("\n") || text.contains("\r") {
+        @base.fail(code + ":driver")
+      }
+      text
+    }
+    _ => raise @base.Fault(code + ":driver")
+  }
+  if lease != Json::null() {
+    event_time(@base.text(lease))
+    if driver_text == "" { @base.fail(code + ":lease") }
+  }
+  if status == "pending" {
+    if driver != Json::null() || lease != Json::null() || closed != Json::null() ||
+      result != Json::null() || error != Json::null() {
+      @base.fail(code + ":pending")
+    }
+  } else if status == "claimed" {
+    if driver_text == "" || lease == Json::null() || closed != Json::null() ||
+      result != Json::null() || error != Json::null() {
+      @base.fail(code + ":claimed")
+    }
+  } else if status == "done" {
+    if driver_text == "" || closed == Json::null() || error != Json::null() {
+      @base.fail(code + ":done")
+    }
+    event_time(@base.text(closed))
+    @base.keys(result, ["text", "model"])
+    let text = @base.text(@base.field(result, "text"))
+    if text.length() > 8192 || text.contains("\r") { @base.fail(code + ":result_text") }
+    let model = @base.text(@base.field(result, "model"))
+    if model.is_empty() || model.length() > 128 || model.contains("\n") { @base.fail(code + ":result_model") }
+  } else {
+    if driver_text == "" || closed == Json::null() || result != Json::null() || error == Json::null() {
+      @base.fail(code + ":failed")
+    }
+    event_time(@base.text(closed))
+    let reason_text = @base.text(error)
+    if reason_text.is_empty() || reason_text.length() > 1024 || reason_text.contains("\n") ||
+      reason_text.contains("\r") {
+      @base.fail(code + ":error")
+    }
+  }
+}
+
 fn evo_state_record(value : Json) -> Unit raise @base.Fault {
   let code = "evo_state_record_invalid"
   @base.keys(value, ["version", "steps", "window", "window_sha256", "emotion",
@@ -980,6 +1064,8 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     evo_genome_record(entry.path, value)
   } else if entry.path.has_prefix("state/evo/fossils/") {
     evo_fossil_record(entry.path, value)
+  } else if entry.path.has_prefix("state/evo/proactive/") {
+    evo_proactive_record(entry.path, value)
   } else if entry.path.has_prefix("state/evo/") {
     @base.fail("evo_record_path_invalid")
   } else if entry.path.has_prefix("state/orders/") {
@@ -1505,6 +1591,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "impact-open", "impact-resolve", "extraction-submit",
       "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
       "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
+      "evo-proactive-open", "evo-proactive-complete", "evo-proactive-fail",
       "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
       "evo-rollback", "evo-fossilize",
     ]
@@ -1934,6 +2021,30 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       }
       let expected = "state/events/dream-policy-" +
         @base.hex_hash(@base.canonical(params) + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-proactive-open" {
+      @base.keys(value, ["op", "proactive", "driver", "at"])
+      let proactive = string("proactive")
+      if !valid_hash(proactive) { @base.fail("evo_proactive_event_invalid") }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("evo_proactive_event_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/evo-proactive-open-" + proactive + "-" +
+        @base.hex_hash(driver + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-proactive-complete" || op == "evo-proactive-fail" {
+      @base.keys(value, ["op", "proactive", "driver", "at"])
+      let proactive = string("proactive")
+      if !valid_hash(proactive) { @base.fail("evo_proactive_event_invalid") }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("evo_proactive_event_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/" + op + "-" + proactive + "-" +
+        @base.hex_hash(driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-saturation" {
       @base.keys(value, ["op", "at", "generation", "streak", "best"])

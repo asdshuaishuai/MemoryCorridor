@@ -2584,6 +2584,373 @@ fn evo_fossils_op(
   }
 }
 
+// ---- proactive outbox (续三十三) ------------------------------------------
+// When the emotion/personality subsystem is enabled, its own affect state is
+// allowed to initiate an LLM call: the engine publishes a structured request,
+// a host-side driver claims it, calls the model and completes it. The engine
+// never calls a model and no other engine module reads these records.
+const EVO_PROACTIVE_COOLDOWN_STEPS : Int = 8
+const EVO_PROACTIVE_MIN_IMPULSE : Double = 0.55
+const EVO_PROACTIVE_HIGH_VALENCE : Double = 0.70
+const EVO_PROACTIVE_LOW_VALENCE : Double = -0.50
+
+priv struct EvoProactiveDue {
+  due : Bool
+  reason : String
+  urgency : Double
+  context : Json
+  pending : Int
+  next_in_steps : Int
+}
+
+fn evo_proactive_rows(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[Json] raise @base.Fault {
+  let rows : Array[Json] = []
+  for entry in entries {
+    if entry.kind == "state" && entry.path.has_prefix("state/evo/proactive/") {
+      rows.push(@base.parse(@vault.required(store, entry.path)))
+    }
+  }
+  rows
+}
+
+fn evo_proactive_id(step : Int, genome : String, window_sha256 : String) -> String {
+  @base.hex_hash("evo-proactive-v1\n" + step.to_string() + "\n" + genome + "\n" + window_sha256)
+}
+
+// Pure gates, kept separate so the "when may it speak" contract is testable
+// without a vault: fired_since means the last impulse trigger lies after the
+// most recent proactive request.
+fn evo_proactive_reason(impulse : Double, valence : Double, fired_since : Bool) -> String {
+  if fired_since || impulse >= EVO_PROACTIVE_MIN_IMPULSE {
+    "impulse"
+  } else if valence >= EVO_PROACTIVE_HIGH_VALENCE {
+    "valence_high"
+  } else if valence <= EVO_PROACTIVE_LOW_VALENCE {
+    "valence_low"
+  } else {
+    ""
+  }
+}
+
+fn evo_proactive_ready(pending : Int, cooldown_ok : Bool, reason : String) -> Bool {
+  pending == 0 && cooldown_ok && reason != ""
+}
+
+fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry]) -> EvoProactiveDue raise @base.Fault {
+  let state_text = match (store.read)("state/evo/state.json") {
+    None => {
+      @base.fail("evo_not_initialized")
+      ""
+    }
+    Some(value) => value
+  }
+  let state = evo_state_from_json(@base.parse(state_text))
+  let genome = match state.active_genome {
+    None => {
+      @base.fail("evo_genome_not_found")
+      ""
+    }
+    Some(value) => value
+  }
+  ignore(evo_load_genome(store, entries, genome))
+  let rows = evo_proactive_rows(store, entries)
+  let mut pending = 0
+  let mut last_step = -1
+  for row in rows {
+    let status = @base.text(@base.field(row, "status"))
+    if status == "pending" || status == "claimed" { pending = pending + 1 }
+    let step = match @base.field(row, "step") {
+      Number(n, ..) => n.to_int()
+      _ => 0
+    }
+    if step > last_step { last_step = step }
+  }
+  let steps = state.steps
+  let fired_since = match state.last_fire_step {
+    Some(fire) => fire > last_step
+    None => false
+  }
+  let valence = if state.emotion.length() > 0 { state.emotion[0] } else { 0.0 }
+  let reason = evo_proactive_reason(state.impulse, valence, fired_since)
+  let abs_valence = if valence < 0.0 { -valence } else { valence }
+  let urgency = evo_clamp(if state.impulse > abs_valence { state.impulse } else { abs_valence }, 0.0, 1.0)
+  let context : Json = {
+    "step": steps, "emotion": state.emotion.map(v => v.to_json()).to_json(),
+    "impulse": state.impulse, "body": state.body,
+    "relations": state.relations.map(evo_relation_json).to_json(),
+    "window_sha256": state.window_sha256, "genome": genome,
+  }
+  let cooldown_ok = steps - last_step >= EVO_PROACTIVE_COOLDOWN_STEPS
+  {
+    due: evo_proactive_ready(pending, cooldown_ok, reason),
+    reason,
+    urgency,
+    context,
+    pending,
+    next_in_steps: if cooldown_ok { 0 } else { EVO_PROACTIVE_COOLDOWN_STEPS - (steps - last_step) },
+  }
+}
+
+// Local copies of the generic state-record primitives: the evo controller is
+// one-way isolated and must not reach into other subsystems' helpers.
+fn evo_proactive_stamp(value : String) -> Unit raise @base.Fault {
+  if value.length() < 10 || value.contains("\n") || value.contains("\r") {
+    @base.fail("evo_proactive_stamp_invalid")
+  }
+}
+
+fn evo_proactive_driver(value : String) -> Unit raise @base.Fault {
+  if value.is_empty() || value.length() > 128 || value.contains("\n") || value.contains("\r") {
+    @base.fail("evo_proactive_driver_invalid")
+  }
+}
+
+fn evo_proactive_hash_ok(value : String) -> Bool {
+  value.length() == 64 && value.iter().all(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+}
+
+fn evo_proactive_set(row : Json, pairs : Array[(String, Json)]) -> Json {
+  match row {
+    Object(fields) => {
+      let copy = fields.copy()
+      for (key, value) in pairs { copy[key] = value }
+      Json::object(copy)
+    }
+    _ => row
+  }
+}
+
+fn evo_proactive_lease(value : String, at : String) -> Unit raise @base.Fault {
+  evo_proactive_stamp(value)
+  if @base.compare(value, at) <= 0 { @base.fail("evo_proactive_lease_invalid") }
+}
+
+pub fn evo_proactive_due_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let at = evo_at_text(request)
+  ignore(at)
+  let due = evo_proactive_due_state(store, entries)
+  {
+    "due": due.due.to_json(),
+    "reason": due.reason.to_json(),
+    "urgency": due.urgency,
+    "context": due.context,
+    "pending": due.pending,
+    "next_in_steps": due.next_in_steps,
+    "cooldown_steps": EVO_PROACTIVE_COOLDOWN_STEPS,
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
+pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "driver", "lease_until", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let driver = @base.text(@base.field(request, "driver"))
+  evo_proactive_driver(driver)
+  let lease = @base.text(@base.field(request, "lease_until"))
+  let at = evo_at_text(request)
+  evo_proactive_lease(lease, at)
+  let due = evo_proactive_due_state(store, entries)
+  if due.pending > 0 { @base.fail("evo_proactive_backpressure") }
+  if !due.due { @base.fail("evo_proactive_not_due") }
+  let state_text = match (store.read)("state/evo/state.json") {
+    None => {
+      @base.fail("evo_not_initialized")
+      ""
+    }
+    Some(value) => value
+  }
+  let state = evo_state_from_json(@base.parse(state_text))
+  let genome = match state.active_genome {
+    None => {
+      @base.fail("evo_genome_not_found")
+      ""
+    }
+    Some(value) => value
+  }
+  let id = evo_proactive_id(state.steps, genome, state.window_sha256)
+  let path = "state/evo/proactive/" + id + ".json"
+  let record : Json = {
+    "version": 1, "id": id, "step": state.steps, "genome": genome,
+    "state_sha256": @base.hex_hash(state_text), "reason": due.reason,
+    "urgency": due.urgency, "context": due.context, "status": "claimed",
+    "driver": driver.to_json(), "lease_until": lease.to_json(), "created_at": at,
+    "closed_at": Json::null(), "result": Json::null(), "error": Json::null(),
+  }
+  let content = @base.canonical(record)
+  let event_path = "state/events/evo-proactive-open-" + id + "-" +
+    @base.hex_hash(driver + "\n" + at) + ".json"
+  let event_content = @base.canonical({
+    "op": "evo-proactive-open", "proactive": id, "driver": driver, "at": at,
+  })
+  let changes : Array[@vault.Change] = [
+    { path, before: (store.read)(path), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  {
+    "id": id, "step": state.steps, "reason": due.reason, "urgency": due.urgency,
+    "context": due.context, "driver": driver, "lease_until": lease,
+    "fingerprint": @vault.fingerprint(next),
+  }
+}
+
+fn evo_proactive_result(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, ["text", "model"])
+  let text = @base.text(@base.field(value, "text"))
+  if text.length() > 8192 || text.contains("\r") { @base.fail("evo_proactive_result_invalid") }
+  let model = @base.text(@base.field(value, "model"))
+  if model.is_empty() || model.length() > 128 || model.contains("\n") || model.contains("\r") {
+    @base.fail("evo_proactive_result_invalid")
+  }
+}
+
+pub fn evo_proactive_complete_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "id", "driver", "at", "result"])
+  @vault.verify(store, entries)
+  let id = @base.text(@base.field(request, "id"))
+  if !evo_proactive_hash_ok(id) { @base.fail("evo_proactive_id_invalid") }
+  let path = "state/evo/proactive/" + id + ".json"
+  let text = match (store.read)(path) {
+    None => {
+      @base.fail("evo_proactive_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(text)
+  let driver = @base.text(@base.field(request, "driver"))
+  evo_proactive_driver(driver)
+  let at = evo_at_text(request)
+  let result = @base.field(request, "result")
+  evo_proactive_result(result)
+  let status = @base.text(@base.field(row, "status"))
+  if status == "done" && @base.text(@base.field(row, "driver")) == driver &&
+    @base.text(@base.field(row, "closed_at")) == at && @base.field(row, "result") == result {
+    return { "id": id, "status": "done", "replayed": true }
+  }
+  if status != "claimed" { @base.fail("evo_proactive_terminal: " + id) }
+  if @base.text(@base.field(row, "driver")) != driver { @base.fail("evo_proactive_not_owner") }
+  let lease = @base.text(@base.field(row, "lease_until"))
+  if @base.compare(at, lease) > 0 { @base.fail("evo_proactive_lease_expired") }
+  let updated = evo_proactive_set(row, [
+    ("status", "done".to_json()), ("closed_at", at.to_json()), ("result", result),
+  ])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/evo-proactive-complete-" + id + "-" +
+    @base.hex_hash(driver + "\n" + at) + ".json"
+  let event_content = @base.canonical({
+    "op": "evo-proactive-complete", "proactive": id, "driver": driver, "at": at,
+  })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "done", "replayed": false }
+}
+
+pub fn evo_proactive_fail_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "id", "driver", "reason", "at"])
+  @vault.verify(store, entries)
+  let id = @base.text(@base.field(request, "id"))
+  if !evo_proactive_hash_ok(id) { @base.fail("evo_proactive_id_invalid") }
+  let path = "state/evo/proactive/" + id + ".json"
+  let text = match (store.read)(path) {
+    None => {
+      @base.fail("evo_proactive_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(text)
+  let driver = @base.text(@base.field(request, "driver"))
+  evo_proactive_driver(driver)
+  let reason = @base.text(@base.field(request, "reason"))
+  if reason.is_empty() || reason.length() > 1024 || reason.contains("\n") || reason.contains("\r") {
+    @base.fail("evo_proactive_error_invalid")
+  }
+  let at = evo_at_text(request)
+  let status = @base.text(@base.field(row, "status"))
+  if status == "failed" && @base.text(@base.field(row, "driver")) == driver &&
+    @base.text(@base.field(row, "closed_at")) == at &&
+    @base.text(@base.field(row, "error")) == reason {
+    return { "id": id, "status": "failed", "replayed": true }
+  }
+  if status != "claimed" { @base.fail("evo_proactive_terminal: " + id) }
+  if @base.text(@base.field(row, "driver")) != driver { @base.fail("evo_proactive_not_owner") }
+  let updated = evo_proactive_set(row, [
+    ("status", "failed".to_json()), ("closed_at", at.to_json()), ("error", reason.to_json()),
+  ])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/evo-proactive-fail-" + id + "-" +
+    @base.hex_hash(driver + "\n" + at) + ".json"
+  let event_content = @base.canonical({
+    "op": "evo-proactive-fail", "proactive": id, "driver": driver, "at": at,
+  })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "failed", "replayed": false }
+}
+
+pub fn evo_proactive_list_op(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  let rows = evo_proactive_rows(store, entries)
+  let keyed : Array[(String, Json)] = rows.map(row => (@base.text(@base.field(row, "id")), row))
+  keyed.sort_by((a, b) => @base.compare(a.0, b.0))
+  let items : Array[Json] = []
+  let mut pending = 0
+  let mut claimed = 0
+  let mut done = 0
+  let mut failed = 0
+  for pair in keyed {
+    let status = @base.text(@base.field(pair.1, "status"))
+    if status == "pending" {
+      pending = pending + 1
+    } else if status == "claimed" {
+      claimed = claimed + 1
+    } else if status == "done" {
+      done = done + 1
+    } else {
+      failed = failed + 1
+    }
+    items.push({
+      "id": pair.0, "step": @base.field(pair.1, "step"),
+      "reason": @base.text(@base.field(pair.1, "reason")),
+      "urgency": @base.field(pair.1, "urgency"),
+      "status": status, "driver": @base.field(pair.1, "driver"),
+      "lease_until": @base.field(pair.1, "lease_until"),
+      "created_at": @base.text(@base.field(pair.1, "created_at")),
+      "closed_at": @base.field(pair.1, "closed_at"),
+      "result": @base.field(pair.1, "result"),
+      "error": @base.field(pair.1, "error"),
+    })
+  }
+  {
+    "proactive": items.to_json(),
+    "counts": { "pending": pending, "claimed": claimed, "done": done, "failed": failed },
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
 pub fn evo(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
@@ -2600,6 +2967,11 @@ pub fn evo(
     "evo-rollback" => evo_rollback_op(store, entries, request)
     "evo-checkpoint" => evo_checkpoint_op(store, entries)
     "evo-fossils" => evo_fossils_op(store, entries)
+    "evo-proactive-due" => evo_proactive_due_op(store, entries, request)
+    "evo-proactive-open" => evo_proactive_open_op(store, entries, request)
+    "evo-proactive-complete" => evo_proactive_complete_op(store, entries, request)
+    "evo-proactive-fail" => evo_proactive_fail_op(store, entries, request)
+    "evo-proactive-list" => evo_proactive_list_op(store, entries)
     _ => raise @base.Fault("operation_not_implemented: " + op)
   }
 }

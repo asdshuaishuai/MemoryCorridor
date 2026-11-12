@@ -1072,3 +1072,18 @@ test "evo saturation re-arms after a patience of non-improving generations" {
     (streak, saturated) => { assert_eq(streak, 0); assert_false(saturated) }
   }
 }
+
+test "evo proactive reason follows impulse, valence and its own history" {
+  assert_eq(evo_proactive_reason(0.55, 0.0, false), "impulse")
+  assert_eq(evo_proactive_reason(0.54, 0.70, false), "valence_high")
+  assert_eq(evo_proactive_reason(0.0, -0.50, false), "valence_low")
+  assert_eq(evo_proactive_reason(0.0, 0.0, false), "")
+  assert_eq(evo_proactive_reason(0.0, 0.0, true), "impulse")
+}
+
+test "evo proactive gate needs no pending, cooldown and a reason" {
+  assert_true(evo_proactive_ready(0, true, "valence_high"))
+  assert_false(evo_proactive_ready(1, true, "valence_high"))
+  assert_false(evo_proactive_ready(0, false, "valence_high"))
+  assert_false(evo_proactive_ready(0, true, ""))
+}
