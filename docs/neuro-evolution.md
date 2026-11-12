@@ -185,7 +185,8 @@ fitness = w_stab·stability + w_resp·responsiveness + w_grow·growth
   `evo-rollback`（手动回滚）；续三十二补 `evo-checkpoint`（检查点/历史/计数只读）与
   `evo-fossils`（化石列举只读）；续三十三补 `evo-proactive-due/open/complete/fail/list`
   （主动式 outbox：判定、认领、回写、失败与只读列举）；续三十五补
-  `evo-proactive-ack`（宿主真正投递后的送达确认）。
+  `evo-proactive-ack`（宿主真正投递后的送达确认）；续三十六让 `open` 接管过期
+  claimed 请求（同 id、换 driver/lease、`reclaimed:true`），`due` 区分 pending/expired。
 - 与 SoulFlow 线：快环的情感/冲动输出可作为冲动 outbox 的来源。续三十三实现主动式
   outbox：`enabled=true` 时，情感/冲动状态可自主发起一次 LLM 调用——引擎只写结构化
   请求（`evo-proactive-open`），由宿主驱动（`scripts/evo_agent_driver.py`）认领、调用
@@ -253,6 +254,14 @@ v1.3 已覆盖（续三十五，证据见 `scripts/evo_proactive_e2e.py`）：
 - `evo-proactive-list` 增加 `delivered_at` 与 `delivered/undelivered` 计数；驱动在
   `complete` 时不自动 ack——是否已真正交给用户由宿主决定（引擎不猜测投递）。
 - 旧记录缺少 `delivered_at` 时按未送达读取，升级不破坏既有 outbox。
+
+v1.4 已覆盖（续三十六，证据见 `scripts/evo_proactive_e2e.py`）：
+
+- 过期接管：claimed 租约到期后不再计入 `pending` 背压；`evo-proactive-open` 在同一 id
+  上更换 driver/lease 并返回 `reclaimed:true`，写 `evo-proactive-reclaim` 身份事件；
+  旧持有者在新租约下 complete 按 `evo_proactive_not_owner` 拒绝。
+- 没有过期占位时行为不变（`reclaimed:false`）；未过期占位仍按
+  `evo_proactive_backpressure` 拒绝，避免两个驱动同时回答同一请求。
 
 v2 延后（未实现，不得写成已交付）：
 

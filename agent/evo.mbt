@@ -2600,6 +2600,7 @@ priv struct EvoProactiveDue {
   urgency : Double
   context : Json
   pending : Int
+  expired : Int
   next_in_steps : Int
 }
 
@@ -2636,7 +2637,15 @@ fn evo_proactive_ready(pending : Int, cooldown_ok : Bool, reason : String) -> Bo
   pending == 0 && cooldown_ok && reason != ""
 }
 
-fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry]) -> EvoProactiveDue raise @base.Fault {
+// An expired claim no longer blocks the outbox: it is the takeover candidate.
+fn evo_proactive_lease_expired(row : Json, at : String) -> Bool raise @base.Fault {
+  match evo_optional(row, "lease_until") {
+    Some(value) => value != Json::null() && @base.compare(@base.text(value), at) <= 0
+    None => false
+  }
+}
+
+fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry], at : String) -> EvoProactiveDue raise @base.Fault {
   let state_text = match (store.read)("state/evo/state.json") {
     None => {
       @base.fail("evo_not_initialized")
@@ -2655,10 +2664,19 @@ fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry])
   ignore(evo_load_genome(store, entries, genome))
   let rows = evo_proactive_rows(store, entries)
   let mut pending = 0
+  let mut expired = 0
   let mut last_step = -1
   for row in rows {
     let status = @base.text(@base.field(row, "status"))
-    if status == "pending" || status == "claimed" { pending = pending + 1 }
+    if status == "pending" {
+      pending = pending + 1
+    } else if status == "claimed" {
+      if evo_proactive_lease_expired(row, at) {
+        expired = expired + 1
+      } else {
+        pending = pending + 1
+      }
+    }
     let step = match @base.field(row, "step") {
       Number(n, ..) => n.to_int()
       _ => 0
@@ -2687,8 +2705,22 @@ fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry])
     urgency,
     context,
     pending,
+    expired,
     next_in_steps: if cooldown_ok { 0 } else { EVO_PROACTIVE_COOLDOWN_STEPS - (steps - last_step) },
   }
+}
+
+fn evo_proactive_expired_row(store : @vault.Storage, entries : Array[@core.Entry], at : String) -> Json? raise @base.Fault {
+  let keyed : Array[(String, Json)] = evo_proactive_rows(store, entries).map(
+    row => (@base.text(@base.field(row, "id")), row))
+  keyed.sort_by((a, b) => @base.compare(a.0, b.0))
+  for pair in keyed {
+    if @base.text(@base.field(pair.1, "status")) == "claimed" &&
+      evo_proactive_lease_expired(pair.1, at) {
+      return Some(pair.1)
+    }
+  }
+  None
 }
 
 // Local copies of the generic state-record primitives: the evo controller is
@@ -2730,14 +2762,14 @@ pub fn evo_proactive_due_op(store : @vault.Storage, entries : Array[@core.Entry]
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
   let at = evo_at_text(request)
-  ignore(at)
-  let due = evo_proactive_due_state(store, entries)
+  let due = evo_proactive_due_state(store, entries, at)
   {
     "due": due.due.to_json(),
     "reason": due.reason.to_json(),
     "urgency": due.urgency,
     "context": due.context,
     "pending": due.pending,
+    "expired": due.expired,
     "next_in_steps": due.next_in_steps,
     "cooldown_steps": EVO_PROACTIVE_COOLDOWN_STEPS,
     "fingerprint": @vault.fingerprint(entries),
@@ -2753,9 +2785,48 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
   let lease = @base.text(@base.field(request, "lease_until"))
   let at = evo_at_text(request)
   evo_proactive_lease(lease, at)
-  let due = evo_proactive_due_state(store, entries)
+  let due = evo_proactive_due_state(store, entries, at)
   if due.pending > 0 { @base.fail("evo_proactive_backpressure") }
   if !due.due { @base.fail("evo_proactive_not_due") }
+  if due.expired > 0 {
+    let expired_row = match evo_proactive_expired_row(store, entries, at) {
+      Some(row) => row
+      None => {
+        @base.fail("evo_proactive_state_corrupt")
+        Json::null()
+      }
+    }
+    let expired_id = @base.text(@base.field(expired_row, "id"))
+    let expired_path = "state/evo/proactive/" + expired_id + ".json"
+    let expired_text = @vault.required(store, expired_path)
+    let updated = evo_proactive_set(expired_row, [
+      ("driver", driver.to_json()), ("lease_until", lease.to_json()),
+    ])
+    let content = @base.canonical(updated)
+    let event_path = "state/events/evo-proactive-reclaim-" + expired_id + "-" +
+      @base.hex_hash(driver + "\n" + at) + ".json"
+    let event_content = @base.canonical({
+      "op": "evo-proactive-reclaim", "proactive": expired_id, "driver": driver, "at": at,
+    })
+    let changes : Array[@vault.Change] = [
+      { path: expired_path, before: Some(expired_text), after: Some(content) },
+      { path: event_path, before: None, after: Some(event_content) },
+    ]
+    let next = upsert(upsert(entries, { id: expired_path, path: expired_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(content), sources: [], stale: false }),
+      { id: event_path, path: event_path, kind: "state", format: "json",
+        sha256: @base.hex_hash(event_content), sources: [], stale: false })
+    @vault.commit(store, @vault.fingerprint(entries), next, changes)
+    return {
+      "id": expired_id, "reclaimed": true.to_json(),
+      "step": @base.field(expired_row, "step"),
+      "reason": @base.text(@base.field(expired_row, "reason")),
+      "urgency": @base.field(expired_row, "urgency"),
+      "context": @base.field(expired_row, "context"),
+      "driver": driver, "lease_until": lease,
+      "fingerprint": @vault.fingerprint(next),
+    }
+  }
   let state_text = match (store.read)("state/evo/state.json") {
     None => {
       @base.fail("evo_not_initialized")
@@ -2797,7 +2868,8 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
       sha256: @base.hex_hash(event_content), sources: [], stale: false })
   @vault.commit(store, @vault.fingerprint(entries), next, changes)
   {
-    "id": id, "step": state.steps, "reason": due.reason, "urgency": due.urgency,
+    "id": id, "reclaimed": false.to_json(),
+    "step": state.steps, "reason": due.reason, "urgency": due.urgency,
     "context": due.context, "driver": driver, "lease_until": lease,
     "fingerprint": @vault.fingerprint(next),
   }

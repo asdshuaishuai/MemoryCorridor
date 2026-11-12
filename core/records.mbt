@@ -1602,7 +1602,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
       "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
       "evo-proactive-open", "evo-proactive-complete", "evo-proactive-fail",
-      "evo-proactive-ack",
+      "evo-proactive-ack", "evo-proactive-reclaim",
       "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
       "evo-rollback", "evo-fossilize",
     ]
@@ -2064,6 +2064,18 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("at"))
       let expected = "state/events/evo-proactive-ack-" + proactive + "-" +
         @base.hex_hash(string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-proactive-reclaim" {
+      @base.keys(value, ["op", "proactive", "driver", "at"])
+      let proactive = string("proactive")
+      if !valid_hash(proactive) { @base.fail("evo_proactive_event_invalid") }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("evo_proactive_event_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/evo-proactive-reclaim-" + proactive + "-" +
+        @base.hex_hash(driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-saturation" {
       @base.keys(value, ["op", "at", "generation", "streak", "best"])

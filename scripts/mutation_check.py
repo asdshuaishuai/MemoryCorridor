@@ -1109,6 +1109,20 @@ MUTATIONS = [
      '  let saturated = next >= 1',
      "evo saturation re-arms after a patience of non-improving generations"),
 
+    ("an expired proactive lease must not block the next request",
+     "agent/evo.mbt",
+     '      if evo_proactive_lease_expired(row, at) {',
+     '      if false {',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
+    ("an expired proactive request must be reclaimed, not duplicated",
+     "agent/evo.mbt",
+     '  if due.expired > 0 {',
+     '  if false {',
+     "evo proactive e2e:",
+     "evo_proactive_e2e.py"),
+
     ("a proactive ack must require a completed reply",
      "agent/evo.mbt",
      '  if status != "done" { @base.fail("evo_proactive_not_deliverable: " + id) }',

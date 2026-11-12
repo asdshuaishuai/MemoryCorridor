@@ -131,7 +131,25 @@ def main():
         assert after["counts"]["done"] == before + 1, after["counts"]
         assert any(row["driver"] == "driver-c" for row in after["proactive"]), after
 
-        # 5. the list is read-only.
+        # 5. an expired claim is taken over, not duplicated or left blocking.
+        observe_until_due()
+        holder = call("evo-proactive-open", driver="driver-a",
+                      lease_until=at(90000), at=at(80000))
+        assert holder["reclaimed"] is False, holder
+        observe(8)
+        expired = call("evo-proactive-due", at=at(100000))
+        assert expired["due"] is True and expired["expired"] == 1 and expired["pending"] == 0, expired
+        taken = call("evo-proactive-open", driver="driver-b",
+                     lease_until=at(110000), at=at(100001))
+        assert taken["reclaimed"] is True and taken["id"] == holder["id"], (holder, taken)
+        call("evo-proactive-complete", id=taken["id"], driver="driver-a", at=at(100002),
+             result={"text": "旧驱动", "model": "m"}, error="evo_proactive_not_owner")
+        assert call("evo-proactive-complete", id=taken["id"], driver="driver-b",
+                    at=at(100002), result={"text": "接管答复", "model": "mock"})["status"] == "done"
+        row = next(r for r in call("evo-proactive-list")["proactive"] if r["id"] == taken["id"])
+        assert row["driver"] == "driver-b" and row["lease_until"] == at(110000), row
+
+        # 6. the list is read-only.
         baseline = (vault / "index.mbt.md").read_bytes()
         call("evo-proactive-list")
         assert (vault / "index.mbt.md").read_bytes() == baseline
