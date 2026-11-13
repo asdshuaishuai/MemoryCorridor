@@ -31,6 +31,7 @@
 | RSI 到期契约（续三十一） | `dream_e2e.py` 第 9 段：policy 默认/写入/重放/越界拒绝；`dream-due` 在无开轮时为 due、开一轮后 `open_rounds_capacity` 拒绝、关闭后（冷却 0）恢复 due；`dream_wbtest` 覆盖严格 ISO 解析与参数边界 | pass |
 | 自进化饱和度与只读审计（续三十二） | `evo_wbtest` 覆盖 `evo_no_improve_step` 的耐心/重置/首代语义；`evo_e2e.py` 覆盖 `evo-checkpoint`/`evo-fossils` 字段与只读字节不变，三面计数 115 | pass |
 | RSI 宿主自治驱动（续三十四） | `rsi_driver_e2e.py`（policy 到期→plan→open→work-open→claim→mock LLM judgments→complete→retained；outcome.drivers 记录驱动；无到期机会时零写 no-op；知识漂移时降级 rejected）+ `dream_e2e.py` 回归（`dream-list` 跳过 policy.json）+ mutation「dream-list 必须跳过节奏记录」| pass(scope note：真实模式只提交结构化 judgments；页面暂存与 commit 仍由宿主负责，驱动不写知识页) |
+| 夜间队列（续四十四） | `evo_night_e2e.py`（22:00 安静只 deferred、无请求；07:00 `woke_from_night` + ack + 清零；跨 daemon 重启状态保留）+ `evo_schedule/daemon` 回归 | pass(scope note：意图队列，不是消息队列；多轮主动应答未实现) |
 | daemon 反思/凝练调度（续四十三） | `evo_schedule_e2e.py`（模拟时钟三拍：反思/凝练在 0/2 拍运行、1 拍跳过、状态时间戳）+ `evo_daemon_e2e.py` 回归 | pass(scope note：宿主侧调度；夜间队列/多轮主动应答未实现) |
 | RSI 跨轮复盘（续四十二） | `dream_retro_e2e.py`（空基线、保留率分母为 closed、delta 求和、driver 成功率、work_by_kind、last、确定性、只读）+ mutation「保留率不得用全部轮次」 | pass(scope note：只读聚合；不自动调整策略) |
 | 知识结果适应度（续四十一） | `evo_outcome_e2e.py`（outcome 进窗口、每成员 `knowledge`/`has_outcome`、成员间有差异、重放、越界拒绝）+ `evo_wbtest` 对齐函数 + 3 条 mutation（成员输出/失配惩罚/窗口携带） | pass(scope note：仅窗口带非零 outcome 时启用 0.10 权重；旧窗口零影响) |

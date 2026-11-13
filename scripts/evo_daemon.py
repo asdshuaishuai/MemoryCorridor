@@ -90,6 +90,10 @@ class Clock:
         if self.current is not None:
             self.current = self.current + timedelta(seconds=self.tick_seconds)
 
+    def hour(self):
+        current = self.current or datetime.now(timezone.utc)
+        return current.hour
+
     def seconds_since(self, text):
         if not text:
             return None
@@ -104,7 +108,7 @@ class Clock:
 
 class Daemon:
     def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit,
-                 clock, reflect_every, consolidate_every):
+                 clock, reflect_every, consolidate_every, quiet_start, quiet_end):
         self.cli = cli
         self.vault = vault
         self.name = name
@@ -116,7 +120,17 @@ class Daemon:
         self.clock = clock
         self.reflect_every = reflect_every
         self.consolidate_every = consolidate_every
+        self.quiet_start = quiet_start
+        self.quiet_end = quiet_end
         self.state = load_state(vault)
+
+    def is_quiet(self):
+        if self.quiet_start < 0:
+            return False
+        hour = self.clock.hour()
+        if self.quiet_start < self.quiet_end:
+            return self.quiet_start <= hour < self.quiet_end
+        return hour >= self.quiet_start or hour < self.quiet_end
 
     def schedule_due(self, key, every):
         if every <= 0:
@@ -210,9 +224,30 @@ class Daemon:
         # Speak from the state the soul already has, then absorb the new
         # perception. A fresh negative observation must not swallow a gate that
         # was already open.
-        speech = self.speak()
-        if isinstance(speech, dict) and "paused" in speech:
-            return {"at": at, "paused": speech["paused"]}
+        if self.is_quiet():
+            try:
+                due = driver.call(self.cli, self.vault, "evo-proactive-due",
+                                  at=self.clock.stamp())
+            except RuntimeError as error:
+                if "evo_paused_human_gate" in str(error):
+                    return {"at": at, "paused": str(error)}
+                raise
+            if due["due"]:
+                self.state["deferred"] = self.state.get("deferred", 0) + 1
+                self.state["last_deferred_at"] = at
+                speech = {"quiet": True, "deferred": True,
+                          "reason": due["reason"]}
+            else:
+                speech = {"quiet": True, "deferred": False}
+        else:
+            deferred_before = self.state.get("deferred", 0)
+            speech = self.speak()
+            if isinstance(speech, dict) and "paused" in speech:
+                return {"at": at, "paused": speech["paused"]}
+            if deferred_before > 0:
+                if speech is not None:
+                    speech["woke_from_night"] = True
+                self.state["deferred"] = 0
         try:
             sense = bridge.run_pass(self.cli, self.vault, self.limit, True,
                                     stamp=self.clock.stamp())
@@ -264,6 +299,10 @@ def main() -> int:
                         help="seconds between reflection passes (0 disables)")
     parser.add_argument("--consolidate-every", type=int, default=1800,
                         help="seconds between RSI consolidation passes (0 disables)")
+    parser.add_argument("--quiet-start", type=int, default=22,
+                        help="quiet-hours start hour (0..23; -1 disables)")
+    parser.add_argument("--quiet-end", type=int, default=7,
+                        help="quiet-hours end hour (0..23)")
     parser.add_argument("--now", default=None,
                         help="simulated start time YYYY-MM-DDTHH:MM:SSZ (tests)")
     parser.add_argument("--tick-seconds", type=int, default=0,
@@ -276,7 +315,8 @@ def main() -> int:
     clock = Clock(args.now, args.tick_seconds or int(args.interval))
     daemon = Daemon(args.cli, args.vault, args.driver, args.mock, not args.no_ack,
                     args.with_rsi, not args.no_expression, args.limit, clock,
-                    args.reflect_every, args.consolidate_every)
+                    args.reflect_every, args.consolidate_every,
+                    args.quiet_start, args.quiet_end)
     target = args.ticks or (1 if args.once else 0)
     try:
         while True:

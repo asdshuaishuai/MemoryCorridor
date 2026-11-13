@@ -316,6 +316,14 @@ v1.9 daemon 调度（续四十三，宿主侧，证据见 `scripts/evo_schedule_
   三拍，验证反思/凝练只在 0/2 拍运行、状态时间戳正确。
 - 夜间队列与多轮主动应答仍未实现；当前 daemon 是单间隔/单进程参考实现。
 
+v1.10 夜间队列（续四十四，宿主侧，证据见 `scripts/evo_night_e2e.py`）：
+
+- `--quiet-start/--quiet-end`（默认 22–7）：安静时段不开主动请求，只累计
+  `deferred` 意图并记录 `last_deferred_at`；感知/反思/凝练继续运行。
+- 早上第一个非安静 tick 尝试开口；成功时标记 `woke_from_night`、ack 并清零队列。
+  两次 daemon 调用共享 `.corridor/evo-daemon/state.json`，重启后意图仍在。
+- 多轮对话式主动应答仍未实现。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。
