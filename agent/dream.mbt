@@ -1054,6 +1054,139 @@ pub fn dream_due_op(store : @vault.Storage, entries : Array[@core.Entry], reques
   }
 }
 
+// Cross-round experience ledger (续四十二): retention, driver effectiveness and
+// work-kind trends. Read-only; no new state and no writes.
+fn dream_retro_inc(map : Map[String, Int], key : String) -> Unit {
+  let next = match map.get(key) { None => 1; Some(value) => value + 1 }
+  map[key] = next
+}
+
+pub fn dream_retro_op(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  let mut total = 0
+  let mut open = 0
+  let mut retained = 0
+  let mut rejected = 0
+  let delta_keys = ["pages", "stale_pages", "lint_errors", "lint_warnings",
+    "redundant_pages", "uncovered_sources", "sparse_topics", "missing_vectors"]
+  let deltas : Map[String, Int] = Map([])
+  for key in delta_keys { deltas[key] = 0 }
+  let driver_rounds : Map[String, Int] = Map([])
+  let driver_retained : Map[String, Int] = Map([])
+  let driver_rejected : Map[String, Int] = Map([])
+  let driver_done : Map[String, Int] = Map([])
+  let driver_failed : Map[String, Int] = Map([])
+  let driver_seen : Map[String, Bool] = Map([])
+  let mut last_closed = ""
+  let mut last_id = ""
+  let mut last_decision = ""
+  let mut last_delta : Json = Json::null()
+  let mut last_drivers : Json = Json::null()
+  for entry in entries {
+    if entry.kind != "state" || !entry.path.has_prefix("state/dreams/") ||
+      entry.path == "state/dreams/policy.json" {
+      continue
+    }
+    let row = @base.parse(@vault.required(store, entry.path))
+    let status = dream_row_text(row, "status")
+    total = total + 1
+    if status == "open" { open = open + 1 }
+    if status == "retained" { retained = retained + 1 }
+    if status == "rejected" { rejected = rejected + 1 }
+    match optional(row, "outcome") {
+      None => ()
+      Some(Json::Null) => ()
+      Some(outcome) => {
+        let delta = @base.field(outcome, "delta")
+        for key in delta_keys {
+          deltas[key] = deltas[key] + dream_json_int(delta, key)
+        }
+        for name in @base.array(@base.field(outcome, "drivers")) {
+          let driver = @base.text(name)
+          if driver == "" { continue }
+          driver_seen[driver] = true
+          dream_retro_inc(driver_rounds, driver)
+          if status == "retained" { dream_retro_inc(driver_retained, driver) }
+          if status == "rejected" { dream_retro_inc(driver_rejected, driver) }
+        }
+        let closed = dream_row_text(row, "closed_at")
+        if closed != "" && (last_closed == "" ||
+          @base.compare(closed, last_closed) > 0 ||
+          (closed == last_closed && @base.compare(dream_row_text(row, "id"), last_id) > 0)) {
+          last_closed = closed
+          last_id = dream_row_text(row, "id")
+          last_decision = status
+          last_delta = delta
+          last_drivers = @base.field(outcome, "drivers")
+        }
+      }
+    }
+  }
+  let mut work_total = 0
+  let mut work_pending = 0
+  let mut work_claimed = 0
+  let mut work_done = 0
+  let mut work_failed = 0
+  let work_kinds : Map[String, Int] = Map([])
+  for row in dream_work_rows(store, entries) {
+    work_total = work_total + 1
+    let status = dream_row_text(row, "status")
+    if status == "pending" { work_pending = work_pending + 1 }
+    if status == "claimed" { work_claimed = work_claimed + 1 }
+    if status == "done" { work_done = work_done + 1 }
+    if status == "failed" { work_failed = work_failed + 1 }
+    dream_retro_inc(work_kinds, dream_row_text(row, "kind"))
+    let driver = dream_row_text(row, "driver")
+    if driver != "" {
+      driver_seen[driver] = true
+      if status == "done" { dream_retro_inc(driver_done, driver) }
+      if status == "failed" { dream_retro_inc(driver_failed, driver) }
+    }
+  }
+  let driver_names = driver_seen.keys().to_array()
+  driver_names.sort_by(@base.compare)
+  let drivers : Array[Json] = []
+  for name in driver_names {
+    drivers.push({
+      "driver": name,
+      "rounds": driver_rounds.get(name).unwrap_or(0),
+      "retained": driver_retained.get(name).unwrap_or(0),
+      "rejected": driver_rejected.get(name).unwrap_or(0),
+      "tasks_done": driver_done.get(name).unwrap_or(0),
+      "tasks_failed": driver_failed.get(name).unwrap_or(0),
+    })
+  }
+  let kind_names = work_kinds.keys().to_array()
+  kind_names.sort_by(@base.compare)
+  let kinds : Array[Json] = []
+  for name in kind_names {
+    kinds.push({ "kind": name, "count": work_kinds.get(name).unwrap_or(0) })
+  }
+  let closed = retained + rejected
+  let delta_json : Json = {
+    "pages": deltas["pages"].to_json(), "stale_pages": deltas["stale_pages"].to_json(),
+    "lint_errors": deltas["lint_errors"].to_json(), "lint_warnings": deltas["lint_warnings"].to_json(),
+    "redundant_pages": deltas["redundant_pages"].to_json(),
+    "uncovered_sources": deltas["uncovered_sources"].to_json(),
+    "sparse_topics": deltas["sparse_topics"].to_json(),
+    "missing_vectors": deltas["missing_vectors"].to_json(),
+  }
+  {
+    "rounds": { "total": total, "open": open, "retained": retained, "rejected": rejected },
+    "retention_rate": if closed == 0 { 0.0 } else { retained.to_double() / closed.to_double() },
+    "deltas": delta_json,
+    "drivers": drivers.to_json(),
+    "work": { "total": work_total, "pending": work_pending, "claimed": work_claimed,
+      "done": work_done, "failed": work_failed },
+    "work_by_kind": kinds.to_json(),
+    "last": if last_id == "" { Json::null() } else {
+      { "id": last_id, "closed_at": last_closed, "decision": last_decision,
+        "delta": last_delta, "drivers": last_drivers }
+    },
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
 pub fn dream(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   match @base.text(@base.field(request, "op")) {
     "dream-plan" => dream_plan(store, entries, request)
@@ -1067,6 +1200,7 @@ pub fn dream(store : @vault.Storage, entries : Array[@core.Entry], request : Jso
     "dream-work-list" => dream_work_list(store, entries)
     "dream-policy" => dream_policy_op(store, entries, request)
     "dream-due" => dream_due_op(store, entries, request)
+    "dream-retro" => dream_retro_op(store, entries)
     _ => raise @base.Fault("internal_dream_dispatch")
   }
 }

@@ -606,7 +606,7 @@ def main():
         assert (vault / "index.mbt.md").read_bytes() == before
 
         tools = call("list-tools")
-        assert len(tools) == 122, len(tools)
+        assert len(tools) == 123, len(tools)
         names = {tool["name"] for tool in tools}
         for name in ["evo-policy", "evo-init", "evo-observe", "evo-evaluate",
                      "evo-evolve", "evo-status", "evo-rollback",

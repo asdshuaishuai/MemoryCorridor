@@ -746,6 +746,13 @@ MUTATIONS = [
     # 续二十八 dream round ledger: the baseline binding, replay precedence,
     # the two compatibility gates and the event dictionary each have a dream
     # e2e assertion that fails when the guard is dropped.
+    ("retro retention must use closed rounds, not all rounds",
+     "agent/dream.mbt",
+     '  let closed = retained + rejected',
+     '  let closed = total',
+     "dream retro e2e:",
+     "dream_retro_e2e.py"),
+
     ("dream-list must skip the cadence policy record",
      "agent/dream.mbt",
      '  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/dreams/") &&\n    e.path != "state/dreams/policy.json")',

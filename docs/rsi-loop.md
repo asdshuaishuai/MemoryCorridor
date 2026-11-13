@@ -89,6 +89,14 @@ dream-work-list                              # 队列视图（含背压计数/�
 导致写入节奏策略后列举报 `missing_field: status`；现按 `dream-due` 同样的规则跳过，
 `dream_e2e` 增加回归断言。
 
+## 三·七、跨轮复盘（续四十二已交付）
+
+`dream-retro` 是只读经验账本：汇总已关闭轮次的保留率（分母只含 closed）、8 项 delta、
+driver 的轮次/保留/拒绝/任务成功失败、工单状态与类型趋势，以及最近一次关闭轮次。
+它不写任何记录，宿主可据此比较驱动、调整策略或决定下一轮重点；空金库返回零值。
+`scripts/dream_retro_e2e.py` 固定空基线、保留率、delta、驱动、类型、最近轮次、确定性与
+只读字节不变。
+
 ## 四、验收草案（RSI 侧）
 
 - `dream_work_wbtest`：机会 key 去重、背压上限、租约接管、未清 judgments 门禁。

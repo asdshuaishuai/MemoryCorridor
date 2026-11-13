@@ -75,6 +75,7 @@ pub fn tools() -> Array[Tool] {
     { name: "dream-work-list", description: "改进任务队列视图（状态计数/背压/租约），供驱动与宿主核对", fields: [] },
     { name: "dream-policy", description: "梦境改进节奏契约：读/写 due_after_seconds（0..2592000）、min_opportunities（0..500）、max_open_rounds（1..8）；省略全部参数为只读", fields: ["due_after_seconds", "min_opportunities", "max_open_rounds", "at"] },
     { name: "dream-due", description: "只读到期判定：按策略、开轮数、待处理工单与机会数返回 {due,reasons,next_due_in_seconds}；宿主 tick 决定是否开轮", fields: ["at"] },
+    { name: "dream-retro", description: "只读：跨轮次经验聚合（保留率、delta、驱动成功率、任务类型趋势），供 RSI 复盘", fields: [] },
     { name: "evo-policy", description: "读取或设置进化开关与 23 项封闭参数；唯一在禁用态仍可执行的进化操作，参数仅在状态初始化前可写，存在人工闸待办时自动写被暂停", fields: ["enabled", "params", "at"] },
     { name: "evo-init", description: "按当前策略种子化初代种群（Xavier 均匀、精确 binary32 权重）并建立情感/冲动状态；同参重放幂等", fields: ["seed", "at"] },
     { name: "evo-observe", description: "快环一步：本地小网络把感知/身体/关系输入转为有界情感与冲动；同一步同载荷重放，窗口满后环形丢弃最旧", fields: ["step", "kind", "salience", "valence", "outcome", "body", "subject", "at"] },
