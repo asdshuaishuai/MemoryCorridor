@@ -883,3 +883,6 @@
 
 
 - [x] **2026-11-13 续四十二：RSI 跨轮复盘（dream-retro）**：把单轮账本推进到跨轮经验。新增只读 `dream-retro`：汇总 `rounds{total,open,retained,rejected}`、`retention_rate`（分母只含 closed，open 不计）、8 项 delta 求和、`drivers[{driver,rounds,retained,rejected,tasks_done,tasks_failed}]`、`work{total,pending,claimed,done,failed}`、`work_by_kind`、`last` 与 fingerprint；driver/kind 按名称排序，不写记录。验收：`scripts/dream_retro_e2e.py`（空基线、一 retain 一 reject 一 open 的保留率 0.5、delta、driver、type、last、确定性、index 字节不变）+ mutation「保留率不得用全部轮次」手测 CAUGHT；三面 122→123。文档：protocol 一 op、rsi-loop 三·七、acceptance 行。**待 CI 落账**。
+
+
+- [x] **2026-11-13 续四十三：daemon 反思/凝练调度（模拟时钟）**：宿主 daemon 从「每 tick 全做」变为可调度：`--reflect-every`（默认 600s）读 `dream-retro` 跨轮账本并写一条 `reflection` 观察；`--consolidate-every`（默认 1800s）只在到期时跑 RSI driver。新增 `--now`/`--tick-seconds`/`--ticks` 模拟时钟与 `Clock`，驱动/桥的 `sweep_stale`/`run_pass` 支持注入时间戳，测试可确定性复现三拍。验收：`evo_schedule_e2e.py`（10:00/10:01/10:02，反思/凝练仅在 0/2 拍，状态 last_reflect/last_consolidate 正确）+ `evo_daemon_e2e.py` 回归。夜间队列/多轮主动应答仍未实现，文档如实标注。**待 CI 落账**。

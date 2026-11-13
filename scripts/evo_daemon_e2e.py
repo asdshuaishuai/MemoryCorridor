@@ -93,6 +93,7 @@ def main():
         assert first["expression"]["posture"] in ("speak", "lean_in", "think", "idle", "still"), first
         assert 0.0 <= first["expression"]["energy"] <= 1.0, first
         assert first["rsi"] and first["rsi"].get("closed") == "retained", first
+        assert first["reflection"] is not None, first
         assert call("evo-proactive-list")["counts"]["delivered"] >= 1
         assert any(row["status"] == "retained" for row in call("dream-list")["dreams"])
 
@@ -100,7 +101,9 @@ def main():
         # the daily cadence keeps RSI from reopening immediately.
         second, _ = daemon()
         assert second["speech"] is None, second
-        assert second["rsi"] and second["rsi"].get("due") is False, second
+        # Reflection/consolidation are scheduled (default 600/1800s), so an
+        # immediate second tick is a no-op for both.
+        assert second["reflection"] is None and second["rsi"] is None, second
         assert any(item["source"].get("round") for item in second["sense"]["observed"]), second
 
         # The soul switch is authoritative: disabling evo stops the daemon.

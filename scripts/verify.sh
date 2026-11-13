@@ -33,6 +33,7 @@ python3 scripts/evo_outcome_e2e.py
 python3 scripts/evo_proactive_e2e.py
 python3 scripts/evo_expression_e2e.py
 python3 scripts/evo_daemon_e2e.py
+python3 scripts/evo_schedule_e2e.py
 python3 scripts/evo_knowledge_bridge_e2e.py
 python3 scripts/provider_e2e.py
 python3 scripts/provider_jobs_e2e.py

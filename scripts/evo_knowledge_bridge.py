@@ -128,12 +128,12 @@ def outcome_feeling(row):
     return "task", min(1.0, abs(score) / 3.0), normalized, normalized
 
 
-def run_pass(cli: str, vault: str, limit: int, outcomes: bool) -> dict:
+def run_pass(cli: str, vault: str, limit: int, outcomes: bool, stamp: str = None) -> dict:
     status = call(cli, vault, "evo-status")
     if not status.get("initialized"):
         raise RuntimeError("evo_not_initialized: run evo-init first")
     step = int(status["window"]["steps"])
-    at = now()
+    at = stamp or now()
     observed = []
 
     def observe(evo_kind, salience, valence, subject, source, outcome=0.0):

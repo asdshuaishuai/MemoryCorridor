@@ -90,10 +90,10 @@ def llm(prompt: str):
     return payload["choices"][0]["message"]["content"].strip(), model
 
 
-def sweep_stale(cli: str, vault: str, driver: str) -> None:
+def sweep_stale(cli: str, vault: str, driver: str, stamp: str = None) -> None:
     """Fail this driver's own expired claims so a crash cannot wedge the slot."""
     rows = call(cli, vault, "evo-proactive-list")["proactive"]
-    stamp = now()
+    stamp = stamp or now()
     for row in rows:
         lease = row.get("lease_until")
         if (row["status"] == "claimed" and row["driver"] == driver and

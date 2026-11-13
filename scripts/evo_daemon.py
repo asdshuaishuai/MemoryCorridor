@@ -45,13 +45,18 @@ def state_path(vault: str) -> Path:
 def load_state(vault: str) -> dict:
     path = state_path(vault)
     if not path.exists():
-        return {"cycles": 0, "last_tick": ""}
+        return {"cycles": 0, "last_tick": "", "last_reflect": "",
+                "last_consolidate": "", "deferred": 0}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
         return {"cycles": int(value.get("cycles", 0)),
-                "last_tick": value.get("last_tick", "")}
+                "last_tick": value.get("last_tick", ""),
+                "last_reflect": value.get("last_reflect", ""),
+                "last_consolidate": value.get("last_consolidate", ""),
+                "deferred": int(value.get("deferred", 0))}
     except (json.JSONDecodeError, OSError, ValueError):
-        return {"cycles": 0, "last_tick": ""}
+        return {"cycles": 0, "last_tick": "", "last_reflect": "",
+                "last_consolidate": "", "deferred": 0}
 
 
 def save_state(vault: str, state: dict) -> None:
@@ -60,8 +65,46 @@ def save_state(vault: str, state: dict) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
+class Clock:
+    """Real or simulated wall clock; tests pass --now and --tick-seconds."""
+
+    def __init__(self, start=None, tick_seconds=0):
+        if start:
+            self.current = datetime.strptime(start, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        else:
+            self.current = None
+        self.tick_seconds = tick_seconds
+
+    def stamp(self):
+        if self.current is None:
+            return now()
+        return self.current.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def stamp_in(self, seconds):
+        if self.current is None:
+            return iso_in(seconds)
+        return (self.current + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def advance(self):
+        if self.current is not None:
+            self.current = self.current + timedelta(seconds=self.tick_seconds)
+
+    def seconds_since(self, text):
+        if not text:
+            return None
+        try:
+            value = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        current = self.current or datetime.now(timezone.utc)
+        return (current - value).total_seconds()
+
+
 class Daemon:
-    def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit):
+    def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit,
+                 clock, reflect_every, consolidate_every):
         self.cli = cli
         self.vault = vault
         self.name = name
@@ -70,11 +113,20 @@ class Daemon:
         self.with_rsi = with_rsi
         self.expression = expression
         self.limit = limit
+        self.clock = clock
+        self.reflect_every = reflect_every
+        self.consolidate_every = consolidate_every
         self.state = load_state(vault)
+
+    def schedule_due(self, key, every):
+        if every <= 0:
+            return False
+        elapsed = self.clock.seconds_since(self.state.get(key, ""))
+        return elapsed is None or elapsed >= every
 
     def speak(self):
         try:
-            due = driver.call(self.cli, self.vault, "evo-proactive-due", at=now())
+            due = driver.call(self.cli, self.vault, "evo-proactive-due", at=self.clock.stamp())
         except RuntimeError as error:
             if "evo_paused_human_gate" in str(error):
                 return {"paused": str(error)}
@@ -82,7 +134,7 @@ class Daemon:
         if not due["due"]:
             return None
         opened = driver.call(self.cli, self.vault, "evo-proactive-open",
-                             driver=self.name, lease_until=iso_in(300), at=now())
+                             driver=self.name, lease_until=self.clock.stamp_in(300), at=self.clock.stamp())
         try:
             if self.mock:
                 text = f"（mock 主动应答）第 {opened['context']['step']} 步，我想说句话。"
@@ -90,13 +142,13 @@ class Daemon:
             else:
                 text, model = driver.llm(driver.build_prompt(opened))
             driver.call(self.cli, self.vault, "evo-proactive-complete",
-                        id=opened["id"], driver=self.name, at=now(),
+                        id=opened["id"], driver=self.name, at=self.clock.stamp(),
                         result={"text": text, "model": model})
             print(text)
             acked = False
             if self.ack:
                 driver.call(self.cli, self.vault, "evo-proactive-ack",
-                            id=opened["id"], at=now())
+                            id=opened["id"], at=self.clock.stamp())
                 acked = True
             return {"id": opened["id"], "text": text, "model": model,
                     "acked": acked, "reclaimed": opened.get("reclaimed", False)}
@@ -104,7 +156,7 @@ class Daemon:
             try:
                 driver.call(self.cli, self.vault, "evo-proactive-fail",
                             id=opened["id"], driver=self.name,
-                            reason=str(error)[:1000], at=now())
+                            reason=str(error)[:1000], at=self.clock.stamp())
             except RuntimeError:
                 pass
             return {"id": opened["id"], "error": str(error)}
@@ -112,7 +164,10 @@ class Daemon:
     def rsi_pass(self):
         if not self.with_rsi:
             return None
-        due = driver.call(self.cli, self.vault, "dream-due", at=now())
+        if not self.schedule_due("last_consolidate", self.consolidate_every):
+            return None
+        self.state["last_consolidate"] = self.clock.stamp()
+        due = driver.call(self.cli, self.vault, "dream-due", at=self.clock.stamp())
         if not due["due"]:
             return {"due": False, "reasons": due["reasons"]}
         args = [sys.executable, str(RSI_DRIVER), "--vault", self.vault,
@@ -127,8 +182,22 @@ class Daemon:
         except (json.JSONDecodeError, IndexError):
             return {"output": run.stdout.strip()[:1000]}
 
+    def reflect(self):
+        """Read the cross-round ledger and feed it back as an inner-life event."""
+        retro = driver.call(self.cli, self.vault, "dream-retro")
+        status = driver.call(self.cli, self.vault, "evo-status")
+        step = int(status["window"]["steps"]) + 1
+        salience = min(1.0, 0.2 + retro["work"]["total"] / 20.0)
+        valence = max(-1.0, min(1.0, retro["retention_rate"] * 2.0 - 1.0))
+        driver.call(self.cli, self.vault, "evo-observe", step=step, kind="task",
+                    salience=salience, valence=valence, subject="reflection",
+                    body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
+                    at=self.clock.stamp())
+        return {"step": step, "retention_rate": retro["retention_rate"],
+                "rounds": retro["rounds"], "work": retro["work"]}
+
     def tick(self):
-        at = now()
+        at = self.clock.stamp()
         try:
             status = driver.call(self.cli, self.vault, "evo-status")
         except RuntimeError as error:
@@ -137,7 +206,7 @@ class Daemon:
             raise
         if not status.get("initialized"):
             return {"stopped": "evo_not_initialized", "at": at}
-        driver.sweep_stale(self.cli, self.vault, self.name)
+        driver.sweep_stale(self.cli, self.vault, self.name, stamp=at)
         # Speak from the state the soul already has, then absorb the new
         # perception. A fresh negative observation must not swallow a gate that
         # was already open.
@@ -145,20 +214,33 @@ class Daemon:
         if isinstance(speech, dict) and "paused" in speech:
             return {"at": at, "paused": speech["paused"]}
         try:
-            sense = bridge.run_pass(self.cli, self.vault, self.limit, True)
+            sense = bridge.run_pass(self.cli, self.vault, self.limit, True,
+                                    stamp=self.clock.stamp())
         except RuntimeError as error:
             if "evo_paused_human_gate" in str(error):
                 return {"at": at, "paused": str(error)}
             raise
+        reflection = None
+        if self.schedule_due("last_reflect", self.reflect_every):
+            try:
+                reflection = self.reflect()
+            except RuntimeError as error:
+                if "evo_paused_human_gate" not in str(error):
+                    raise
+                reflection = {"paused": str(error)}
+            self.state["last_reflect"] = at
         expression = None
         if self.expression:
-            expression = driver.call(self.cli, self.vault, "evo-expression", at=now())
+            expression = driver.call(self.cli, self.vault, "evo-expression",
+                                     at=self.clock.stamp())
         rsi = self.rsi_pass()
         self.state["cycles"] += 1
         self.state["last_tick"] = at
         save_state(self.vault, self.state)
+        self.clock.advance()
         return {"at": at, "cycle": self.state["cycles"], "sense": sense,
-                "speech": speech, "expression": expression, "rsi": rsi}
+                "speech": speech, "reflection": reflection,
+                "expression": expression, "rsi": rsi}
 
 
 def main() -> int:
@@ -178,11 +260,24 @@ def main() -> int:
                         help="skip the expression frame")
     parser.add_argument("--limit", type=int, default=3,
                         help="knowledge tensions per tick (1..50)")
+    parser.add_argument("--reflect-every", type=int, default=600,
+                        help="seconds between reflection passes (0 disables)")
+    parser.add_argument("--consolidate-every", type=int, default=1800,
+                        help="seconds between RSI consolidation passes (0 disables)")
+    parser.add_argument("--now", default=None,
+                        help="simulated start time YYYY-MM-DDTHH:MM:SSZ (tests)")
+    parser.add_argument("--tick-seconds", type=int, default=0,
+                        help="simulated seconds advanced per tick (tests; default=interval)")
+    parser.add_argument("--ticks", type=int, default=0,
+                        help="run this many ticks then exit (0 = until stopped)")
     args = parser.parse_args()
     if not 1 <= args.limit <= 50:
         parser.error("--limit must be in 1..50")
+    clock = Clock(args.now, args.tick_seconds or int(args.interval))
     daemon = Daemon(args.cli, args.vault, args.driver, args.mock, not args.no_ack,
-                    args.with_rsi, not args.no_expression, args.limit)
+                    args.with_rsi, not args.no_expression, args.limit, clock,
+                    args.reflect_every, args.consolidate_every)
+    target = args.ticks or (1 if args.once else 0)
     try:
         while True:
             try:
@@ -192,8 +287,10 @@ def main() -> int:
                     return 0
             except Exception as error:  # noqa: BLE001 - a daemon must not die mid-tick
                 print(f"daemon: tick failed: {error}", file=sys.stderr)
-                if args.once:
+                if args.once or args.ticks:
                     return 1
+            if target and daemon.state["cycles"] >= target:
+                return 0
             if args.once:
                 return 0
             time.sleep(args.interval)

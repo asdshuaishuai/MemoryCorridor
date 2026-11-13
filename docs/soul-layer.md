@@ -79,12 +79,13 @@
 | 周期 | 动作 | 落点 |
 | --- | --- | --- |
 | 每 tick（默认 60s） | 先按已有状态判定/应答/ack，再感知知识/身体/关系 → `evo-observe`，最后出表达帧 | `state/evo/` |
-| `dream-due` 到期 | RSI driver 一圈：开轮→派工→判断→关轮 | `state/dreams/`、`state/dream-work/` |
+| `--reflect-every`（默认 600s） | 反思：`dream-retro` 跨轮账本 → 一条 `reflection` 观察 | evo 观察 |
+| `--consolidate-every`（默认 1800s） | 凝练：`dream-due` 到期时跑一圈 RSI driver | `state/dreams/`、`state/dream-work/` |
 | 轮次关闭后 | 桥把 `outcome.delta` 回灌为观察（游标去重） | evo 观察 |
 
-当前实现是**单间隔最小 daemon**：主动、感知、表达每 tick 一次，RSI 由 `dream-due` 门禁。
-独立的反思/凝练周期、夜间队列、多轮对话式主动应答尚未实现，列入后续，不在本页写成
-已交付。具体间隔由宿主配置；引擎只提供确定性 op 与门禁。
+当前实现支持每 tick / 反思 / 凝练三条调度，间隔由宿主配置，`--now` + `--ticks` 可用
+模拟时钟做确定性测试。**夜间队列、多轮对话式主动应答尚未实现**，不在本页写成已交付。
+引擎只提供确定性 op 与门禁。
 
 ## 六、当前状态
 

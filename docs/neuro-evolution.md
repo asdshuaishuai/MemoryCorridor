@@ -307,6 +307,15 @@ v1.8 知识结果适应度（续四十一，证据见 `scripts/evo_outcome_e2e.p
 - 这把「情感为记忆服务」从输入层推进到选择压力层：不同成员在同一知识窗口下按
   情感-结果对齐度被区分，而不是所有成员共享同一个外部分数。
 
+v1.9 daemon 调度（续四十三，宿主侧，证据见 `scripts/evo_schedule_e2e.py`）：
+
+- `evo_daemon.py` 增加 `--reflect-every`（默认 600s）与 `--consolidate-every`
+  （默认 1800s）：反思读 `dream-retro` 并写一条 `reflection` 观察；凝练在到期时跑
+  一圈 RSI driver。两者不再每 tick 执行。
+- `--now` + `--tick-seconds` + `--ticks` 提供模拟时钟；e2e 固定 10:00/10:01/10:02
+  三拍，验证反思/凝练只在 0/2 拍运行、状态时间戳正确。
+- 夜间队列与多轮主动应答仍未实现；当前 daemon 是单间隔/单进程参考实现。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。
