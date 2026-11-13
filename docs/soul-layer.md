@@ -78,13 +78,14 @@
 
 | 周期 | 动作 | 落点 |
 | --- | --- | --- |
-| 每 tick（默认 60s） | 先按已有状态判定/应答/ack，再感知知识/身体/关系 → `evo-observe`，最后出表达帧 | `state/evo/` |
+| 每 tick（默认 60s） | 先按已有状态判定/应答/ack；再感知用户消息（宿主 NLP 适配器）与知识/身体/关系 → `evo-observe`；最后出表达帧 | `state/evo/` |
 | `--reflect-every`（默认 600s） | 反思：`dream-retro` 跨轮账本 → 一条 `reflection` 观察 | evo 观察 |
 | `--consolidate-every`（默认 1800s） | 凝练：`dream-due` 到期时跑一圈 RSI driver | `state/dreams/`、`state/dream-work/` |
 | `--quiet-start/--quiet-end`（默认 22–7） | 安静时段只累计 deferred 意图，不开请求；早上再开口 | daemon state |
 | 轮次关闭后 | 桥把 `outcome.delta` 回灌为观察（游标去重） | evo 观察 |
 
-当前实现支持每 tick / 反思 / 凝练三条调度与安静时段队列，间隔由宿主配置，
+用户消息由宿主侧 `scripts/nlp_adapter.py` 转成 affect（lexicon 或 LLM provider），
+核心不跑 NLP 模型；见 [nlp-adapter.md](nlp-adapter.md)。当前实现支持每 tick / 反思 / 凝练三条调度与安静时段队列，间隔由宿主配置，
 `--now` + `--ticks` 可用模拟时钟做确定性测试。**多轮对话式主动应答尚未实现**，不在
 本页写成已交付。引擎只提供确定性 op 与门禁。
 

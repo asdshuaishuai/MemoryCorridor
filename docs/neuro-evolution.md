@@ -324,6 +324,15 @@ v1.10 夜间队列（续四十四，宿主侧，证据见 `scripts/evo_night_e2e
   两次 daemon 调用共享 `.corridor/evo-daemon/state.json`，重启后意图仍在。
 - 多轮对话式主动应答仍未实现。
 
+v1.11 宿主 NLP 感知（续四十五，证据见 `scripts/nlp_adapter_e2e.py`）：
+
+- `scripts/nlp_adapter.py` 提供 `affect`（用户文本 → 有界 valence/arousal/salience/
+  topics）与 `expand`（查询 → 1..8 条检索查询）；默认确定性 lexicon，可选
+  OpenAI 兼容 provider，失败关闭。
+- daemon `--message-file` 读取宿主消息文件的完整新行，按字节游标去重，把每条
+  变成 `kind=social`、`subject=user` 的 `evo-observe`；原文不进入引擎，只留哈希。
+- NLP 在宿主侧，核心仍零模型；情感信号只作为观察，不改写知识或用户画像。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。

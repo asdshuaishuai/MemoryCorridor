@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import evo_agent_driver as driver  # noqa: E402
 import evo_knowledge_bridge as bridge  # noqa: E402
+import nlp_adapter  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 RSI_DRIVER = ROOT / "scripts/rsi_agent_driver.py"
@@ -46,17 +47,18 @@ def load_state(vault: str) -> dict:
     path = state_path(vault)
     if not path.exists():
         return {"cycles": 0, "last_tick": "", "last_reflect": "",
-                "last_consolidate": "", "deferred": 0}
+                "last_consolidate": "", "deferred": 0, "message_offset": 0}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
         return {"cycles": int(value.get("cycles", 0)),
                 "last_tick": value.get("last_tick", ""),
                 "last_reflect": value.get("last_reflect", ""),
                 "last_consolidate": value.get("last_consolidate", ""),
-                "deferred": int(value.get("deferred", 0))}
+                "deferred": int(value.get("deferred", 0)),
+                "message_offset": int(value.get("message_offset", 0))}
     except (json.JSONDecodeError, OSError, ValueError):
         return {"cycles": 0, "last_tick": "", "last_reflect": "",
-                "last_consolidate": "", "deferred": 0}
+                "last_consolidate": "", "deferred": 0, "message_offset": 0}
 
 
 def save_state(vault: str, state: dict) -> None:
@@ -108,7 +110,8 @@ class Clock:
 
 class Daemon:
     def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit,
-                 clock, reflect_every, consolidate_every, quiet_start, quiet_end):
+                 clock, reflect_every, consolidate_every, quiet_start, quiet_end,
+                 message_file=None, affect_provider="lexicon"):
         self.cli = cli
         self.vault = vault
         self.name = name
@@ -122,7 +125,59 @@ class Daemon:
         self.consolidate_every = consolidate_every
         self.quiet_start = quiet_start
         self.quiet_end = quiet_end
+        self.message_file = message_file
+        self.affect_provider = affect_provider
         self.state = load_state(vault)
+
+    def read_messages(self):
+        """Read complete, newline-terminated lines appended since the cursor."""
+        if not self.message_file:
+            return []
+        path = Path(self.message_file)
+        if not path.exists():
+            return []
+        size = path.stat().st_size
+        offset = int(self.state.get("message_offset", 0))
+        if size < offset:
+            offset = 0
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            data = handle.read()
+        head, sep, tail = data.rpartition(b"\n")
+        if sep:
+            payload = head + b"\n"
+            consumed = offset + len(payload)
+        else:
+            payload = b""
+            consumed = offset
+        lines = [line.strip() for line in payload.decode("utf-8", errors="replace").splitlines()
+                 if line.strip()]
+        self.state["message_offset"] = consumed
+        return lines[-20:]
+
+    def sense_messages(self):
+        messages = self.read_messages()
+        if not messages:
+            return []
+        status = driver.call(self.cli, self.vault, "evo-status")
+        step = int(status["window"]["steps"])
+        observed = []
+        for text in messages:
+            try:
+                affect = nlp_adapter.affect(text, provider=self.affect_provider)
+                step += 1
+                driver.call(self.cli, self.vault, "evo-observe", step=step,
+                            kind="social", salience=affect["salience"],
+                            valence=affect["valence"], subject="user",
+                            body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
+                            at=self.clock.stamp())
+                observed.append({"step": step, "valence": affect["valence"],
+                                 "arousal": affect["arousal"],
+                                 "topics": affect["topics"],
+                                 "provider": affect["provider"]})
+            except RuntimeError as error:
+                observed.append({"error": str(error)[:300]})
+        return observed
 
     def is_quiet(self):
         if self.quiet_start < 0:
@@ -249,6 +304,12 @@ class Daemon:
                     speech["woke_from_night"] = True
                 self.state["deferred"] = 0
         try:
+            messages = self.sense_messages()
+        except RuntimeError as error:
+            if "evo_paused_human_gate" in str(error):
+                return {"at": at, "paused": str(error)}
+            raise
+        try:
             sense = bridge.run_pass(self.cli, self.vault, self.limit, True,
                                     stamp=self.clock.stamp())
         except RuntimeError as error:
@@ -273,8 +334,8 @@ class Daemon:
         self.state["last_tick"] = at
         save_state(self.vault, self.state)
         self.clock.advance()
-        return {"at": at, "cycle": self.state["cycles"], "sense": sense,
-                "speech": speech, "reflection": reflection,
+        return {"at": at, "cycle": self.state["cycles"], "messages": messages,
+                "sense": sense, "speech": speech, "reflection": reflection,
                 "expression": expression, "rsi": rsi}
 
 
@@ -303,6 +364,11 @@ def main() -> int:
                         help="quiet-hours start hour (0..23; -1 disables)")
     parser.add_argument("--quiet-end", type=int, default=7,
                         help="quiet-hours end hour (0..23)")
+    parser.add_argument("--message-file", default=None,
+                        help="host-owned newline-delimited user messages to sense")
+    parser.add_argument("--affect-provider", default="lexicon",
+                        choices=["lexicon", "llm"],
+                        help="NLP provider for user-message affect")
     parser.add_argument("--now", default=None,
                         help="simulated start time YYYY-MM-DDTHH:MM:SSZ (tests)")
     parser.add_argument("--tick-seconds", type=int, default=0,
@@ -316,7 +382,8 @@ def main() -> int:
     daemon = Daemon(args.cli, args.vault, args.driver, args.mock, not args.no_ack,
                     args.with_rsi, not args.no_expression, args.limit, clock,
                     args.reflect_every, args.consolidate_every,
-                    args.quiet_start, args.quiet_end)
+                    args.quiet_start, args.quiet_end,
+                    args.message_file, args.affect_provider)
     target = args.ticks or (1 if args.once else 0)
     try:
         while True:

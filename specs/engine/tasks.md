@@ -889,3 +889,6 @@
 
 
 - [x] **2026-11-13 续四十四：daemon 夜间队列**：`--quiet-start/--quiet-end`（默认 22–7）安静时段不开主动请求，只累计 `deferred` 并记录 `last_deferred_at`；感知/反思/凝练继续。早上第一个非安静 tick 尝试开口，成功则 `woke_from_night` + ack + 清零。状态落 `.corridor/evo-daemon/state.json`，两次 daemon 调用（夜间、早上）共享，重启不丢意图。验收：`evo_night_e2e.py`（22:00 quiet/deferred、无 proactive 记录、state deferred=1；07:00 ack、woke_from_night、delivered=1、deferred=0）+ schedule/daemon 回归。多轮主动应答仍未实现。**CI 落账**：run 43422736466（2e8a648）conclusion=success（2026-11-13）；完整门禁 170 mutation 全部捕获（168 CAUGHT + 2 COMPILE，0 SURVIVED）；evo night/schedule/daemon、dream retro e2e 与 map reader browser check 全过。
+
+
+- [x] **2026-11-13 续四十五：宿主侧 NLP 适配器（情感感知 + 查询扩展）**：决定 NLP 不进核心，只做宿主感知层。新增 `scripts/nlp_adapter.py`：`affect` 把用户文本映射为有界 valence/arousal/salience/topics/entities（默认确定性 lexicon；可选 OpenAI 兼容 LLM provider，失败关闭）；`expand` 生成 1..8 条检索查询（原查询第一，lexicon 同义词或 LLM）。daemon 新增 `--message-file`/`--affect-provider`：只读完整新行、字节游标落 `.corridor/evo-daemon/state.json` 去重，每条消息变 `kind=social`/`subject=user` 的 `evo-observe`；原文不入引擎，只留 hash。验收：`nlp_adapter_e2e.py`（正/负/中性、边界、确定性、查询扩展、daemon 游标/新增消息/知识页零写）。文档：`docs/nlp-adapter.md`、soul-layer、neuro-evolution v1.11、acceptance 行。**待 CI 落账**。
