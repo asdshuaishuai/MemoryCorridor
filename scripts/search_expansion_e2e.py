@@ -68,6 +68,18 @@ def main():
         assert summary["errors"] == [], summary
         assert all(path.read_bytes() == content for path, content in before.items())
 
+        # llm wiring: endpoint args are accepted even when the deterministic
+        # provider is pinned; no network is touched.
+        wiring = subprocess.run([sys.executable, str(EXPANDER), "--vault", str(vault),
+                                 "--cli", str(EXE), "--query", "青瓷的来源",
+                                 "--provider", "lexicon", "--limit", "1",
+                                 "--endpoint", "http://127.0.0.1:1", "--model", "m",
+                                 "--api-key", "k"],
+                                capture_output=True, text=True, timeout=120)
+        assert wiring.returncode == 0, (wiring.stdout, wiring.stderr)
+        wiring_summary = json.loads(wiring.stdout)
+        assert wiring_summary["provider"] == "lexicon", wiring_summary
+
     print("search expansion e2e: auto expansion, per-query engine calls, merged hits "
           "with expansion source, read-only knowledge passed")
     return 0

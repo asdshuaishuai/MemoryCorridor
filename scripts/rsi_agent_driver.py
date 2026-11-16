@@ -159,9 +159,11 @@ def process_task(cli: str, vault: str, task, driver: str, mock: bool,
             parsed = parse_judgments(llm(build_prompt(task)))
             result = {"judgments": parsed["judgments"], "proposals": []}
             if propose and parsed["page"]:
+                safe_title = (parsed["page"]["title"].replace("\n", " ")
+                              .replace('"', "'").strip() or task["id"][:12])
                 result["proposals"].append(
                     write_staged_proposal(vault, task, parsed["page"]["body"],
-                                          parsed["page"]["title"]))
+                                          safe_title))
         call(cli, vault, "dream-work-complete", id=task["id"], driver=driver,
              at=now(), result=result)
         return "done"

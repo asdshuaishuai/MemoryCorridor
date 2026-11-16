@@ -40,13 +40,19 @@ def main() -> int:
                         choices=["auto", "lexicon", "llm", "hanlp"])
     parser.add_argument("--limit", type=int, default=10, help="hits per query (1..100)")
     parser.add_argument("--max-queries", type=int, default=8, help="expansions to run (1..8)")
+    parser.add_argument("--endpoint", default=None,
+                        help="OpenAI-compatible base URL for --provider llm/auto")
+    parser.add_argument("--model", default=None, help="model id for --provider llm/auto")
+    parser.add_argument("--api-key", default=None, help="bearer key for --provider llm/auto")
     args = parser.parse_args()
     if not 1 <= args.limit <= 100:
         parser.error("--limit must be in 1..100")
     if not 1 <= args.max_queries <= 8:
         parser.error("--max-queries must be in 1..8")
 
-    expansion = nlp_adapter.expand(args.query, provider=args.provider)
+    expansion = nlp_adapter.expand(args.query, provider=args.provider,
+                                   endpoint=args.endpoint, model=args.model,
+                                   key=args.api_key)
     queries = expansion["queries"][:args.max_queries]
     merged = []
     seen = set()

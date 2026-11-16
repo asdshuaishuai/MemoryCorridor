@@ -9,7 +9,8 @@
 > 事件）与只读 `evo-checkpoint` / `evo-fossils`。
 > 续三十三至三十七已补：主动式 outbox（due/open/complete/fail/list）、送达确认
 > `evo-proactive-ack`、过期租约接管、宿主主动驱动。拟人化表达帧与最小 daemon 周期
-> 是**固定点**，设计见 [soul-layer.md](soul-layer.md)，尚未实现前不写成已交付。
+> 是**固定点**，设计见 [soul-layer.md](soul-layer.md)，并已交付（续三十九/四十/
+> 四十三/四十四）；多轮对话式主动应答仍延后，不写成已交付。
 > 未实现（明确延后，见 §十二/§十三）：独立 `checkpoint.json` 与 `evaluation/<gen>.json`、
 > 场景轮换调度器、批量 observe、NEAT/拓扑变异、语言头、LLM 标注者。
 > 定位：本子系统是**记忆/资料系统的放大器与主动性调度层**，不是 SoulFlow 灵魂本体的复刻。
@@ -314,7 +315,7 @@ v1.9 daemon 调度（续四十三，宿主侧，证据见 `scripts/evo_schedule_
   一圈 RSI driver。两者不再每 tick 执行。
 - `--now` + `--tick-seconds` + `--ticks` 提供模拟时钟；e2e 固定 10:00/10:01/10:02
   三拍，验证反思/凝练只在 0/2 拍运行、状态时间戳正确。
-- 夜间队列与多轮主动应答仍未实现；当前 daemon 是单间隔/单进程参考实现。
+- 多轮主动应答仍未实现；夜间队列在下一节 v1.10 交付。当前 daemon 是单间隔/单进程参考实现。
 
 v1.10 夜间队列（续四十四，宿主侧，证据见 `scripts/evo_night_e2e.py`）：
 
