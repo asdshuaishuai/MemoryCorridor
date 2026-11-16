@@ -37,6 +37,17 @@ def main():
         assert len(row["text_sha256"]) == 64 and row["provider"] == "lexicon", row
     assert positive == json.loads(adapter("affect", "--text", "今天很开心，谢谢你！").stdout)
 
+    # 1b. English negation/intensifier: the previous-word check, not just a
+    #     character window, must flip/weight the score.
+    english_not = json.loads(adapter("affect", "--text", "I am not happy").stdout)
+    english_very = json.loads(adapter("affect", "--text", "This is very good").stdout)
+    english_not_bad = json.loads(adapter("affect", "--text", "not bad").stdout)
+    assert english_not["valence"] < -0.3, english_not
+    assert english_very["valence"] > 0.5, english_very
+    assert english_not_bad["valence"] > 0.3, english_not_bad
+    for row in (english_not, english_very, english_not_bad):
+        assert row["provider"] == "lexicon", row
+
     # 2. query expansion keeps the original first and adds deterministic terms.
     expanded = json.loads(adapter("expand", "--query", "青瓷的来源").stdout)
     assert expanded["queries"][0] == "青瓷的来源", expanded
@@ -107,6 +118,13 @@ def main():
             handle.write("今天压力很大，很难过。\n")
         third = daemon()
         assert len(third["messages"]) == 1 and third["messages"][0]["valence"] < -0.3, third
+
+        # 3b. rotation/truncation: a shorter file resets the cursor instead of
+        #     replaying already-consumed lines.
+        messages.write_text("又一条新消息。\n", encoding="utf-8")
+        rotated = daemon()
+        assert len(rotated["messages"]) == 1, rotated
+        assert rotated["messages"][0]["valence"] == 0.0, rotated
 
         after = call("status")
         assert after["pages"] == before["pages"] and after["sources"] == before["sources"], (before, after)

@@ -910,3 +910,6 @@
 
 
 - [x] **2026-11-16 续五十一：主动跟进链（evo-proactive-followup）**：用户回复已投递的主动消息后，宿主可创建同链跟进。记录新增 `parent/turn/user_text`；`evo-proactive-followup {id,user_text,driver,lease_until,at}` 要求父 `done+delivered`（否则 `evo_proactive_parent_not_delivered`）、链深 ≤8（`evo_proactive_followup_depth`）、无 pending/claimed（`evo_proactive_backpressure`）；绕过情感 due 但不绕这三道门。驱动 `--followup-parent/--user-text` 回答一条跟进，prompt 带父回复 + 用户原话，mock 以 `第N轮` 标记；list 回显 parent/turn/user_text。验收：`evo_followup_e2e.py`（1 轮驱动、链深 8 拒绝第 9、在飞背压、未投递父拒绝）+ 2 条 mutation 手测 CAUGHT；三面 123→124。文档：protocol 一 op、neuro v1.13、soul-layer、acceptance 行。**待 CI 落账**。
+
+
+- [x] **2026-11-17 续五十二：基础强化与逻辑补全（不扩新能力）**：修真实缺口——lexicon 程度/否定检测原只靠 3 字符窗口，英文 `not happy`/`very good` 失效，现改为「字符窗口 + 前一个空白分隔词」双检；`auto` 回退从只捕 RuntimeError 扩到 RuntimeError/ImportError/OSError，HanLP 运行时损坏也回退并标记；`search_expander` 单条扩展查询失败记入 `errors` 并继续，不拖垮整次检索；daemon 消息文件截断/轮转时游标重置，不重放已消费行。验收：`nlp_adapter_e2e.py`（英文否定/程度/`not bad`、auto 回退、轮转不重放）+ `search_expansion_e2e.py`（errors 为空）。无引擎改动、无新增 mutation。**待 CI 落账**。

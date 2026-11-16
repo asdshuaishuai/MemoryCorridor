@@ -50,8 +50,13 @@ def main() -> int:
     queries = expansion["queries"][:args.max_queries]
     merged = []
     seen = set()
+    errors = []
     for query in queries:
-        page = call(args.cli, args.vault, "search", query=query, limit=args.limit)
+        try:
+            page = call(args.cli, args.vault, "search", query=query, limit=args.limit)
+        except RuntimeError as error:
+            errors.append({"query": query, "error": str(error)[:200]})
+            continue
         for hit in page.get("hits", []):
             key = hit.get("page") or hit.get("id")
             if not key or key in seen:
@@ -67,6 +72,7 @@ def main() -> int:
         "provider": expansion["provider"],
         "auto_fallback": expansion.get("auto_fallback"),
         "results": merged,
+        "errors": errors,
         "count": len(merged),
     }, ensure_ascii=False))
     return 0

@@ -89,8 +89,13 @@ def _hanlp_tokens(cached, text):
 
 
 def has_near(text, index, words, width=3):
+    # Chinese has no spaces, so a short character window works; English needs the
+    # previous whitespace-delimited word ("not happy", "very good").
     window = text[max(0, index - width):index]
-    return any(word in window for word in words)
+    if any(word in window for word in words):
+        return True
+    parts = text[:index].split()
+    return bool(parts) and parts[-1] in words
 
 
 def lexicon_affect(text):
@@ -174,7 +179,7 @@ def affect(text, provider="auto", endpoint=None, model=None, key=None):
     if provider == "auto":
         try:
             return hanlp_affect(text)
-        except RuntimeError as error:
+        except (RuntimeError, ImportError, OSError) as error:
             row = lexicon_affect(text)
             row["auto_fallback"] = str(error)[:200]
             return row
@@ -280,7 +285,7 @@ def expand(query, provider="auto", endpoint=None, model=None, key=None):
     if provider == "auto":
         try:
             return hanlp_expand(query)
-        except RuntimeError as error:
+        except (RuntimeError, ImportError, OSError) as error:
             row = lexicon_expand(query)
             row["auto_fallback"] = str(error)[:200]
             return row

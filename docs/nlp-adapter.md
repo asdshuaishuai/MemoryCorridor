@@ -29,7 +29,9 @@ expand  query     -> {queries: [original, ...]}
 
 - **lexicon（确定性兜底）**：内置中英情感词、程度词、否定词与主题词；
   计算有界 valence（-1..1）、arousal（0..1）、salience（0..1）、topics。
-  适合测试、离线演示与无模型环境；词表小、领域窄，不宣称通用情感分析。
+  程度/否定检测用「字符窗口 + 前一个空白分隔词」双检，中文无空格与英文
+  `not happy` / `very good` 都能识别。适合测试、离线演示与无模型环境；
+  词表小、领域窄，不宣称通用情感分析。
 - **llm（可选）**：OpenAI 兼容 `/chat/completions`，要求模型只返回
   `{valence,arousal,salience,topics,entities}` JSON；越界值夹紧，非法结构
   失败关闭。环境变量 `NLP_LLM_ENDPOINT` / `NLP_LLM_MODEL` / `NLP_LLM_API_KEY`。
@@ -92,8 +94,9 @@ expand  query     -> {queries: [original, ...]}
 ## 七、检索入口（续四十九已交付）
 
 `scripts/search_expander.py`：`--query` → 适配器 `expand` → 逐条 `search` →
-按页合并去重 → 输出 `{query, expansions, provider, auto_fallback, results, count}`；
-每条 hit 带 `matched_query` 与 `expansion_source`。只读，不写知识页。
+按页合并去重 → 输出 `{query, expansions, provider, auto_fallback, results, errors, count}`；
+每条 hit 带 `matched_query` 与 `expansion_source`。单条扩展查询失败记入 `errors`
+并继续，不拖垮整次检索；只读，不写知识页。
 `scripts/search_expansion_e2e.py` 固定：auto 回退标记、原查询第一、合并去重、
 来源记录、知识页字节不变。
 

@@ -65,6 +65,7 @@ def main():
         for hit in summary["results"]:
             assert hit["matched_query"] in summary["expansions"], hit
             assert hit["expansion_source"].startswith("nlp_adapter:"), hit
+        assert summary["errors"] == [], summary
         assert all(path.read_bytes() == content for path, content in before.items())
 
     print("search expansion e2e: auto expansion, per-query engine calls, merged hits "
