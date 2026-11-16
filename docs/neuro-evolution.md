@@ -333,6 +333,14 @@ v1.11 宿主 NLP 感知（续四十五，证据见 `scripts/nlp_adapter_e2e.py`�
   变成 `kind=social`、`subject=user` 的 `evo-observe`；原文不进入引擎，只留哈希。
 - NLP 在宿主侧，核心仍零模型；情感信号只作为观察，不改写知识或用户画像。
 
+v1.12 主动表达连续性（续五十，宿主侧，证据见 `scripts/evo_proactive_e2e.py`）：
+
+- 驱动/daemon 在开口前读取最近一条**已投递**的主动回复（`evo-proactive-list`，
+  排除当前请求），把它作为 `build_prompt(request, history)` 的上下文，提示模型
+  承接而不重复；mock 模式以 `·续` 标记验证历史确实进入链路。
+- 历史只来自已 ack 的回复，不把失败/未投递内容当作说过的话；仍不构成多轮对话
+  （用户轮次输入契约尚未定义）。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。

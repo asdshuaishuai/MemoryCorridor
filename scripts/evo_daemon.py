@@ -204,12 +204,14 @@ class Daemon:
             return None
         opened = driver.call(self.cli, self.vault, "evo-proactive-open",
                              driver=self.name, lease_until=self.clock.stamp_in(300), at=self.clock.stamp())
+        history = driver.history_text(self.cli, self.vault, opened["id"])
         try:
             if self.mock:
-                text = f"（mock 主动应答）第 {opened['context']['step']} 步，我想说句话。"
+                marker = "·续" if history else ""
+                text = f"（mock 主动应答{marker}）第 {opened['context']['step']} 步，我想说句话。"
                 model = "mock"
             else:
-                text, model = driver.llm(driver.build_prompt(opened))
+                text, model = driver.llm(driver.build_prompt(opened, history))
             driver.call(self.cli, self.vault, "evo-proactive-complete",
                         id=opened["id"], driver=self.name, at=self.clock.stamp(),
                         result={"text": text, "model": model})

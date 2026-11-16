@@ -128,6 +128,8 @@ def main():
                              capture_output=True, text=True, timeout=120)
         assert run.returncode == 0, (run.stdout, run.stderr)
         assert "mock 主动应答" in run.stdout, run.stdout
+        # Continuity: request 1 was delivered, so driver-c's prompt carries it.
+        assert "·续" in run.stdout, run.stdout
         after = call("evo-proactive-list")
         assert after["counts"]["done"] == before["done"] + 1, after["counts"]
         assert after["counts"]["delivered"] == before["delivered"] + 1, after["counts"]

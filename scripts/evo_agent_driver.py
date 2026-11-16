@@ -51,13 +51,17 @@ def call(cli: str, vault: str, op: str, **fields):
     return response["result"]
 
 
-def build_prompt(request) -> str:
+def build_prompt(request, history="") -> str:
     """Host-owned prompt template; the engine only supplies structured tokens."""
     context = request["context"]
     emotion = context["emotion"]
     relations = ", ".join(
         f'{row["subject"]}(trust={row["trust"]:.2f})' for row in context["relations"][:3]
     ) or "无"
+    prior = ""
+    if history:
+        prior = ("上一轮你主动说过：" + history.strip()[:240]
+                 + "\n不要重复它；如果自然，可以承接它。\n")
     return (
         "你是它的内在声音。根据以下内部状态，主动对用户说一句简短、自然的话（不超过 80 字），"
         "不要解释你在做什么，不要提及 JSON 或系统。\n"
@@ -65,7 +69,8 @@ def build_prompt(request) -> str:
         f"冲动强度：{context['impulse']:.2f}；触发原因：{request['reason']}；"
         f"紧迫度：{request['urgency']:.2f}\n"
         f"关系：{relations}\n"
-        f"最近步数：{context['step']}"
+        f"最近步数：{context['step']}\n"
+        + prior
     )
 
 
@@ -88,6 +93,18 @@ def llm(prompt: str):
     with urllib.request.urlopen(request, timeout=120) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return payload["choices"][0]["message"]["content"].strip(), model
+
+
+def history_text(cli: str, vault: str, exclude_id: str = None) -> str:
+    """Last delivered proactive reply, for continuity (never the current one)."""
+    rows = call(cli, vault, "evo-proactive-list").get("proactive", [])
+    usable = [row for row in rows
+              if row.get("status") == "done" and row.get("delivered_at")
+              and row.get("result") and row["id"] != exclude_id]
+    usable.sort(key=lambda row: (row.get("step", 0), row["id"]))
+    if not usable:
+        return ""
+    return (usable[-1]["result"].get("text") or "")[:240]
 
 
 def sweep_stale(cli: str, vault: str, driver: str, stamp: str = None) -> None:
@@ -137,12 +154,15 @@ def main() -> int:
             continue
         opened = call(args.cli, args.vault, "evo-proactive-open",
                       driver=args.driver, lease_until=iso_in(300), at=at)
+        history = history_text(args.cli, args.vault, opened["id"])
         try:
             if args.mock:
-                text = f"（mock 主动应答）现在是第 {opened['context']['step']} 步，我想和你说句话。"
+                marker = "·续" if history else ""
+                text = (f"（mock 主动应答{marker}）现在是第 {opened['context']['step']} 步，"
+                        "我想和你说句话。")
                 model = "mock"
             else:
-                text, model = llm(build_prompt(opened))
+                text, model = llm(build_prompt(opened, history))
         except Exception as error:  # noqa: BLE001 - driver must record, not crash
             call(args.cli, args.vault, "evo-proactive-fail", id=opened["id"],
                  driver=args.driver, reason=str(error)[:1000], at=now())
