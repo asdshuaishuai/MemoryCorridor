@@ -366,9 +366,10 @@ def main() -> int:
                         help="quiet-hours end hour (0..23)")
     parser.add_argument("--message-file", default=None,
                         help="host-owned newline-delimited user messages to sense")
-    parser.add_argument("--affect-provider", default="lexicon",
-                        choices=["lexicon", "llm"],
-                        help="NLP provider for user-message affect")
+    parser.add_argument("--affect-provider", default="auto",
+                        choices=["auto", "lexicon", "llm", "hanlp"],
+                        help="NLP provider for user-message affect (auto = HanLP first, "
+                             "self-written lexicon fallback)")
     parser.add_argument("--now", default=None,
                         help="simulated start time YYYY-MM-DDTHH:MM:SSZ (tests)")
     parser.add_argument("--tick-seconds", type=int, default=0,

@@ -18,9 +18,16 @@ expand  query     -> {queries: [original, ...]}
 引擎只消费结构化结果：`evo-observe` 的 salience/valence、`search.queries`。
 适配器不写页面、不提交工单、不改变权威目录。
 
+## 〇、主体定位（续四十八）
+
+宿主 NLP 的主体是 HanLP（`--provider auto`，默认）：HanLP 优先，自研 lexicon
+兜底（未安装/无 Java/失败关闭时输出 `provider` 实值 + `auto_fallback` 标记，
+不为测试或离线环境静默伪装质量）。MoonBit 核心永远只有自研词法/检索，
+不被 HanLP 或任何模型进入；这一层提升的是「感知的质量」，不是「知识的权威」。
+
 ## 二、`affect`：用户文本 → 情感信号
 
-- **lexicon（默认，离线/确定性）**：内置中英情感词、程度词、否定词与主题词；
+- **lexicon（确定性兜底）**：内置中英情感词、程度词、否定词与主题词；
   计算有界 valence（-1..1）、arousal（0..1）、salience（0..1）、topics。
   适合测试、离线演示与无模型环境；词表小、领域窄，不宣称通用情感分析。
 - **llm（可选）**：OpenAI 兼容 `/chat/completions`，要求模型只返回
@@ -33,7 +40,7 @@ expand  query     -> {queries: [original, ...]}
 
 ## 三、`expand`：查询 → 检索查询集
 
-- **lexicon**：内置小同义词表（记忆/来源/青瓷/检索/情感/人格/梦/资料等），
+- **lexicon（兜底）**：内置小同义词表（记忆/来源/青瓷/检索/情感/人格/梦/资料等），
   保留原查询为第一项，最多 8 条；确定性、可测试。
 - **llm**：模型返回 1..8 条短查询；非法结构失败关闭。
 - 宿主可把 `queries` 传给 `search` 的 `queries` 字段；引擎仍按自己的
@@ -45,7 +52,7 @@ expand  query     -> {queries: [original, ...]}
 
 - `--message-file PATH`：宿主维护的、按行分隔的用户消息文件；只读取**完整行**，
   游标（字节偏移）落在 `.corridor/evo-daemon/state.json`，重启不重复消费。
-- `--affect-provider lexicon|llm`：消息 → affect 的提供者。
+- `--affect-provider auto|lexicon|llm|hanlp`：消息 → affect 的提供者（默认 auto）。
 - 每个新消息变成一条 `evo-observe`：`kind=social`、`subject=user`、
   salience/valence 来自适配器；随后才吸收知识张力。
 - 消息文件是宿主资产，不是引擎 state；原文不进入引擎，只有结构化信号与哈希。
@@ -55,8 +62,8 @@ expand  query     -> {queries: [original, ...]}
 
 ## 五、HanLP：采用与否的结论（续四十六）
 
-**结论：采用，但只作为适配器的可选 provider，不进默认依赖，也不进核心；
-且优先 HanLP 1.x（简约版/portable，pyhanlp）。**
+**结论：采用，并作为宿主 NLP 的默认主体（`auto`：HanLP 优先、自研 lexicon
+兜底）；不进 MoonBit 核心，也不捆绑进默认依赖。**
 
 - 1.x（首选）：`pip install pyhanlp`（需 Java）。词典驱动、随 Apache-2.0 仓库
   分发、无 PyTorch、无模型下载，够本项目「分词 + 关键词 + 同义替换」的用量；
@@ -64,8 +71,9 @@ expand  query     -> {queries: [original, ...]}
 - 2.x（后备）：`pip install hanlp`（含 PyTorch），模型首次 `hanlp.load` 时按需
   下载；部分训练语料（如 CTB/LDC 系、商业语料）带研究/商用限制，模型级许可
   必须由启用者核对后再加载。本项目不把这些模型捆绑进仓库或 CI。
-- 适配器 `--provider hanlp` 自动探测：先 pyhanlp（1.x），再 hanlp（2.x）；
-  都未安装时失败关闭。
+- 适配器 `--provider auto`（默认）自动探测：先 pyhanlp（1.x），再 hanlp（2.x）；
+  都未安装/运行时缺失时回退 lexicon，并在输出里标记 `auto_fallback`（显式
+  `--provider hanlp` 仍失败关闭，不假装成功）。
   - `affect`：分词替代子串匹配（中文词边界更准），词表打分/程度/否定规则不变；
     2.x 且设置 `NLP_HANLP_NER_MODEL` 时加载 NER 填充 `entities`。
   - `expand`：按分词后的词做同义替换，避免子串误替换。
@@ -79,7 +87,7 @@ expand  query     -> {queries: [original, ...]}
 - 不复制第三方 NLP 代码/词表；内置词表为净室自写、可替换。
 - 不宣称通用中文 NLP 能力；领域适配应替换适配器或走 LLM provider。
 
-## 六、后续
+## 七、后续
 
 - 检索侧：把 `expand` 接入 Web/CLI 的查询入口（宿主层），并记录扩展来源。
 - 情感侧：多模态（语音/表情）适配器，同样只输出结构化信号。

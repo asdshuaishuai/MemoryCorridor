@@ -165,11 +165,19 @@ def parse_json_object(text):
     return value
 
 
-def affect(text, provider="lexicon", endpoint=None, model=None, key=None):
+def affect(text, provider="auto", endpoint=None, model=None, key=None):
+    """Provider contract: auto = HanLP first, self-written lexicon fallback."""
     if not text:
         raise RuntimeError("empty text")
     if len(text.encode("utf-8")) > 8192:
         raise RuntimeError("text too long")
+    if provider == "auto":
+        try:
+            return hanlp_affect(text)
+        except RuntimeError as error:
+            row = lexicon_affect(text)
+            row["auto_fallback"] = str(error)[:200]
+            return row
     if provider == "lexicon":
         return lexicon_affect(text)
     if provider == "hanlp":
@@ -253,22 +261,33 @@ def hanlp_expand(query):
             "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest()}
 
 
-def expand(query, provider="lexicon", endpoint=None, model=None, key=None):
+def lexicon_expand(query):
+    lowered = query.lower()
+    expansions = []
+    for word, alternatives in SYNONYMS.items():
+        if word in lowered:
+            for alternative in alternatives:
+                candidate = query + " " + alternative
+                if candidate not in expansions:
+                    expansions.append(candidate)
+    return {"queries": [query] + expansions[:7], "provider": "lexicon",
+            "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest()}
+
+
+def expand(query, provider="auto", endpoint=None, model=None, key=None):
     if not query or len(query.encode("utf-8")) > 1024:
         raise RuntimeError("query invalid")
+    if provider == "auto":
+        try:
+            return hanlp_expand(query)
+        except RuntimeError as error:
+            row = lexicon_expand(query)
+            row["auto_fallback"] = str(error)[:200]
+            return row
     if provider == "hanlp":
         return hanlp_expand(query)
     if provider == "lexicon":
-        lowered = query.lower()
-        expansions = []
-        for word, alternatives in SYNONYMS.items():
-            if word in lowered:
-                for alternative in alternatives:
-                    candidate = query + " " + alternative
-                    if candidate not in expansions:
-                        expansions.append(candidate)
-        return {"queries": [query] + expansions[:7], "provider": "lexicon",
-                "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest()}
+        return lexicon_expand(query)
     if provider != "llm":
         raise RuntimeError("unknown provider: " + provider)
     raw = llm_json(
@@ -293,13 +312,13 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     affect_parser = sub.add_parser("affect")
     affect_parser.add_argument("--text", required=True)
-    affect_parser.add_argument("--provider", default="lexicon", choices=["lexicon", "llm", "hanlp"])
+    affect_parser.add_argument("--provider", default="auto", choices=["auto", "lexicon", "llm", "hanlp"])
     affect_parser.add_argument("--endpoint", default=os.environ.get("NLP_LLM_ENDPOINT"))
     affect_parser.add_argument("--model", default=os.environ.get("NLP_LLM_MODEL"))
     affect_parser.add_argument("--api-key", default=os.environ.get("NLP_LLM_API_KEY"))
     expand_parser = sub.add_parser("expand")
     expand_parser.add_argument("--query", required=True)
-    expand_parser.add_argument("--provider", default="lexicon", choices=["lexicon", "llm", "hanlp"])
+    expand_parser.add_argument("--provider", default="auto", choices=["auto", "lexicon", "llm", "hanlp"])
     expand_parser.add_argument("--endpoint", default=os.environ.get("NLP_LLM_ENDPOINT"))
     expand_parser.add_argument("--model", default=os.environ.get("NLP_LLM_MODEL"))
     expand_parser.add_argument("--api-key", default=os.environ.get("NLP_LLM_API_KEY"))

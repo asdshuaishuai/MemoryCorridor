@@ -898,3 +898,6 @@
 
 
 - [x] **2026-11-13 续四十七：RSI 驱动 staged 提案（host-owned，不绕过 commit）**：`rsi_agent_driver.py` 新增 `--propose`：为任务写 `staging/dream-work/<task-id>.md` 草稿（mock 为确定性文本；正式模式由模型提供正文），并在 `dream-work-complete` 的 `proposals` 登记 `{page,kind,staged_path}`。driver 仍绝不写 `wiki/`；应用走既有 commit 流程。验收：`rsi_driver_e2e.py` 第四段（staged 文件存在、proposals 登记、wiki 字节不变、retained 成立）。文档：rsi-loop 三·六、acceptance 行。**待 CI 落账**。
+
+
+- [x] **2026-11-16 续四十八：HanLP 进入宿主 NLP 主体（auto：HanLP 优先、自研 lexicon 兜底）**：用户决定 HanLP 直接作为 NLP 主体。`nlp_adapter.py` 的 `affect`/`expand` 默认 provider 改为 `auto`：先 HanLP（1.x pyhanlp 优先、2.x 后备），缺失/运行时失败时回退自研 lexicon 并输出 `provider` 实值 + `auto_fallback` 标记，不静默伪装；CLI choices 增加 `auto`；daemon `--affect-provider` 默认 `auto`。边界重申：MoonBit 核心仍只有自研词法/检索（`index/search.mbt`、`index/context.mbt`、`base/text.mbt`），HanLP 只在宿主感知层；许可边界（Apache-2.0 代码；仅用 1.x 便携数据包；CTB/LDC 系与商业语料模型启用前自行核对）写入 `docs/nlp-adapter.md`。验收：`nlp_adapter_e2e.py` 增加 auto 段（缺失回退、标记、边界、确定性），`nlp_adapter_hanlp_e2e.py` 未安装干净 SKIP。**待 CI 落账**。

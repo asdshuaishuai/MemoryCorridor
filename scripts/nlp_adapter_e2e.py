@@ -44,6 +44,27 @@ def main():
     assert 2 <= len(expanded["queries"]) <= 8, expanded
     assert len(expanded["query_sha256"]) == 64
 
+    # 2b. auto: HanLP first, self-written lexicon fallback (CI/offline must not
+    #     fail; a real HanLP install is exercised by the provider e2e).
+    auto_affect = subprocess.run([sys.executable, str(ADAPTER), "affect",
+                                  "--text", "今天很开心，谢谢你！", "--provider", "auto"],
+                                 capture_output=True, text=True, timeout=60)
+    assert auto_affect.returncode == 0, (auto_affect.stdout, auto_affect.stderr)
+    auto = json.loads(auto_affect.stdout)
+    assert auto["provider"] in ("hanlp", "lexicon"), auto
+    assert -1.0 <= auto["valence"] <= 1.0 and 0.0 <= auto["arousal"] <= 1.0, auto
+    if auto["provider"] == "lexicon":
+        assert auto.get("auto_fallback"), auto
+        assert auto["valence"] > 0.0, auto
+
+    auto_expand = subprocess.run([sys.executable, str(ADAPTER), "expand",
+                                  "--query", "青瓷的来源", "--provider", "auto"],
+                                 capture_output=True, text=True, timeout=60)
+    assert auto_expand.returncode == 0, (auto_expand.stdout, auto_expand.stderr)
+    auto_queries = json.loads(auto_expand.stdout)
+    assert auto_queries["queries"][0] == "青瓷的来源", auto_queries
+    assert auto_queries["provider"] in ("hanlp", "lexicon"), auto_queries
+
     # 3. daemon integration: user messages -> evo observations, cursor-deduped.
     with tempfile.TemporaryDirectory(prefix="corridor-nlp-") as work:
         vault = Path(work)
