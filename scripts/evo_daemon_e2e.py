@@ -39,9 +39,11 @@ def main():
             return response["result"]
 
         def daemon():
+            # Simulated clock: keep this e2e independent of wall-clock quiet hours.
             run = subprocess.run([sys.executable, str(DAEMON), "--vault", str(vault),
                                   "--cli", str(EXE), "--once", "--mock", "--with-rsi",
-                                  "--driver", "daemon-a"],
+                                  "--driver", "daemon-a", "--now", "2026-11-13T10:00:00Z",
+                                  "--tick-seconds", "60"],
                                  capture_output=True, text=True, timeout=300)
             assert run.returncode == 0, (run.stdout, run.stderr)
             return json.loads(run.stdout.strip().splitlines()[-1]), run

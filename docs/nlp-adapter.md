@@ -53,9 +53,27 @@ expand  query     -> {queries: [original, ...]}
 失败语义：单条消息的模型失败记录在 summary 的 `messages[].error`，不中断
 整个 tick；evo 关闭时 daemon 仍然干净停止。
 
-## 五、明确不做
+## 五、HanLP：采用与否的结论（续四十六）
 
-- 不在核心内跑分词模型、情感模型、NER、embedding 或 LLM。
+**结论：采用，但只作为适配器的可选 provider，不进默认依赖，也不进核心。**
+
+- HanLP 代码为 Apache-2.0（已核对仓库 LICENSE）；2.x 精简版安装是
+  `pip install hanlp`（含 PyTorch，不含 TensorFlow），模型在首次 `hanlp.load`
+  时按需下载；RESTful 版需要网络与配额。安装形态以官方安装页为准。
+- **默认不启用**：模型按需下载需要网络且体积大；部分训练语料（如 CTB/LDC 系、
+  商业语料）带研究/商用限制，模型级许可必须由启用者自行核对后再加载。本项目
+  不把这些模型捆绑进仓库或 CI。
+- 适配器提供 `--provider hanlp`：
+  - `affect`：用 HanLP 分词替代子串匹配（中文词边界更准），词表打分/程度/否定
+    规则不变；`NLP_HANLP_TOK_MODEL` 可换模型；设置 `NLP_HANLP_NER_MODEL` 时
+    加载 NER 填充 `entities`。
+  - `expand`：按分词后的词做同义替换，避免子串误替换。
+- `scripts/nlp_adapter_hanlp_e2e.py` 在未安装时干净 SKIP（exit 0），安装后验证
+  provider 契约；模型下载与许可核对是启用者的责任。
+
+## 六、明确不做
+
+- 不在核心内跑分词模型、情感模型、NER、embedding 或 LLM（宿主 HanLP provider 属适配器，属例外）。
 - 不把 lexicon 的情感判断写成页面事实或用户画像。
 - 不复制第三方 NLP 代码/词表；内置词表为净室自写、可替换。
 - 不宣称通用中文 NLP 能力；领域适配应替换适配器或走 LLM provider。

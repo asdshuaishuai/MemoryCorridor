@@ -892,3 +892,6 @@
 
 
 - [x] **2026-11-13 续四十五：宿主侧 NLP 适配器（情感感知 + 查询扩展）**：决定 NLP 不进核心，只做宿主感知层。新增 `scripts/nlp_adapter.py`：`affect` 把用户文本映射为有界 valence/arousal/salience/topics/entities（默认确定性 lexicon；可选 OpenAI 兼容 LLM provider，失败关闭）；`expand` 生成 1..8 条检索查询（原查询第一，lexicon 同义词或 LLM）。daemon 新增 `--message-file`/`--affect-provider`：只读完整新行、字节游标落 `.corridor/evo-daemon/state.json` 去重，每条消息变 `kind=social`/`subject=user` 的 `evo-observe`；原文不入引擎，只留 hash。验收：`nlp_adapter_e2e.py`（正/负/中性、边界、确定性、查询扩展、daemon 游标/新增消息/知识页零写）。文档：`docs/nlp-adapter.md`、soul-layer、neuro-evolution v1.11、acceptance 行。**CI 落账**：run 43483133219（d30f3c1）conclusion=success（2026-11-13）；完整门禁 170 mutation 全部捕获（168 CAUGHT + 2 COMPILE，0 SURVIVED）；nlp adapter/night/schedule/daemon e2e 与 map reader browser check 全过。
+
+
+- [x] **2026-11-16 续四十六：NLP 采用 HanLP（可选 provider，不进默认依赖）**：核对 HanLP 代码许可为 Apache-2.0；模型按需下载且部分语料带研究/商用限制，故只作为 `nlp_adapter.py` 的可选 provider：`--provider hanlp` 用 HanLP 分词做词表打分/程度/否定（中文词边界优于子串匹配），`NLP_HANLP_TOK_MODEL` 可换模型、`NLP_HANLP_NER_MODEL` 加载 NER 填充 entities；`expand` 按分词做词级同义替换。默认仍是 lexicon；不捆绑 HanLP、CI 不下载模型；`nlp_adapter_hanlp_e2e.py` 未安装时干净 SKIP、安装后验证契约。文档：nlp-adapter.md 新增「HanLP 采用与否的结论」（含简约版/RESTful 取舍与许可提示）。附带修复 44 引入的时间依赖 flake：`evo_daemon_e2e` 未用模拟时钟，UTC 03 点落进 22–7 夜间队列后语音被 defer，现固定 `--now` 10:00。**待 CI 落账**。

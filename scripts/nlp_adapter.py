@@ -50,6 +50,30 @@ def clamped(value, low, high):
     return max(low, min(high, float(value)))
 
 
+_HANLP_CACHE = {}
+
+
+def _hanlp():
+    """Lazy, cached HanLP pipeline. Optional provider: the user installs it.
+
+    The default token model is the small Electra segmenter; NER is only loaded
+    when NLP_HANLP_NER_MODEL is set. Models download on first use (network) and
+    carry their own licenses - see docs/nlp-adapter.md before enabling.
+    """
+    try:
+        import hanlp  # type: ignore
+    except ImportError as error:
+        raise RuntimeError(
+            "hanlp not installed (optional provider; pip install hanlp)") from error
+    if "tok" not in _HANLP_CACHE:
+        tok_model = os.environ.get("NLP_HANLP_TOK_MODEL") or hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH
+        _HANLP_CACHE["tok"] = hanlp.load(tok_model)
+    ner_model = os.environ.get("NLP_HANLP_NER_MODEL")
+    if ner_model and "ner" not in _HANLP_CACHE:
+        _HANLP_CACHE["ner"] = hanlp.load(ner_model)
+    return _HANLP_CACHE
+
+
 def has_near(text, index, words, width=3):
     window = text[max(0, index - width):index]
     return any(word in window for word in words)
@@ -134,6 +158,8 @@ def affect(text, provider="lexicon", endpoint=None, model=None, key=None):
         raise RuntimeError("text too long")
     if provider == "lexicon":
         return lexicon_affect(text)
+    if provider == "hanlp":
+        return hanlp_affect(text)
     if provider != "llm":
         raise RuntimeError("unknown provider: " + provider)
     raw = llm_json(
@@ -159,9 +185,65 @@ def affect(text, provider="lexicon", endpoint=None, model=None, key=None):
     }
 
 
+def hanlp_affect(text):
+    cached = _hanlp()
+    tokens = [token for token in cached["tok"](text) if token.strip()]
+    lowered = [token.lower() for token in tokens]
+    pos = 0.0
+    neg = 0.0
+    for index, token in enumerate(lowered):
+        weight = 1.5 if index and lowered[index - 1] in INTENSIFIERS else 1.0
+        if token in POSITIVE:
+            if index and lowered[index - 1] in NEGATIONS:
+                neg += weight
+            else:
+                pos += weight
+        elif token in NEGATIVE:
+            if index and lowered[index - 1] in NEGATIONS:
+                pos += weight
+            else:
+                neg += weight
+    hits = pos + neg
+    valence = clamped((pos - neg) / (hits + 1.0), -1.0, 1.0)
+    marks = text.count("!") + text.count("！") + text.count("?") + text.count("？")
+    arousal = clamped(0.2 + 0.08 * marks + min(len(text) / 400.0, 0.3), 0.0, 1.0)
+    salience = clamped(0.3 + 0.1 * hits + min(len(text) / 200.0, 0.3), 0.0, 1.0)
+    topics = sorted({token for token in lowered if token in TOPIC_WORDS})[:8]
+    entities = []
+    if "ner" in cached:
+        for chunk in cached["ner"](text):
+            word = chunk[0] if isinstance(chunk, (tuple, list)) else str(chunk)
+            if word:
+                entities.append(word)
+    entities = entities[:16]
+    return {
+        "valence": valence, "arousal": arousal, "salience": salience,
+        "topics": topics, "entities": entities,
+        "provider": "hanlp",
+        "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "chars": len(text),
+    }
+
+
+def hanlp_expand(query):
+    cached = _hanlp()
+    tokens = [token for token in cached["tok"](query) if token.strip()]
+    expansions = []
+    for index, token in enumerate(tokens):
+        alternatives = SYNONYMS.get(token) or SYNONYMS.get(token.lower()) or []
+        for alternative in alternatives:
+            candidate = "".join(tokens[:index]) + alternative + "".join(tokens[index + 1:])
+            if candidate not in expansions:
+                expansions.append(candidate)
+    return {"queries": [query] + expansions[:7], "provider": "hanlp",
+            "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest()}
+
+
 def expand(query, provider="lexicon", endpoint=None, model=None, key=None):
     if not query or len(query.encode("utf-8")) > 1024:
         raise RuntimeError("query invalid")
+    if provider == "hanlp":
+        return hanlp_expand(query)
     if provider == "lexicon":
         lowered = query.lower()
         expansions = []
@@ -197,13 +279,13 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     affect_parser = sub.add_parser("affect")
     affect_parser.add_argument("--text", required=True)
-    affect_parser.add_argument("--provider", default="lexicon", choices=["lexicon", "llm"])
+    affect_parser.add_argument("--provider", default="lexicon", choices=["lexicon", "llm", "hanlp"])
     affect_parser.add_argument("--endpoint", default=os.environ.get("NLP_LLM_ENDPOINT"))
     affect_parser.add_argument("--model", default=os.environ.get("NLP_LLM_MODEL"))
     affect_parser.add_argument("--api-key", default=os.environ.get("NLP_LLM_API_KEY"))
     expand_parser = sub.add_parser("expand")
     expand_parser.add_argument("--query", required=True)
-    expand_parser.add_argument("--provider", default="lexicon", choices=["lexicon", "llm"])
+    expand_parser.add_argument("--provider", default="lexicon", choices=["lexicon", "llm", "hanlp"])
     expand_parser.add_argument("--endpoint", default=os.environ.get("NLP_LLM_ENDPOINT"))
     expand_parser.add_argument("--model", default=os.environ.get("NLP_LLM_MODEL"))
     expand_parser.add_argument("--api-key", default=os.environ.get("NLP_LLM_API_KEY"))
