@@ -341,6 +341,15 @@ v1.12 主动表达连续性（续五十，宿主侧，证据见 `scripts/evo_pro
 - 历史只来自已 ack 的回复，不把失败/未投递内容当作说过的话；仍不构成多轮对话
   （用户轮次输入契约尚未定义）。
 
+v1.13 跟进链（续五十一，证据见 `scripts/evo_followup_e2e.py`）：
+
+- `evo-proactive-followup {id, user_text, driver, lease_until, at}`：用户回复已投递的
+  主动消息后创建同链请求。父必须 `done+delivered`；链深 ≤8；存在在飞请求时背压。
+  它绕过情感 `due` 门禁，但不绕投递/背压/深度。
+- 驱动 `--followup-parent <id> --user-text <text>` 直接回答一条跟进；prompt 带
+  父回复 + 用户原话，mock 以 `第N轮` 标记。
+- 记录与列表新增 `parent/turn/user_text`；内核仍只存结构化会话记录，不写知识页。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。

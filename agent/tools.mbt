@@ -90,6 +90,7 @@ pub fn tools() -> Array[Tool] {
     { name: "evo-proactive-complete", description: "驱动回写 LLM 主动应答（text+model）；仅持有者且租约内，重放幂等", fields: ["id", "driver", "at", "result"] },
     { name: "evo-proactive-fail", description: "驱动记录主动请求失败原因；终态保留供经验审计", fields: ["id", "driver", "reason", "at"] },
     { name: "evo-proactive-ack", description: "宿主在真正投递后确认送达（仅 done；同 at 重放幂等，重复投递拒绝）", fields: ["id", "at"] },
+    { name: "evo-proactive-followup", description: "用户回复已投递的主动消息后，创建同链跟进请求（parent/turn/user_text）；绕过期门禁、不绕在飞背压/投递/深度门禁", fields: ["id", "user_text", "driver", "lease_until", "at"] },
     { name: "evo-proactive-list", description: "只读：主动请求队列与状态/送达计数", fields: [] },
     { name: "evo-expression", description: "只读：把当前情感/身体状态映射为结构化拟人化表达帧（姿态/情绪标签/韵律/手势/表情/will_initiate/能量），引擎只出 token", fields: ["at"] },
     { name: "memory-conflicts", description: "列出 kind 与适用条件相同但正文不一致的 active 记忆笔记冲突候选；两侧都保留，由 memory-supersede 解决", fields: [] },

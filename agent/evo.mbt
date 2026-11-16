@@ -3025,6 +3025,7 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
     "driver": driver.to_json(), "lease_until": lease.to_json(), "created_at": at,
     "closed_at": Json::null(), "delivered_at": Json::null(),
     "result": Json::null(), "error": Json::null(),
+    "parent": Json::null(), "turn": 0, "user_text": Json::null(),
   }
   let content = @base.canonical(record)
   let event_path = "state/events/evo-proactive-open-" + id + "-" +
@@ -3186,6 +3187,18 @@ pub fn evo_proactive_list_op(store : @vault.Storage, entries : Array[@core.Entry
     } else {
       failed = failed + 1
     }
+    let parent_value : Json = match evo_optional(pair.1, "parent") {
+      None => Json::null()
+      Some(value) => value
+    }
+    let turn_value : Json = match evo_optional(pair.1, "turn") {
+      Some(Number(n, ..)) => n.to_int().to_json()
+      _ => (0 : Int).to_json()
+    }
+    let user_value : Json = match evo_optional(pair.1, "user_text") {
+      None => Json::null()
+      Some(value) => value
+    }
     items.push({
       "id": pair.0, "step": @base.field(pair.1, "step"),
       "reason": @base.text(@base.field(pair.1, "reason")),
@@ -3195,6 +3208,9 @@ pub fn evo_proactive_list_op(store : @vault.Storage, entries : Array[@core.Entry
       "created_at": @base.text(@base.field(pair.1, "created_at")),
       "closed_at": @base.field(pair.1, "closed_at"),
       "delivered_at": delivered,
+      "parent": parent_value,
+      "turn": turn_value,
+      "user_text": user_value,
       "result": @base.field(pair.1, "result"),
       "error": @base.field(pair.1, "error"),
     })
@@ -3256,6 +3272,104 @@ pub fn evo_proactive_ack_op(store : @vault.Storage, entries : Array[@core.Entry]
   { "id": id, "status": "acknowledged", "delivered_at": at, "replayed": false }
 }
 
+// A user reply to a delivered proactive message (续五十一). The host creates a
+// follow-up request in the same chain; it bypasses the affect due gate but not
+// the one-in-flight backpressure, delivery requirement or depth limit.
+pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "id", "user_text", "driver", "lease_until", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let parent_id = @base.text(@base.field(request, "id"))
+  if !evo_proactive_hash_ok(parent_id) { @base.fail("evo_proactive_id_invalid") }
+  let parent_path = "state/evo/proactive/" + parent_id + ".json"
+  let parent_text = match (store.read)(parent_path) {
+    None => {
+      @base.fail("evo_proactive_not_found: " + parent_id)
+      ""
+    }
+    Some(value) => value
+  }
+  let parent_row = @base.parse(parent_text)
+  if @base.text(@base.field(parent_row, "status")) != "done" {
+    @base.fail("evo_proactive_parent_not_delivered")
+  }
+  let delivered = match evo_optional(parent_row, "delivered_at") {
+    None => Json::null()
+    Some(value) => value
+  }
+  if delivered == Json::null() { @base.fail("evo_proactive_parent_not_delivered") }
+  let parent_turn = match evo_optional(parent_row, "turn") {
+    Some(Number(n, ..)) => n.to_int()
+    _ => 0
+  }
+  let turn = parent_turn + 1
+  if turn > 8 { @base.fail("evo_proactive_followup_depth") }
+  let user_text = @base.text(@base.field(request, "user_text"))
+  if user_text.is_empty() || user_text.length() > 4096 || user_text.contains("\r") {
+    @base.fail("evo_proactive_user_text_invalid")
+  }
+  let driver = @base.text(@base.field(request, "driver"))
+  evo_proactive_driver(driver)
+  let lease = @base.text(@base.field(request, "lease_until"))
+  let at = evo_at_text(request)
+  evo_proactive_lease(lease, at)
+  let mut inflight = 0
+  for row in evo_proactive_rows(store, entries) {
+    let status = @base.text(@base.field(row, "status"))
+    if status == "pending" || status == "claimed" { inflight = inflight + 1 }
+  }
+  if inflight > 0 { @base.fail("evo_proactive_backpressure") }
+  let due = evo_proactive_due_state(store, entries, at)
+  let state_text = match (store.read)("state/evo/state.json") {
+    None => {
+      @base.fail("evo_not_initialized")
+      ""
+    }
+    Some(value) => value
+  }
+  let state = evo_state_from_json(@base.parse(state_text))
+  let genome = match state.active_genome {
+    None => {
+      @base.fail("evo_genome_not_found")
+      ""
+    }
+    Some(value) => value
+  }
+  let id = @base.hex_hash("evo-proactive-followup-v1\n" + parent_id + "\n" +
+    turn.to_string() + "\n" + at)
+  let path = "state/evo/proactive/" + id + ".json"
+  let record : Json = {
+    "version": 1, "id": id, "step": state.steps, "genome": genome,
+    "state_sha256": @base.hex_hash(state_text), "reason": "followup",
+    "urgency": 0.6, "context": due.context, "status": "claimed",
+    "driver": driver.to_json(), "lease_until": lease.to_json(), "created_at": at,
+    "closed_at": Json::null(), "delivered_at": Json::null(),
+    "result": Json::null(), "error": Json::null(),
+    "parent": parent_id.to_json(), "turn": turn, "user_text": user_text.to_json(),
+  }
+  let content = @base.canonical(record)
+  let event_path = "state/events/evo-proactive-followup-" + id + "-" +
+    @base.hex_hash(parent_id + "\n" + driver + "\n" + at) + ".json"
+  let event_content = @base.canonical({
+    "op": "evo-proactive-followup", "proactive": id, "parent": parent_id,
+    "driver": driver, "at": at,
+  })
+  let changes : Array[@vault.Change] = [
+    { path, before: (store.read)(path), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  {
+    "id": id, "parent": parent_id, "turn": turn, "reason": "followup",
+    "user_text": user_text, "context": due.context, "driver": driver,
+    "lease_until": lease, "fingerprint": @vault.fingerprint(next),
+  }
+}
+
 pub fn evo(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
@@ -3277,6 +3391,7 @@ pub fn evo(
     "evo-proactive-complete" => evo_proactive_complete_op(store, entries, request)
     "evo-proactive-fail" => evo_proactive_fail_op(store, entries, request)
     "evo-proactive-ack" => evo_proactive_ack_op(store, entries, request)
+    "evo-proactive-followup" => evo_proactive_followup_op(store, entries, request)
     "evo-expression" => evo_expression_op(store, entries, request)
     "evo-proactive-list" => evo_proactive_list_op(store, entries)
     _ => raise @base.Fault("operation_not_implemented: " + op)

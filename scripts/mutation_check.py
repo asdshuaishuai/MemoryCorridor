@@ -1165,6 +1165,20 @@ MUTATIONS = [
      "evo expression e2e:",
      "evo_expression_e2e.py"),
 
+    ("a follow-up chain must stop at the depth limit",
+     "agent/evo.mbt",
+     '  if turn > 8 { @base.fail("evo_proactive_followup_depth") }',
+     '  if false { @base.fail("evo_proactive_followup_depth") }',
+     "evo followup e2e:",
+     "evo_followup_e2e.py"),
+
+    ("a follow-up parent must have been delivered",
+     "agent/evo.mbt",
+     '  if delivered == Json::null() { @base.fail("evo_proactive_parent_not_delivered") }',
+     '  if false { @base.fail("evo_proactive_parent_not_delivered") }',
+     "evo followup e2e:",
+     "evo_followup_e2e.py"),
+
     ("a proactive ack must require a completed reply",
      "agent/evo.mbt",
      '  if status != "done" { @base.fail("evo_proactive_not_deliverable: " + id) }',

@@ -31,6 +31,7 @@
 | RSI 到期契约（续三十一） | `dream_e2e.py` 第 9 段：policy 默认/写入/重放/越界拒绝；`dream-due` 在无开轮时为 due、开一轮后 `open_rounds_capacity` 拒绝、关闭后（冷却 0）恢复 due；`dream_wbtest` 覆盖严格 ISO 解析与参数边界 | pass |
 | 自进化饱和度与只读审计（续三十二） | `evo_wbtest` 覆盖 `evo_no_improve_step` 的耐心/重置/首代语义；`evo_e2e.py` 覆盖 `evo-checkpoint`/`evo-fossils` 字段与只读字节不变，三面计数 115 | pass |
 | RSI 宿主自治驱动（续三十四） | `rsi_driver_e2e.py`（policy 到期→plan→open→work-open→claim→mock LLM judgments→complete→retained；outcome.drivers 记录驱动；无到期机会时零写 no-op；知识漂移时降级 rejected）+ `dream_e2e.py` 回归（`dream-list` 跳过 policy.json）+ mutation「dream-list 必须跳过节奏记录」| pass(scope note：真实模式只提交结构化 judgments；页面暂存与 commit 仍由宿主负责，驱动不写知识页) |
+| 主动跟进链（续五十一） | `evo_followup_e2e.py`（已投递父→跟进、父回复+用户原话进 prompt、链深 8、在飞背压、未投递父拒绝）+ 2 条 mutation | pass(scope note：跟进请求仍需宿主触发；不是自动多轮对话) |
 | 主动表达连续性（续五十） | `evo_proactive_e2e.py`（首轮投递后，driver-c 的 mock 输出带 `·续`，证明历史来自已 ack 回复并进入 prompt）+ daemon 回归 | pass(scope note：单轮承接；多轮用户对话契约未实现) |
 | 检索查询扩展接入（续四十九） | `search_expansion_e2e.py`（auto 扩展、逐条 engine 查询、按页合并去重、matched_query/expansion_source、知识页只读） | pass(scope note：宿主层合并；引擎 search 仍单 query 执行，证据/预算闸不变) |
 | HanLP 进入宿主 NLP 主体（续四十八） | `nlp_adapter_e2e.py`（auto：HanLP 优先、lexicon 兜底带 `auto_fallback` 标记、边界与确定性；显式 lexicon 回归）+ `nlp_adapter_hanlp_e2e.py`（未安装干净 SKIP） | pass(scope note：主体在宿主层；MoonBit 核心仍只有自研词法/检索；1.x 便携数据包外的模型许可由启用者核对) |

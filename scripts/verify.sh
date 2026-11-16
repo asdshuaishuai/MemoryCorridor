@@ -31,6 +31,7 @@ python3 scripts/rsi_driver_e2e.py
 python3 scripts/evo_e2e.py
 python3 scripts/evo_outcome_e2e.py
 python3 scripts/evo_proactive_e2e.py
+python3 scripts/evo_followup_e2e.py
 python3 scripts/evo_expression_e2e.py
 python3 scripts/evo_daemon_e2e.py
 python3 scripts/evo_schedule_e2e.py

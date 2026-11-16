@@ -907,3 +907,6 @@
 
 
 - [x] **2026-11-16 续五十：主动表达连续性（已投递回复进入下一轮 prompt）**：`evo_agent_driver.build_prompt(request, history)` 增加历史段；驱动/daemon 开口前用 `evo-proactive-list` 取最近一条 `done+delivered` 且非当前请求的回复（截断 240 字），提示模型承接、勿重复；mock 以 `·续` 标记。历史只取已 ack 的回复，失败/未投递不算说过的话。验收：`evo_proactive_e2e.py` 首轮投递后 driver-c 输出含 `·续`；daemon 回归。仍未实现多轮用户对话（需用户轮次输入契约）。**CI 落账**：run 43865553748（1bbc82b）conclusion=success（2026-11-16）；完整门禁 170 mutation 全部捕获（168 CAUGHT + 2 COMPILE，0 SURVIVED）；evo proactive（含 ·续 历史标记）/daemon/search expansion e2e 与 map check 全过。
+
+
+- [x] **2026-11-16 续五十一：主动跟进链（evo-proactive-followup）**：用户回复已投递的主动消息后，宿主可创建同链跟进。记录新增 `parent/turn/user_text`；`evo-proactive-followup {id,user_text,driver,lease_until,at}` 要求父 `done+delivered`（否则 `evo_proactive_parent_not_delivered`）、链深 ≤8（`evo_proactive_followup_depth`）、无 pending/claimed（`evo_proactive_backpressure`）；绕过情感 due 但不绕这三道门。驱动 `--followup-parent/--user-text` 回答一条跟进，prompt 带父回复 + 用户原话，mock 以 `第N轮` 标记；list 回显 parent/turn/user_text。验收：`evo_followup_e2e.py`（1 轮驱动、链深 8 拒绝第 9、在飞背压、未投递父拒绝）+ 2 条 mutation 手测 CAUGHT；三面 123→124。文档：protocol 一 op、neuro v1.13、soul-layer、acceptance 行。**待 CI 落账**。

@@ -62,6 +62,8 @@ def build_prompt(request, history="") -> str:
     if history:
         prior = ("上一轮你主动说过：" + history.strip()[:240]
                  + "\n不要重复它；如果自然，可以承接它。\n")
+    if request.get("user_text"):
+        prior += "用户刚刚回复：" + str(request["user_text"])[:2000] + "\n请自然地回应这句话。\n"
     return (
         "你是它的内在声音。根据以下内部状态，主动对用户说一句简短、自然的话（不超过 80 字），"
         "不要解释你在做什么，不要提及 JSON 或系统。\n"
@@ -107,6 +109,13 @@ def history_text(cli: str, vault: str, exclude_id: str = None) -> str:
     return (usable[-1]["result"].get("text") or "")[:240]
 
 
+def parent_reply(cli: str, vault: str, parent_id: str) -> str:
+    for row in call(cli, vault, "evo-proactive-list").get("proactive", []):
+        if row.get("id") == parent_id and row.get("result"):
+            return (row["result"].get("text") or "")[:240]
+    return ""
+
+
 def sweep_stale(cli: str, vault: str, driver: str, stamp: str = None) -> None:
     """Fail this driver's own expired claims so a crash cannot wedge the slot."""
     rows = call(cli, vault, "evo-proactive-list")["proactive"]
@@ -123,6 +132,34 @@ def sweep_stale(cli: str, vault: str, driver: str, stamp: str = None) -> None:
                 print(f"driver: stale claim release skipped: {error}", file=sys.stderr)
 
 
+def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str,
+                  mock: bool, ack: bool) -> int:
+    opened = call(cli, vault, "evo-proactive-followup", id=parent, user_text=user_text,
+                  driver=driver, lease_until=iso_in(300), at=now())
+    history = parent_reply(cli, vault, parent)
+    try:
+        if mock:
+            text = (f"（mock 跟进·第{opened['turn']}轮）你说“{user_text[:40]}”，"
+                    "我接着回应。")
+            model = "mock"
+        else:
+            text, model = llm(build_prompt(opened, history))
+        call(cli, vault, "evo-proactive-complete", id=opened["id"], driver=driver,
+             at=now(), result={"text": text, "model": model})
+        print(text)
+        if ack:
+            call(cli, vault, "evo-proactive-ack", id=opened["id"], at=now())
+        return 0
+    except Exception as error:  # noqa: BLE001 - record and report
+        try:
+            call(cli, vault, "evo-proactive-fail", id=opened["id"], driver=driver,
+                 reason=str(error)[:1000], at=now())
+        except RuntimeError:
+            pass
+        print(f"driver: follow-up failed: {error}", file=sys.stderr)
+        return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Proactive agent driver for the evo subsystem")
     parser.add_argument("--vault", required=True)
@@ -134,7 +171,17 @@ def main() -> int:
                         help="skip the network and return a deterministic mock reply (tests)")
     parser.add_argument("--ack", action="store_true",
                         help="acknowledge delivery after printing (stdout is the delivery channel)")
+    parser.add_argument("--followup-parent", default=None,
+                        help="answer one follow-up to this delivered proactive id")
+    parser.add_argument("--user-text", default=None,
+                        help="the user's reply for --followup-parent")
     args = parser.parse_args()
+    if args.followup_parent:
+        if not args.user_text:
+            parser.error("--followup-parent requires --user-text")
+        return followup_once(args.cli, args.vault, args.driver,
+                             args.followup_parent, args.user_text,
+                             args.mock, args.ack)
     while True:
         at = now()
         try:

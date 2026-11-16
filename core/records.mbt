@@ -679,7 +679,7 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
   let code = "evo_proactive_record_invalid"
   @base.keys(value, ["version", "id", "step", "genome", "state_sha256", "reason",
     "urgency", "context", "status", "driver", "lease_until", "created_at",
-    "closed_at", "delivered_at", "result", "error"])
+    "closed_at", "delivered_at", "result", "error", "parent", "turn", "user_text"])
   match @base.field(value, "version") {
     Number(n, ..) if n == 1.0 => ()
     _ => raise @base.Fault(code + ":version")
@@ -692,8 +692,28 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
   for field in ["genome", "state_sha256"] {
     if !valid_hash(@base.text(@base.field(value, field))) { @base.fail(code + ":" + field) }
   }
+  // Follow-up threads (续五十一): optional parent/turn/user_text; a follow-up
+  // must point at a delivered parent and carry the user's turn (1..8).
+  let parent = optional_record_field(value, "parent").unwrap_or(Json::null())
+  let user_text = optional_record_field(value, "user_text").unwrap_or(Json::null())
+  let turn = match optional_record_field(value, "turn") {
+    None => 0
+    Some(Number(n, ..)) if n >= 0.0 && n <= 8.0 && n == n.to_int().to_double() => n.to_int()
+    Some(_) => raise @base.Fault(code + ":turn")
+  }
+  if parent != Json::null() {
+    if !valid_hash(@base.text(parent)) { @base.fail(code + ":parent") }
+    if user_text == Json::null() { @base.fail(code + ":user_text") }
+    let text = @base.text(user_text)
+    if text.is_empty() || text.length() > 4096 || text.contains("\r") {
+      @base.fail(code + ":user_text")
+    }
+    if turn < 1 || turn > 8 { @base.fail(code + ":turn") }
+  } else if turn != 0 || user_text != Json::null() {
+    @base.fail(code + ":followup")
+  }
   let reason = @base.text(@base.field(value, "reason"))
-  if !["impulse", "valence_high", "valence_low"].contains(reason) { @base.fail(code + ":reason") }
+  if !["impulse", "valence_high", "valence_low", "followup"].contains(reason) { @base.fail(code + ":reason") }
   match @base.field(value, "urgency") {
     Number(n, ..) if n >= 0.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => ()
     _ => raise @base.Fault(code + ":urgency")
@@ -1624,7 +1644,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
       "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
       "evo-proactive-open", "evo-proactive-complete", "evo-proactive-fail",
-      "evo-proactive-ack", "evo-proactive-reclaim",
+      "evo-proactive-ack", "evo-proactive-reclaim", "evo-proactive-followup",
       "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
       "evo-rollback", "evo-fossilize",
     ]
@@ -2086,6 +2106,21 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("at"))
       let expected = "state/events/evo-proactive-ack-" + proactive + "-" +
         @base.hex_hash(string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-proactive-followup" {
+      @base.keys(value, ["op", "proactive", "parent", "driver", "at"])
+      let proactive = string("proactive")
+      let parent = string("parent")
+      if !valid_hash(proactive) || !valid_hash(parent) {
+        @base.fail("evo_proactive_event_invalid")
+      }
+      let driver = string("driver")
+      if driver.is_empty() || driver.length() > 128 || driver.contains("\n") {
+        @base.fail("evo_proactive_event_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/evo-proactive-followup-" + proactive + "-" +
+        @base.hex_hash(parent + "\n" + driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-proactive-reclaim" {
       @base.keys(value, ["op", "proactive", "driver", "at"])
