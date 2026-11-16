@@ -37,6 +37,7 @@ python3 scripts/evo_schedule_e2e.py
 python3 scripts/evo_night_e2e.py
 python3 scripts/nlp_adapter_e2e.py
 python3 scripts/nlp_adapter_hanlp_e2e.py
+python3 scripts/search_expansion_e2e.py
 python3 scripts/evo_knowledge_bridge_e2e.py
 python3 scripts/provider_e2e.py
 python3 scripts/provider_jobs_e2e.py

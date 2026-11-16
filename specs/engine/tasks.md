@@ -901,3 +901,6 @@
 
 
 - [x] **2026-11-16 续四十八：HanLP 进入宿主 NLP 主体（auto：HanLP 优先、自研 lexicon 兜底）**：用户决定 HanLP 直接作为 NLP 主体。`nlp_adapter.py` 的 `affect`/`expand` 默认 provider 改为 `auto`：先 HanLP（1.x pyhanlp 优先、2.x 后备），缺失/运行时失败时回退自研 lexicon 并输出 `provider` 实值 + `auto_fallback` 标记，不静默伪装；CLI choices 增加 `auto`；daemon `--affect-provider` 默认 `auto`。边界重申：MoonBit 核心仍只有自研词法/检索（`index/search.mbt`、`index/context.mbt`、`base/text.mbt`），HanLP 只在宿主感知层；许可边界（Apache-2.0 代码；仅用 1.x 便携数据包；CTB/LDC 系与商业语料模型启用前自行核对）写入 `docs/nlp-adapter.md`。验收：`nlp_adapter_e2e.py` 增加 auto 段（缺失回退、标记、边界、确定性），`nlp_adapter_hanlp_e2e.py` 未安装干净 SKIP。**待 CI 落账**。
+
+
+- [x] **2026-11-16 续四十九：检索查询扩展接入宿主入口（search_expander）**：引擎 `search` 只收单个 `query`，因此宿主层完成扩展与合并：`scripts/search_expander.py` 调 `nlp_adapter.expand` 得 1..8 条查询，逐条跑 `search`，按页合并去重，每条 hit 记录 `matched_query` 与 `expansion_source`；只读，不写知识页、不绕过证据/预算闸。验收：`scripts/search_expansion_e2e.py`（auto 回退标记、原查询第一、合并去重、来源记录、知识页字节不变）+ 接进 verify.sh。文档：nlp-adapter.md 七、acceptance 行。**待 CI 落账**。

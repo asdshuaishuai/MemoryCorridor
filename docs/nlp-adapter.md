@@ -43,8 +43,10 @@ expand  query     -> {queries: [original, ...]}
 - **lexicon（兜底）**：内置小同义词表（记忆/来源/青瓷/检索/情感/人格/梦/资料等），
   保留原查询为第一项，最多 8 条；确定性、可测试。
 - **llm**：模型返回 1..8 条短查询；非法结构失败关闭。
-- 宿主可把 `queries` 传给 `search` 的 `queries` 字段；引擎仍按自己的
-  词元/向量检索与预算执行，不因扩展而绕过证据或版本闸。
+- 引擎 `search` 只收单个 `query`（无 `queries` 数组）；宿主用
+  `scripts/search_expander.py` 对每条扩展查询各跑一次引擎，按页合并去重，
+  并记录 `matched_query` 与 `expansion_source`。引擎仍按自己的词元/向量检索
+  与预算执行，不因扩展而绕过证据或版本闸。
 
 ## 四、接入 daemon
 
@@ -87,8 +89,15 @@ expand  query     -> {queries: [original, ...]}
 - 不复制第三方 NLP 代码/词表；内置词表为净室自写、可替换。
 - 不宣称通用中文 NLP 能力；领域适配应替换适配器或走 LLM provider。
 
-## 七、后续
+## 七、检索入口（续四十九已交付）
 
-- 检索侧：把 `expand` 接入 Web/CLI 的查询入口（宿主层），并记录扩展来源。
+`scripts/search_expander.py`：`--query` → 适配器 `expand` → 逐条 `search` →
+按页合并去重 → 输出 `{query, expansions, provider, auto_fallback, results, count}`；
+每条 hit 带 `matched_query` 与 `expansion_source`。只读，不写知识页。
+`scripts/search_expansion_e2e.py` 固定：auto 回退标记、原查询第一、合并去重、
+来源记录、知识页字节不变。
+
+## 八、后续
+
 - 情感侧：多模态（语音/表情）适配器，同样只输出结构化信号。
 - 评估：用固定语料做 lexicon 与 LLM provider 的一致性/偏差对照，报告如实标注。
