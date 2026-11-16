@@ -9,7 +9,9 @@ Drives the deterministic RSI loop the engine exposes:
 The MoonBit engine never calls a model: it publishes an opportunity set and a
 structured work outbox; this host-side driver answers the semantic judgments
 with an OpenAI-compatible endpoint (or `--mock` in tests) and records them.
-It never writes knowledge pages and never bypasses the normal commit flow.
+With `--propose` it may ALSO write a staged draft under `staging/dream-work/`
+and reference it in `proposals` - still host-owned: nothing lands in `wiki/`
+until the normal commit flow applies it.
 
 Usage:
   python3 scripts/rsi_agent_driver.py --vault /abs/vault --once --mock
@@ -86,6 +88,25 @@ def parse_judgments(text: str):
     return {"judgments": clean, "proposals": []}
 
 
+def write_staged_proposal(vault: str, task, body: str) -> dict:
+    """Write a host-owned staged draft and return its proposal record.
+
+    The staged path lives under staging/dream-work/<task-id>.md; applying it is
+    the normal commit flow's job, never the driver's.
+    """
+    task_id = task["id"]
+    staged_dir = Path(vault) / "staging" / "dream-work"
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    staged = staged_dir / f"{task_id}.md"
+    title = (task.get("subject") or task_id[:12]).strip() or task_id[:12]
+    front = ('---\ntype: concept\n'
+             f'title: "RSI 提案：{title}"\n'
+             'sources: []\n---\n')
+    staged.write_text(front + body.strip() + "\n", encoding="utf-8")
+    return {"page": f"wiki/dream-work/{task_id[:24]}", "kind": "concept",
+            "staged_path": f"staging/dream-work/{task_id}.md"}
+
+
 def llm(prompt: str):
     endpoint = os.environ.get("RSI_LLM_ENDPOINT")
     model = os.environ.get("RSI_LLM_MODEL")
@@ -107,13 +128,19 @@ def llm(prompt: str):
     return payload["choices"][0]["message"]["content"].strip()
 
 
-def process_task(cli: str, vault: str, task, driver: str, mock: bool) -> str:
+def process_task(cli: str, vault: str, task, driver: str, mock: bool,
+                 propose: bool = False) -> str:
     call(cli, vault, "dream-work-claim", id=task["id"], driver=driver,
          lease_until=iso_in(300), at=now())
     try:
+        proposals = []
         if mock:
-            result = {"judgments": {"task": task["id"], "verdict": "mock-reviewed"},
-                      "proposals": []}
+            judgments = {"task": task["id"], "verdict": "mock-reviewed"}
+            if propose:
+                body = (f"（mock 提案）针对 {task.get('kind')}：{task.get('subject')}，"
+                        "建议补充该来源的整理页；正文待正式 commit 流程审阅。")
+                proposals.append(write_staged_proposal(vault, task, body))
+            result = {"judgments": judgments, "proposals": proposals}
         else:
             result = parse_judgments(llm(build_prompt(task)))
         call(cli, vault, "dream-work-complete", id=task["id"], driver=driver,
@@ -126,7 +153,8 @@ def process_task(cli: str, vault: str, task, driver: str, mock: bool) -> str:
         return "failed"
 
 
-def drain(cli: str, vault: str, round_id: str, driver: str, mock: bool, limit: int) -> dict:
+def drain(cli: str, vault: str, round_id: str, driver: str, mock: bool, limit: int,
+          propose: bool = False) -> dict:
     """Open and answer work until no pending task remains for this round."""
     opened = 0
     done = 0
@@ -138,7 +166,7 @@ def drain(cli: str, vault: str, round_id: str, driver: str, mock: bool, limit: i
         work = call(cli, vault, "dream-work-list")["work"]
         pending = [w for w in work if w["round"] == round_id and w["status"] == "pending"]
         for task in pending:
-            outcome = process_task(cli, vault, task, driver, mock)
+            outcome = process_task(cli, vault, task, driver, mock, propose)
             done += outcome == "done"
             failed += outcome == "failed"
         if created["created"] == 0 and not pending:
@@ -146,7 +174,8 @@ def drain(cli: str, vault: str, round_id: str, driver: str, mock: bool, limit: i
     return {"opened": opened, "done": done, "failed": failed}
 
 
-def run_pass(cli: str, vault: str, driver: str, mock: bool, limit: int, space) -> dict:
+def run_pass(cli: str, vault: str, driver: str, mock: bool, limit: int, space,
+             propose: bool = False) -> dict:
     rounds = call(cli, vault, "dream-list")["dreams"]
     open_rounds = [r for r in rounds if r["status"] == "open"]
     opened = None
@@ -164,7 +193,7 @@ def run_pass(cli: str, vault: str, driver: str, mock: bool, limit: int, space) -
         opened = call(cli, vault, "dream-open", **fields)
         round_id = opened["id"]
     try:
-        work = drain(cli, vault, round_id, driver, mock, limit)
+        work = drain(cli, vault, round_id, driver, mock, limit, propose)
         note = f"driver {driver}: {work['done']} done, {work['failed']} failed"
         decision = "rejected" if work["failed"] else "retained"
     except RuntimeError as error:
@@ -198,6 +227,8 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--mock", action="store_true",
                         help="skip the network and use deterministic judgments (tests)")
+    parser.add_argument("--propose", action="store_true",
+                        help="write staged drafts and record proposals (host-owned staging)")
     parser.add_argument("--limit", type=int, default=5,
                         help="opportunities/tasks per batch (1..50)")
     parser.add_argument("--space", default=None,
@@ -208,7 +239,7 @@ def main() -> int:
     while True:
         try:
             summary = run_pass(args.cli, args.vault, args.driver, args.mock,
-                               args.limit, args.space)
+                               args.limit, args.space, args.propose)
             print(json.dumps(summary, ensure_ascii=False))
         except Exception as error:  # noqa: BLE001 - a scheduler must not die
             print(f"driver: pass failed: {error}", file=sys.stderr)

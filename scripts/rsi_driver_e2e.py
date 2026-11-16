@@ -122,6 +122,31 @@ def main():
         assert round_row["status"] == "rejected", round_row
         assert round_row["outcome"]["delta"]["uncovered_sources"] == 1, round_row
 
+        # 4. --propose: the driver stages a host-owned draft and records it in
+        #    proposals; wiki/ stays untouched until the commit flow applies it.
+        call("dream-policy", due_after_seconds=0, min_opportunities=1,
+             max_open_rounds=1, at="2026-11-13T00:00:00Z")
+        wiki_before = {path.read_bytes() for path in
+                       (vault / "wiki").rglob("*.md")} or {b""}
+        run = subprocess.run([sys.executable, str(DRIVER), "--vault", str(vault),
+                              "--cli", str(EXE), "--once", "--mock", "--propose",
+                              "--driver", "driver-propose"], capture_output=True,
+                             text=True, timeout=120)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+        summary = json.loads(run.stdout)
+        assert summary["closed"] == "retained" and summary["work"]["done"] >= 1, summary
+        proposal = None
+        for item in call("dream-work-list")["work"]:
+            for record in (item["result"] or {}).get("proposals", []):
+                proposal = record
+                break
+        assert proposal, call("dream-work-list")
+        staged = vault / proposal["staged_path"]
+        assert staged.exists() and proposal["staged_path"].startswith("staging/"), (proposal, staged)
+        assert proposal["page"].startswith("wiki/"), proposal
+        wiki_after = {path.read_bytes() for path in (vault / "wiki").rglob("*.md")} or {b""}
+        assert wiki_before == wiki_after, "driver must not write wiki pages"
+
     print("rsi driver e2e: due->plan->open->work->LLM judgments->close, no-op and "
           "compatibility downgrade passed")
     return 0

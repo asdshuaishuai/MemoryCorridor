@@ -77,7 +77,9 @@ dream-work-list                              # 队列视图（含背压计数/�
    真实模式把任务视图交给 OpenAI 兼容端点，模型只返回
    `{"judgments": {...}}` 标量判断；`--mock` 用确定性判断替代网络。
 3. `dream-work-complete` 回写结构化 judgments；失败则 `dream-work-fail` 记录原因。
-4. 无 pending/claimed 后 `dream-close`：全成功判 `retained`，有失败判 `rejected`；
+4. `--propose`：可为任务写 `staging/dream-work/<id>.md` 草稿并在 `proposals` 里
+   登记（host-owned staging，不写 `wiki/`，应用仍走既有 commit）；
+5. 无 pending/claimed 后 `dream-close`：全成功判 `retained`，有失败判 `rejected`；
    若轮次知识基线在开启后漂移（`dream_stale_baseline`）或保留门禁失败
    （`dream_compat_*`），驱动降级为 `rejected` 并把原因写入 note，不假装成功。
 

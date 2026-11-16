@@ -55,21 +55,22 @@ expand  query     -> {queries: [original, ...]}
 
 ## 五、HanLP：采用与否的结论（续四十六）
 
-**结论：采用，但只作为适配器的可选 provider，不进默认依赖，也不进核心。**
+**结论：采用，但只作为适配器的可选 provider，不进默认依赖，也不进核心；
+且优先 HanLP 1.x（简约版/portable，pyhanlp）。**
 
-- HanLP 代码为 Apache-2.0（已核对仓库 LICENSE）；2.x 精简版安装是
-  `pip install hanlp`（含 PyTorch，不含 TensorFlow），模型在首次 `hanlp.load`
-  时按需下载；RESTful 版需要网络与配额。安装形态以官方安装页为准。
-- **默认不启用**：模型按需下载需要网络且体积大；部分训练语料（如 CTB/LDC 系、
-  商业语料）带研究/商用限制，模型级许可必须由启用者自行核对后再加载。本项目
-  不把这些模型捆绑进仓库或 CI。
-- 适配器提供 `--provider hanlp`：
-  - `affect`：用 HanLP 分词替代子串匹配（中文词边界更准），词表打分/程度/否定
-    规则不变；`NLP_HANLP_TOK_MODEL` 可换模型；设置 `NLP_HANLP_NER_MODEL` 时
-    加载 NER 填充 `entities`。
+- 1.x（首选）：`pip install pyhanlp`（需 Java）。词典驱动、随 Apache-2.0 仓库
+  分发、无 PyTorch、无模型下载，够本项目「分词 + 关键词 + 同义替换」的用量；
+  完整数据包与更重的语料启用前仍建议自行核对许可。
+- 2.x（后备）：`pip install hanlp`（含 PyTorch），模型首次 `hanlp.load` 时按需
+  下载；部分训练语料（如 CTB/LDC 系、商业语料）带研究/商用限制，模型级许可
+  必须由启用者核对后再加载。本项目不把这些模型捆绑进仓库或 CI。
+- 适配器 `--provider hanlp` 自动探测：先 pyhanlp（1.x），再 hanlp（2.x）；
+  都未安装时失败关闭。
+  - `affect`：分词替代子串匹配（中文词边界更准），词表打分/程度/否定规则不变；
+    2.x 且设置 `NLP_HANLP_NER_MODEL` 时加载 NER 填充 `entities`。
   - `expand`：按分词后的词做同义替换，避免子串误替换。
-- `scripts/nlp_adapter_hanlp_e2e.py` 在未安装时干净 SKIP（exit 0），安装后验证
-  provider 契约；模型下载与许可核对是启用者的责任。
+- `scripts/nlp_adapter_hanlp_e2e.py` 在未安装/运行时缺失（如无 Java）时干净
+  SKIP（exit 0），可用时验证 provider 契约；模型/数据许可是启用者的责任。
 
 ## 六、明确不做
 

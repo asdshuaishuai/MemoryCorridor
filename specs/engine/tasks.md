@@ -895,3 +895,6 @@
 
 
 - [x] **2026-11-16 续四十六：NLP 采用 HanLP（可选 provider，不进默认依赖）**：核对 HanLP 代码许可为 Apache-2.0；模型按需下载且部分语料带研究/商用限制，故只作为 `nlp_adapter.py` 的可选 provider：`--provider hanlp` 用 HanLP 分词做词表打分/程度/否定（中文词边界优于子串匹配），`NLP_HANLP_TOK_MODEL` 可换模型、`NLP_HANLP_NER_MODEL` 加载 NER 填充 entities；`expand` 按分词做词级同义替换。默认仍是 lexicon；不捆绑 HanLP、CI 不下载模型；`nlp_adapter_hanlp_e2e.py` 未安装时干净 SKIP、安装后验证契约。文档：nlp-adapter.md 新增「HanLP 采用与否的结论」（含简约版/RESTful 取舍与许可提示）。附带修复 44 引入的时间依赖 flake：`evo_daemon_e2e` 未用模拟时钟，UTC 03 点落进 22–7 夜间队列后语音被 defer，现固定 `--now` 10:00。**待 CI 落账**。
+
+
+- [x] **2026-11-13 续四十七：RSI 驱动 staged 提案（host-owned，不绕过 commit）**：`rsi_agent_driver.py` 新增 `--propose`：为任务写 `staging/dream-work/<task-id>.md` 草稿（mock 为确定性文本；正式模式由模型提供正文），并在 `dream-work-complete` 的 `proposals` 登记 `{page,kind,staged_path}`。driver 仍绝不写 `wiki/`；应用走既有 commit 流程。验收：`rsi_driver_e2e.py` 第四段（staged 文件存在、proposals 登记、wiki 字节不变、retained 成立）。文档：rsi-loop 三·六、acceptance 行。**待 CI 落账**。

@@ -54,17 +54,25 @@ _HANLP_CACHE = {}
 
 
 def _hanlp():
-    """Lazy, cached HanLP pipeline. Optional provider: the user installs it.
+    """Lazy HanLP pipeline. Optional provider; prefer the light 1.x.
 
-    The default token model is the small Electra segmenter; NER is only loaded
-    when NLP_HANLP_NER_MODEL is set. Models download on first use (network) and
-    carry their own licenses - see docs/nlp-adapter.md before enabling.
+    1.x via pyhanlp (Java) ships small Apache-2.0 dictionaries - no PyTorch,
+    no model downloads - and is enough for segmentation/keyword needs here.
+    2.x (hanlp package, PyTorch + on-demand model downloads) is the fallback.
+    Model/data licenses beyond the bundled 1.x pack are the operator's to check.
     """
     try:
-        import hanlp  # type: ignore
+        from pyhanlp import HanLP  # type: ignore  # HanLP 1.x
+        _HANLP_CACHE["kind"] = "1x"
+        _HANLP_CACHE["HanLP"] = HanLP
+        return _HANLP_CACHE
+    except ImportError:
+        pass
+    try:
+        import hanlp  # type: ignore  # HanLP 2.x
     except ImportError as error:
         raise RuntimeError(
-            "hanlp not installed (optional provider; pip install hanlp)") from error
+            "hanlp not installed (optional provider; pip install pyhanlp or hanlp)") from error
     if "tok" not in _HANLP_CACHE:
         tok_model = os.environ.get("NLP_HANLP_TOK_MODEL") or hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH
         _HANLP_CACHE["tok"] = hanlp.load(tok_model)
@@ -72,6 +80,12 @@ def _hanlp():
     if ner_model and "ner" not in _HANLP_CACHE:
         _HANLP_CACHE["ner"] = hanlp.load(ner_model)
     return _HANLP_CACHE
+
+
+def _hanlp_tokens(cached, text):
+    if cached["kind"] == "1x":
+        return [term.word for term in cached["HanLP"].segment(text) if term.word.strip()]
+    return [token for token in cached["tok"](text) if token.strip()]
 
 
 def has_near(text, index, words, width=3):
@@ -187,7 +201,7 @@ def affect(text, provider="lexicon", endpoint=None, model=None, key=None):
 
 def hanlp_affect(text):
     cached = _hanlp()
-    tokens = [token for token in cached["tok"](text) if token.strip()]
+    tokens = _hanlp_tokens(cached, text)
     lowered = [token.lower() for token in tokens]
     pos = 0.0
     neg = 0.0
@@ -210,7 +224,7 @@ def hanlp_affect(text):
     salience = clamped(0.3 + 0.1 * hits + min(len(text) / 200.0, 0.3), 0.0, 1.0)
     topics = sorted({token for token in lowered if token in TOPIC_WORDS})[:8]
     entities = []
-    if "ner" in cached:
+    if cached["kind"] == "2x" and "ner" in cached:
         for chunk in cached["ner"](text):
             word = chunk[0] if isinstance(chunk, (tuple, list)) else str(chunk)
             if word:
@@ -227,7 +241,7 @@ def hanlp_affect(text):
 
 def hanlp_expand(query):
     cached = _hanlp()
-    tokens = [token for token in cached["tok"](query) if token.strip()]
+    tokens = _hanlp_tokens(cached, query)
     expansions = []
     for index, token in enumerate(tokens):
         alternatives = SYNONYMS.get(token) or SYNONYMS.get(token.lower()) or []
