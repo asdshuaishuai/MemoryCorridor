@@ -913,3 +913,6 @@
 
 
 - [x] **2026-11-17 续五十二：基础强化与逻辑补全（不扩新能力）**：修真实缺口——lexicon 程度/否定检测原只靠 3 字符窗口，英文 `not happy`/`very good` 失效，现改为「字符窗口 + 前一个空白分隔词」双检；`auto` 回退从只捕 RuntimeError 扩到 RuntimeError/ImportError/OSError，HanLP 运行时损坏也回退并标记；`search_expander` 单条扩展查询失败记入 `errors` 并继续，不拖垮整次检索；daemon 消息文件截断/轮转时游标重置，不重放已消费行。验收：`nlp_adapter_e2e.py`（英文否定/程度/`not bad`、auto 回退、轮转不重放）+ `search_expansion_e2e.py`（errors 为空）。无引擎改动、无新增 mutation。**待 CI 落账**。
+
+
+- [x] **2026-11-17 续五十三：补全 RSI 驱动正式模式的 staged 提案**：`--propose` 原先只有 mock 写草稿，正式 LLM 路径丢提案。现 `build_prompt` 允许模型返回可选 `page{title,body}`（title≤128、body≤8192）；`parse_judgments` 解析并校验（空标题/越界键/非对象失败关闭），`process_task` 在 `--propose` 且模型给了 page 时写 `staging/dream-work/<id>.md` 并登记 proposal；无 page 时行为不变。验收：`rsi_driver_e2e.py` 4c（解析/拒绝/默认）+ 第 4 段 mock 提案回归。**待 CI 落账**。

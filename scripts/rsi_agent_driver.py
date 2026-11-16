@@ -62,6 +62,8 @@ def build_prompt(task) -> str:
         f"任务类型：{task['kind']}\n主体：{task['subject']}\n"
         f"优先级：{task['priority']}\n"
         "请给出你对这个主体的判断（例如是否值得建页、风险、下一步）。"
+        "如果确实值得建页，再给一个 page 对象：{\"title\": ≤128 字节, \"body\": ≤8192 字节}；"
+        "不要给路径、来源或 frontmatter，宿主只把正文暂存为 staging 草稿。"
     )
 
 
@@ -85,10 +87,21 @@ def parse_judgments(text: str):
         clean[key] = value
     if len(clean) > 32:
         raise RuntimeError("too many judgments")
-    return {"judgments": clean, "proposals": []}
+    page = payload.get("page")
+    if page is None:
+        return {"judgments": clean, "page": None}
+    if not isinstance(page, dict) or set(page) - {"title", "body"}:
+        raise RuntimeError("model page invalid")
+    title = page.get("title")
+    body = page.get("body")
+    if not isinstance(title, str) or not title.strip() or len(title.encode()) > 128:
+        raise RuntimeError("model page title invalid")
+    if not isinstance(body, str) or not body.strip() or len(body.encode()) > 8192:
+        raise RuntimeError("model page body invalid")
+    return {"judgments": clean, "page": {"title": title.strip(), "body": body}}
 
 
-def write_staged_proposal(vault: str, task, body: str) -> dict:
+def write_staged_proposal(vault: str, task, body: str, title: str = None) -> dict:
     """Write a host-owned staged draft and return its proposal record.
 
     The staged path lives under staging/dream-work/<task-id>.md; applying it is
@@ -98,7 +111,8 @@ def write_staged_proposal(vault: str, task, body: str) -> dict:
     staged_dir = Path(vault) / "staging" / "dream-work"
     staged_dir.mkdir(parents=True, exist_ok=True)
     staged = staged_dir / f"{task_id}.md"
-    title = (task.get("subject") or task_id[:12]).strip() or task_id[:12]
+    if not title:
+        title = (task.get("subject") or task_id[:12]).strip() or task_id[:12]
     front = ('---\ntype: concept\n'
              f'title: "RSI 提案：{title}"\n'
              'sources: []\n---\n')
@@ -142,7 +156,12 @@ def process_task(cli: str, vault: str, task, driver: str, mock: bool,
                 proposals.append(write_staged_proposal(vault, task, body))
             result = {"judgments": judgments, "proposals": proposals}
         else:
-            result = parse_judgments(llm(build_prompt(task)))
+            parsed = parse_judgments(llm(build_prompt(task)))
+            result = {"judgments": parsed["judgments"], "proposals": []}
+            if propose and parsed["page"]:
+                result["proposals"].append(
+                    write_staged_proposal(vault, task, parsed["page"]["body"],
+                                          parsed["page"]["title"]))
         call(cli, vault, "dream-work-complete", id=task["id"], driver=driver,
              at=now(), result=result)
         return "done"

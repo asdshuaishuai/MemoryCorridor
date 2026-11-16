@@ -122,6 +122,24 @@ def main():
         assert round_row["status"] == "rejected", round_row
         assert round_row["outcome"]["delta"]["uncovered_sources"] == 1, round_row
 
+        # 4c. the real LLM path can carry a page draft: parse_judgments accepts
+        #     page {title,body}, rejects invalid shapes, and defaults to no page.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import rsi_agent_driver as rsi
+        parsed = rsi.parse_judgments(
+            '{"judgments": {"a": true}, "page": {"title": "t", "body": "b"}}')
+        assert parsed["judgments"] == {"a": True}, parsed
+        assert parsed["page"] == {"title": "t", "body": "b"}, parsed
+        assert rsi.parse_judgments('{"judgments": {}}')["page"] is None
+        for bad in ['{"judgments": {}, "page": {"title": "", "body": "b"}}',
+                    '{"judgments": {}, "page": {"title": "t", "body": "b", "extra": 1}}',
+                    '{"judgments": {}, "page": "not an object"}']:
+            try:
+                rsi.parse_judgments(bad)
+                raise AssertionError("expected rejection: " + bad)
+            except RuntimeError:
+                pass
+
         # 4. --propose: the driver stages a host-owned draft and records it in
         #    proposals; wiki/ stays untouched until the commit flow applies it.
         call("dream-policy", due_after_seconds=0, min_opportunities=1,

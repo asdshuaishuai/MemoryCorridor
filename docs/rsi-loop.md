@@ -74,8 +74,9 @@ dream-work-list                              # 队列视图（含背压计数/�
 1. 有 open 轮次则处理它；否则 `dream-due`，只在到期时 `dream-plan` →
    `dream-open`（baseline 取 plan 的精确指纹）。
 2. `dream-work-open` 从机会集生成工单，`dream-work-claim` 以 driver+lease 认领；
-   真实模式把任务视图交给 OpenAI 兼容端点，模型只返回
-   `{"judgments": {...}}` 标量判断；`--mock` 用确定性判断替代网络。
+   真实模式把任务视图交给 OpenAI 兼容端点，模型返回 `{"judgments": {...}}`
+   标量判断，可选 `page:{title,body}`；`--propose` 时宿主把正文暂存为 staging
+   草稿并登记 proposal；`--mock` 用确定性判断替代网络。
 3. `dream-work-complete` 回写结构化 judgments；失败则 `dream-work-fail` 记录原因。
 4. `--propose`：可为任务写 `staging/dream-work/<id>.md` 草稿并在 `proposals` 里
    登记（host-owned staging，不写 `wiki/`，应用仍走既有 commit）；
