@@ -64,7 +64,7 @@ expand  query     -> {queries: [original, ...]}
 失败语义：单条消息的模型失败记录在 summary 的 `messages[].error`，不中断
 整个 tick；evo 关闭时 daemon 仍然干净停止。
 
-## 五、HanLP：采用与否的结论（续四十六）
+## 五、HanLP：宿主 NLP 主体（续四十六提出、续四十八落地）
 
 **结论：采用，并作为宿主 NLP 的默认主体（`auto`：HanLP 优先、自研 lexicon
 兜底）；不进 MoonBit 核心，也不捆绑进默认依赖。**
