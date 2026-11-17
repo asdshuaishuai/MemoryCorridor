@@ -1165,6 +1165,27 @@ MUTATIONS = [
      "evo expression e2e:",
      "evo_expression_e2e.py"),
 
+    ("thread append must respect the turn limit",
+     "agent/evo.mbt",
+     '  if turns.length() >= max_turns { @base.fail("evo_thread_turn_limit") }',
+     '  if false { @base.fail("evo_thread_turn_limit") }',
+     "evo thread e2e:",
+     "evo_thread_e2e.py"),
+
+    ("thread open must require a delivered parent",
+     "agent/evo.mbt",
+     '  if delivered == Json::null() { @base.fail("evo_thread_parent_not_delivered") }',
+     '  if false { @base.fail("evo_thread_parent_not_delivered") }',
+     "evo thread e2e:",
+     "evo_thread_e2e.py"),
+
+    ("thread close must refuse a closed thread",
+     "agent/evo.mbt",
+     '  if @base.text(@base.field(row, "status")) != "open" {\n    @base.fail("evo_thread_terminal: " + id)\n  }',
+     '  if false {\n    @base.fail("evo_thread_terminal: " + id)\n  }',
+     "evo thread e2e:",
+     "evo_thread_e2e.py"),
+
     ("a follow-up chain must stop at the depth limit",
      "agent/evo.mbt",
      '  if turn > 8 { @base.fail("evo_proactive_followup_depth") }',

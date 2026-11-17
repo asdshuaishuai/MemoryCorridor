@@ -3370,6 +3370,218 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
   }
 }
 
+// ---- conversation threads (续五十五) --------------------------------------
+// User turns enter the engine as state, not as knowledge: a thread starts from a
+// delivered proactive reply and stays open until the host closes it.
+fn evo_thread_text(value : String) -> Unit raise @base.Fault {
+  if value.is_empty() || value.length() > 4096 || value.contains("\r") {
+    @base.fail("evo_thread_text_invalid")
+  }
+}
+
+fn evo_thread_turn(role : String, text : String, at : String) -> Json {
+  { "role": role.to_json(), "text": text.to_json(), "at": at,
+    "proactive": Json::null() }
+}
+
+pub fn evo_thread_open_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "proactive", "text", "driver", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let proactive = @base.text(@base.field(request, "proactive"))
+  if !evo_proactive_hash_ok(proactive) { @base.fail("evo_thread_proactive_invalid") }
+  let text = @base.text(@base.field(request, "text"))
+  evo_thread_text(text)
+  let driver = @base.text(@base.field(request, "driver"))
+  evo_proactive_driver(driver)
+  let at = evo_at_text(request)
+  let parent_path = "state/evo/proactive/" + proactive + ".json"
+  let parent_text = match (store.read)(parent_path) {
+    None => {
+      @base.fail("evo_proactive_not_found: " + proactive)
+      ""
+    }
+    Some(value) => value
+  }
+  let parent_row = @base.parse(parent_text)
+  if @base.text(@base.field(parent_row, "status")) != "done" {
+    @base.fail("evo_thread_parent_not_delivered")
+  }
+  let delivered = match evo_optional(parent_row, "delivered_at") {
+    None => Json::null()
+    Some(value) => value
+  }
+  if delivered == Json::null() { @base.fail("evo_thread_parent_not_delivered") }
+  let id = @base.hex_hash("evo-thread-v1\n" + proactive + "\n" + at)
+  let path = "state/evo/threads/" + id + ".json"
+  match (store.read)(path) {
+    Some(existing) => {
+      let old = @base.parse(existing)
+      let turns = @base.array(@base.field(old, "turns"))
+      let first = turns[0]
+      if turns.length() == 1 &&
+        @base.text(@base.field(first, "role")) == "agent" &&
+        @base.text(@base.field(first, "text")) == text &&
+        @base.text(@base.field(first, "at")) == at {
+        return { "id": id, "status": "open", "turns": 1, "replayed": true,
+          "fingerprint": @vault.fingerprint(entries) }
+      }
+      @base.fail("evo_thread_already_open")
+    }
+    None => ()
+  }
+  let turn = evo_thread_turn("agent", text, at)
+  let record : Json = {
+    "version": 1, "id": id, "created_at": at, "updated_at": at, "status": "open",
+    "max_turns": 16, "turns": [turn], "last_proactive": proactive.to_json(),
+  }
+  let content = @base.canonical(record)
+  let event_path = "state/events/evo-thread-open-" + id + "-" +
+    @base.hex_hash(driver + "\n" + proactive + "\n" + at) + ".json"
+  let event_content = @base.canonical({ "op": "evo-thread-open", "thread": id,
+    "agent": driver, "proactive": proactive, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: (store.read)(path), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "open", "turns": 1, "last_proactive": proactive,
+    "replayed": false, "fingerprint": @vault.fingerprint(next) }
+}
+
+pub fn evo_thread_append_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "id", "role", "text", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let id = @base.text(@base.field(request, "id"))
+  if !evo_proactive_hash_ok(id) { @base.fail("evo_thread_id_invalid") }
+  let role = @base.text(@base.field(request, "role"))
+  if !["agent", "user"].contains(role) { @base.fail("evo_thread_role_invalid") }
+  let text = @base.text(@base.field(request, "text"))
+  evo_thread_text(text)
+  let at = evo_at_text(request)
+  let path = "state/evo/threads/" + id + ".json"
+  let row_text = match (store.read)(path) {
+    None => {
+      @base.fail("evo_thread_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(row_text)
+  if @base.text(@base.field(row, "status")) != "open" {
+    @base.fail("evo_thread_closed: " + id)
+  }
+  let turns = @base.array(@base.field(row, "turns"))
+  let max_turns = match @base.field(row, "max_turns") {
+    Number(n, ..) => n.to_int()
+    _ => raise @base.Fault("evo_thread_max_turns_invalid")
+  }
+  if turns.length() >= max_turns { @base.fail("evo_thread_turn_limit") }
+  let last = turns[turns.length() - 1]
+  if @base.text(@base.field(last, "role")) == role &&
+    @base.text(@base.field(last, "text")) == text &&
+    @base.text(@base.field(last, "at")) == at {
+    return { "id": id, "role": role, "turns": turns.length(), "replayed": true,
+      "fingerprint": @vault.fingerprint(entries) }
+  }
+  let next_turns : Array[Json] = []
+  for turn in turns { next_turns.push(turn) }
+  next_turns.push(evo_thread_turn(role, text, at))
+  let updated = evo_proactive_set(row, [
+    ("turns", next_turns.to_json()),
+    ("updated_at", at.to_json()),
+  ])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/evo-thread-append-" + id + "-" +
+    @base.hex_hash(role + "\n" + at) + ".json"
+  let event_content = @base.canonical({ "op": "evo-thread-append", "thread": id,
+    "role": role, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(row_text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "role": role, "turns": turns.length() + 1, "replayed": false,
+    "fingerprint": @vault.fingerprint(next) }
+}
+
+pub fn evo_thread_close_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "id", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let id = @base.text(@base.field(request, "id"))
+  if !evo_proactive_hash_ok(id) { @base.fail("evo_thread_id_invalid") }
+  let at = evo_at_text(request)
+  let path = "state/evo/threads/" + id + ".json"
+  let row_text = match (store.read)(path) {
+    None => {
+      @base.fail("evo_thread_not_found: " + id)
+      ""
+    }
+    Some(value) => value
+  }
+  let row = @base.parse(row_text)
+  if @base.text(@base.field(row, "status")) == "closed" &&
+    @base.text(@base.field(row, "updated_at")) == at {
+    return { "id": id, "status": "closed", "replayed": true,
+      "fingerprint": @vault.fingerprint(entries) }
+  }
+  if @base.text(@base.field(row, "status")) != "open" {
+    @base.fail("evo_thread_terminal: " + id)
+  }
+  let updated = evo_proactive_set(row, [("status", "closed".to_json()), ("updated_at", at.to_json())])
+  let content = @base.canonical(updated)
+  let event_path = "state/events/evo-thread-close-" + id + "-" +
+    @base.hex_hash(at) + ".json"
+  let event_content = @base.canonical({ "op": "evo-thread-close", "thread": id, "at": at })
+  let changes : Array[@vault.Change] = [
+    { path, before: Some(row_text), after: Some(content) },
+    { path: event_path, before: None, after: Some(event_content) },
+  ]
+  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(content), sources: [], stale: false }),
+    { id: event_path, path: event_path, kind: "state", format: "json",
+      sha256: @base.hex_hash(event_content), sources: [], stale: false })
+  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  { "id": id, "status": "closed", "replayed": false,
+    "fingerprint": @vault.fingerprint(next) }
+}
+
+pub fn evo_thread_list_op(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/evo/threads/"))
+  let keyed : Array[(String, Json)] = rows.map(entry => {
+    let row = @base.parse(@vault.required(store, entry.path))
+    (@base.text(@base.field(row, "id")), row)
+  })
+  keyed.sort_by((a, b) => @base.compare(a.0, b.0))
+  let items : Array[Json] = []
+  let mut open = 0
+  let mut closed = 0
+  for pair in keyed {
+    let status = @base.text(@base.field(pair.1, "status"))
+    if status == "open" { open = open + 1 } else { closed = closed + 1 }
+    items.push({
+      "id": pair.0, "status": status,
+      "turns": @base.field(pair.1, "turns"),
+      "max_turns": @base.field(pair.1, "max_turns"),
+      "last_proactive": @base.field(pair.1, "last_proactive"),
+      "updated_at": @base.text(@base.field(pair.1, "updated_at")),
+    })
+  }
+  { "threads": items.to_json(), "counts": { "open": open, "closed": closed },
+    "fingerprint": @vault.fingerprint(entries) }
+}
+
 pub fn evo(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
@@ -3392,6 +3604,10 @@ pub fn evo(
     "evo-proactive-fail" => evo_proactive_fail_op(store, entries, request)
     "evo-proactive-ack" => evo_proactive_ack_op(store, entries, request)
     "evo-proactive-followup" => evo_proactive_followup_op(store, entries, request)
+    "evo-thread-open" => evo_thread_open_op(store, entries, request)
+    "evo-thread-append" => evo_thread_append_op(store, entries, request)
+    "evo-thread-close" => evo_thread_close_op(store, entries, request)
+    "evo-thread-list" => evo_thread_list_op(store, entries)
     "evo-expression" => evo_expression_op(store, entries, request)
     "evo-proactive-list" => evo_proactive_list_op(store, entries)
     _ => raise @base.Fault("operation_not_implemented: " + op)

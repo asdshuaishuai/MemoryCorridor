@@ -51,7 +51,7 @@ def call(cli: str, vault: str, op: str, **fields):
     return response["result"]
 
 
-def build_prompt(request, history="") -> str:
+def build_prompt(request, history="", thread=None) -> str:
     """Host-owned prompt template; the engine only supplies structured tokens."""
     context = request["context"]
     emotion = context["emotion"]
@@ -64,6 +64,12 @@ def build_prompt(request, history="") -> str:
                  + "\n不要重复它；如果自然，可以承接它。\n")
     if request.get("user_text"):
         prior += "用户刚刚回复：" + str(request["user_text"])[:2000] + "\n请自然地回应这句话。\n"
+    if thread:
+        lines = []
+        for turn in thread[-6:]:
+            lines.append(("她" if turn.get("role") == "agent" else "用户") +
+                         "：" + str(turn.get("text", ""))[:200])
+        prior += "当前对话：\n" + "\n".join(lines) + "\n请承接，不要重复刚说过的话。\n"
     return (
         "你是它的内在声音。根据以下内部状态，主动对用户说一句简短、自然的话（不超过 80 字），"
         "不要解释你在做什么，不要提及 JSON 或系统。\n"
@@ -95,6 +101,24 @@ def llm(prompt: str):
     with urllib.request.urlopen(request, timeout=120) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return payload["choices"][0]["message"]["content"].strip(), model
+
+
+def open_thread(cli: str, vault: str, proactive: str, text: str, driver: str, at: str) -> dict:
+    """Start the conversation thread from a delivered reply; failure is logged."""
+    try:
+        return call(cli, vault, "evo-thread-open", proactive=proactive, text=text,
+                    driver=driver, at=at)
+    except RuntimeError as error:
+        print(f"driver: thread open skipped: {error}", file=sys.stderr)
+        return {}
+
+
+def thread_turns(cli: str, vault: str) -> list:
+    rows = call(cli, vault, "evo-thread-list").get("threads", [])
+    for row in rows:
+        if row.get("status") == "open":
+            return row.get("turns", [])
+    return []
 
 
 def history_text(cli: str, vault: str, exclude_id: str = None) -> str:
@@ -137,13 +161,14 @@ def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str
     opened = call(cli, vault, "evo-proactive-followup", id=parent, user_text=user_text,
                   driver=driver, lease_until=iso_in(300), at=now())
     history = parent_reply(cli, vault, parent)
+    thread = thread_turns(cli, vault)
     try:
         if mock:
             text = (f"（mock 跟进·第{opened['turn']}轮）你说“{user_text[:40]}”，"
                     "我接着回应。")
             model = "mock"
         else:
-            text, model = llm(build_prompt(opened, history))
+            text, model = llm(build_prompt(opened, history, thread))
         call(cli, vault, "evo-proactive-complete", id=opened["id"], driver=driver,
              at=now(), result={"text": text, "model": model})
         print(text)
@@ -175,7 +200,10 @@ def main() -> int:
                         help="answer one follow-up to this delivered proactive id")
     parser.add_argument("--user-text", default=None,
                         help="the user's reply for --followup-parent")
+    parser.add_argument("--no-thread", action="store_true",
+                        help="do not open a conversation thread after delivery")
     args = parser.parse_args()
+    args.thread = not args.no_thread
     if args.followup_parent:
         if not args.user_text:
             parser.error("--followup-parent requires --user-text")
@@ -202,6 +230,7 @@ def main() -> int:
         opened = call(args.cli, args.vault, "evo-proactive-open",
                       driver=args.driver, lease_until=iso_in(300), at=at)
         history = history_text(args.cli, args.vault, opened["id"])
+        thread = thread_turns(args.cli, args.vault)
         try:
             if args.mock:
                 marker = "·续" if history else ""
@@ -209,7 +238,7 @@ def main() -> int:
                         "我想和你说句话。")
                 model = "mock"
             else:
-                text, model = llm(build_prompt(opened, history))
+                text, model = llm(build_prompt(opened, history, thread))
         except Exception as error:  # noqa: BLE001 - driver must record, not crash
             call(args.cli, args.vault, "evo-proactive-fail", id=opened["id"],
                  driver=args.driver, reason=str(error)[:1000], at=now())
@@ -223,6 +252,9 @@ def main() -> int:
         print(text)
         if args.ack:
             call(args.cli, args.vault, "evo-proactive-ack", id=opened["id"], at=now())
+        if args.thread:
+            open_thread(args.cli, args.vault, opened["id"], text,
+                        args.driver, now())
         if args.once:
             return 0
         time.sleep(args.interval)

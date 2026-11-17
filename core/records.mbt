@@ -675,6 +675,59 @@ fn evo_last_observe_shape(value : Json) -> Unit raise @base.Fault {
 // Proactive request (续三十三): the affect system's structured "I want to act"
 // envelope for the host driver. The engine stores it; a host-side driver claims
 // it, calls the LLM and completes it. No engine module reads these records.
+// Conversation thread (续五十五): the engine keeps user/agent turns as state,
+// never as knowledge pages. A thread starts from a delivered proactive reply and
+// stays open until the host closes it.
+fn evo_thread_record(path : String, value : Json) -> Unit raise @base.Fault {
+  let code = "evo_thread_record_invalid"
+  @base.keys(value, ["version", "id", "created_at", "updated_at", "status",
+    "max_turns", "turns", "last_proactive"])
+  match @base.field(value, "version") {
+    Number(n, ..) if n == 1.0 => ()
+    _ => raise @base.Fault(code + ":version")
+  }
+  let id = @base.text(@base.field(value, "id"))
+  if !valid_hash(id) || path != "state/evo/threads/" + id + ".json" {
+    @base.fail(code + ":id")
+  }
+  let status = @base.text(@base.field(value, "status"))
+  if !["open", "closed"].contains(status) { @base.fail(code + ":status") }
+  ignore(evo_record_int(value, "max_turns", 1, 32, code))
+  let max_turns = match @base.field(value, "max_turns") {
+    Number(n, ..) => n.to_int()
+    _ => raise @base.Fault(code + ":max_turns")
+  }
+  let turns = @base.array(@base.field(value, "turns"))
+  if turns.length() > max_turns { @base.fail(code + ":turns") }
+  for turn in turns {
+    @base.keys(turn, ["role", "text", "at", "proactive"])
+    let role = @base.text(@base.field(turn, "role"))
+    if !["agent", "user"].contains(role) { @base.fail(code + ":role") }
+    let text = @base.text(@base.field(turn, "text"))
+    if text.is_empty() || text.length() > 4096 || text.contains("\r") {
+      @base.fail(code + ":text")
+    }
+    event_time(@base.text(@base.field(turn, "at")))
+    match optional_record_field(turn, "proactive") {
+      None => ()
+      Some(Json::Null) => ()
+      Some(proactive) => {
+        if !valid_hash(@base.text(proactive)) { @base.fail(code + ":proactive") }
+      }
+    }
+  }
+  match optional_record_field(value, "last_proactive") {
+    None => ()
+    Some(Json::Null) => ()
+    Some(proactive) => {
+      if !valid_hash(@base.text(proactive)) { @base.fail(code + ":last_proactive") }
+    }
+  }
+  event_time(@base.text(@base.field(value, "created_at")))
+  event_time(@base.text(@base.field(value, "updated_at")))
+  if status == "closed" && turns.is_empty() { @base.fail(code + ":empty") }
+}
+
 fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
   let code = "evo_proactive_record_invalid"
   @base.keys(value, ["version", "id", "step", "genome", "state_sha256", "reason",
@@ -1118,6 +1171,8 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     evo_fossil_record(entry.path, value)
   } else if entry.path.has_prefix("state/evo/proactive/") {
     evo_proactive_record(entry.path, value)
+  } else if entry.path.has_prefix("state/evo/threads/") {
+    evo_thread_record(entry.path, value)
   } else if entry.path.has_prefix("state/evo/") {
     @base.fail("evo_record_path_invalid")
   } else if entry.path.has_prefix("state/orders/") {
@@ -1645,6 +1700,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
       "evo-proactive-open", "evo-proactive-complete", "evo-proactive-fail",
       "evo-proactive-ack", "evo-proactive-reclaim", "evo-proactive-followup",
+      "evo-thread-open", "evo-thread-append", "evo-thread-close",
       "evo-policy", "evo-init", "evo-evaluate", "evo-evolve", "evo-regression",
       "evo-rollback", "evo-fossilize",
     ]
@@ -2121,6 +2177,39 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("at"))
       let expected = "state/events/evo-proactive-followup-" + proactive + "-" +
         @base.hex_hash(parent + "\n" + driver + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-thread-open" {
+      @base.keys(value, ["op", "thread", "agent", "proactive", "at"])
+      let thread = string("thread")
+      let proactive = string("proactive")
+      if !valid_hash(thread) || !valid_hash(proactive) {
+        @base.fail("evo_thread_event_invalid")
+      }
+      let agent = string("agent")
+      if agent.is_empty() || agent.length() > 128 || agent.contains("\n") {
+        @base.fail("evo_thread_event_invalid")
+      }
+      event_time(string("at"))
+      let expected = "state/events/evo-thread-open-" + thread + "-" +
+        @base.hex_hash(agent + "\n" + proactive + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-thread-append" {
+      @base.keys(value, ["op", "thread", "role", "at"])
+      let thread = string("thread")
+      if !valid_hash(thread) { @base.fail("evo_thread_event_invalid") }
+      let role = string("role")
+      if !["agent", "user"].contains(role) { @base.fail("evo_thread_event_invalid") }
+      event_time(string("at"))
+      let expected = "state/events/evo-thread-append-" + thread + "-" +
+        @base.hex_hash(role + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+    } else if op == "evo-thread-close" {
+      @base.keys(value, ["op", "thread", "at"])
+      let thread = string("thread")
+      if !valid_hash(thread) { @base.fail("evo_thread_event_invalid") }
+      event_time(string("at"))
+      let expected = "state/events/evo-thread-close-" + thread + "-" +
+        @base.hex_hash(string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-proactive-reclaim" {
       @base.keys(value, ["op", "proactive", "driver", "at"])

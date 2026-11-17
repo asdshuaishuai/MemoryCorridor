@@ -93,9 +93,11 @@ def static_isolation():
             offenders.append((rel, "duplicate evo dispatch call"))
     # The controller may not reach other modules, models, networks or clocks.
     controller = (ROOT / "agent/evo.mbt").read_text(encoding="utf-8")
+    # "thread" is deliberately absent: evo-thread-* are conversation threads,
+    # not OS threads. Concurrency is still caught by spawn/sleep/platform imports.
     forbidden = ["dream", "lint_result", "topics(", "stats(", "embedding_plan",
                  "provider", "@platform", "@index", "@interop", "@office",
-                 "@htdoc", "http", "socket", "spawn", "thread", "sleep", "time("]
+                 "@htdoc", "http", "socket", "spawn", "sleep", "time("]
     for token in forbidden:
         if token in controller:
             offenders.append(("agent/evo.mbt", "forbidden token " + token))
@@ -606,7 +608,7 @@ def main():
         assert (vault / "index.mbt.md").read_bytes() == before
 
         tools = call("list-tools")
-        assert len(tools) == 124, len(tools)
+        assert len(tools) == 128, len(tools)
         names = {tool["name"] for tool in tools}
         for name in ["evo-policy", "evo-init", "evo-observe", "evo-evaluate",
                      "evo-evolve", "evo-status", "evo-rollback",

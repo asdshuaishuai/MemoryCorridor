@@ -111,7 +111,7 @@ class Clock:
 class Daemon:
     def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit,
                  clock, reflect_every, consolidate_every, quiet_start, quiet_end,
-                 message_file=None, affect_provider="lexicon"):
+                 message_file=None, affect_provider="lexicon", thread=True):
         self.cli = cli
         self.vault = vault
         self.name = name
@@ -127,6 +127,7 @@ class Daemon:
         self.quiet_end = quiet_end
         self.message_file = message_file
         self.affect_provider = affect_provider
+        self.thread = thread
         self.state = load_state(vault)
 
     def read_messages(self):
@@ -171,13 +172,28 @@ class Daemon:
                             valence=affect["valence"], subject="user",
                             body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                             at=self.clock.stamp())
+                appended = self.append_user_turn(text)
                 observed.append({"step": step, "valence": affect["valence"],
                                  "arousal": affect["arousal"],
                                  "topics": affect["topics"],
-                                 "provider": affect["provider"]})
+                                 "provider": affect["provider"],
+                                 "thread_turn": appended})
             except RuntimeError as error:
                 observed.append({"error": str(error)[:300]})
         return observed
+
+    def append_user_turn(self, text):
+        """Append a user turn to the open thread when the last turn is hers."""
+        rows = driver.call(self.cli, self.vault, "evo-thread-list").get("threads", [])
+        open_row = next((row for row in rows if row.get("status") == "open"), None)
+        if open_row is None:
+            return None
+        turns = open_row.get("turns", [])
+        if turns and turns[-1].get("role") != "agent":
+            return None
+        driver.call(self.cli, self.vault, "evo-thread-append", id=open_row["id"],
+                    role="user", text=text, at=self.clock.stamp())
+        return {"id": open_row["id"], "role": "user"}
 
     def is_quiet(self):
         if self.quiet_start < 0:
@@ -205,13 +221,14 @@ class Daemon:
         opened = driver.call(self.cli, self.vault, "evo-proactive-open",
                              driver=self.name, lease_until=self.clock.stamp_in(300), at=self.clock.stamp())
         history = driver.history_text(self.cli, self.vault, opened["id"])
+        thread = driver.thread_turns(self.cli, self.vault)
         try:
             if self.mock:
                 marker = "·续" if history else ""
                 text = f"（mock 主动应答{marker}）第 {opened['context']['step']} 步，我想说句话。"
                 model = "mock"
             else:
-                text, model = driver.llm(driver.build_prompt(opened, history))
+                text, model = driver.llm(driver.build_prompt(opened, history, thread))
             driver.call(self.cli, self.vault, "evo-proactive-complete",
                         id=opened["id"], driver=self.name, at=self.clock.stamp(),
                         result={"text": text, "model": model})
@@ -221,6 +238,9 @@ class Daemon:
                 driver.call(self.cli, self.vault, "evo-proactive-ack",
                             id=opened["id"], at=self.clock.stamp())
                 acked = True
+            if self.thread:
+                driver.open_thread(self.cli, self.vault, opened["id"], text,
+                                   self.name, self.clock.stamp())
             return {"id": opened["id"], "text": text, "model": model,
                     "acked": acked, "reclaimed": opened.get("reclaimed", False)}
         except Exception as error:  # noqa: BLE001 - record and keep the loop alive
@@ -368,6 +388,8 @@ def main() -> int:
                         help="quiet-hours end hour (0..23)")
     parser.add_argument("--message-file", default=None,
                         help="host-owned newline-delimited user messages to sense")
+    parser.add_argument("--no-thread", action="store_true",
+                        help="do not open a conversation thread after delivery")
     parser.add_argument("--affect-provider", default="auto",
                         choices=["auto", "lexicon", "llm", "hanlp"],
                         help="NLP provider for user-message affect (auto = HanLP first, "
@@ -386,7 +408,8 @@ def main() -> int:
                     args.with_rsi, not args.no_expression, args.limit, clock,
                     args.reflect_every, args.consolidate_every,
                     args.quiet_start, args.quiet_end,
-                    args.message_file, args.affect_provider)
+                    args.message_file, args.affect_provider,
+                    not args.no_thread)
     target = args.ticks or (1 if args.once else 0)
     try:
         while True:

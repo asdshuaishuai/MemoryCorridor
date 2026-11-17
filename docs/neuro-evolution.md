@@ -351,6 +351,17 @@ v1.13 跟进链（续五十一，证据见 `scripts/evo_followup_e2e.py`）：
   父回复 + 用户原话，mock 以 `第N轮` 标记。
 - 记录与列表新增 `parent/turn/user_text`；内核仍只存结构化会话记录，不写知识页。
 
+v1.14 多轮用户对话输入契约（续五十五，证据见 `scripts/evo_thread_e2e.py`）：
+
+- 引擎新增 `state/evo/threads/<id>.json` 与四 op：`evo-thread-open`（从已投递主动回复
+  开线程，首轮 agent）、`evo-thread-append`（agent/user 轮次，同轮同 at 重放零写，
+  上限 `max_turns=16`）、`evo-thread-close`（终态）、`evo-thread-list`（只读）。
+- 用户轮次第一次作为**引擎 state** 进入闭环：daemon 感知用户消息后观察
+  `evo-observe`，并把同一文本 append 到 open 线程（仅当上一轮是 agent）；驱动开口后
+  自动 open 线程，prompt 带最近 6 轮对话。
+- 边界：线程只存结构化轮次，不是知识页；文字不进入 wiki/来源；关闭 evo 后
+  thread op 与其余 evo op 一样 `evo_disabled`。
+
 v2 延后（未实现，不得写成已交付）：
 
 - 独立 `checkpoint.json` 与 `evaluation/<gen>.json` 目录。

@@ -919,3 +919,6 @@
 
 
 - [x] **2026-11-17 续五十四：真实路径离线可测（本地 OpenAI 兼容服务）**：CI 不连外网，`--mock` 不能代表真实调用。新增 `scripts/nlp_real_path_e2e.py`：本地 HTTP 服务跑通 `nlp_adapter affect/expand --provider llm`（请求形状、JSON 解析、越界夹紧）、模型非法 JSON 失败关闭（`parse_json_object` 包一层 `model did not return JSON`）、`rsi_agent_driver` 正式模式 prompt→judgments→complete 与失败→fail 记录、`evo_agent_driver` 正式模式 prompt→文本→complete→ack。HanLP 真实模型路径仍因 CI 无 Java/包干净 SKIP；选择与回退逻辑由本 e2e 固定。接进 verify.sh。**待 CI 落账**。
+
+
+- [x] **2026-11-17 续五十五：多轮用户对话输入契约（evo-thread-*）**：用户轮次第一次作为引擎 state 进入主动式闭环。新增 `state/evo/threads/<id>.json`（version/id/created_at/updated_at/status/max_turns/turns/last_proactive；turn 为 `{role,text,at,proactive?}`，role agent/user，text≤4096 无 `\r`，proactive 可空）与四 op：`evo-thread-open`（父必须 done+delivered，同 `(proactive,at)` 重放零写、同 id 不同载荷 `evo_thread_already_open`）、`evo-thread-append`（仅 open、同轮同 at 重放、上限 16）、`evo-thread-close`（终态/重放）、`evo-thread-list`（只读，含完整 turns 供宿主取上下文）。事件 `evo-thread-open/append/close` 身份校验。驱动开口 ack 后自动 open 线程，prompt 带最近 6 轮；daemon 感知用户消息后 append user 轮（仅当上一轮是 agent）。验收：`evo_thread_e2e.py`（契约全部分支 + daemon 开口→线程→用户消息→user 轮）+ 3 条 mutation（轮次上限/已投递父/closed 终态）；三面 124→128。文档：protocol 四 op、neuro-evolution v1.14、soul-layer、acceptance 行。**待 CI 落账**。
