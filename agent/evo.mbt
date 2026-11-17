@@ -910,10 +910,41 @@ fn evo_knowledge_alignment(valence : Array[Double], outcome : Array[Double]) -> 
   if scored == 0 { (0.0, false) } else { (total / scored.to_double(), true) }
 }
 
+// Deterministic seeded holdout (续五十六): the split is a Fisher-Yates shuffle of
+// the window indices seeded by the window hash, so every member of a generation
+// is evaluated on the same train/holdout sets and the result replays byte for
+// byte. It is deliberately NOT a time suffix: overfitting detection must not
+// depend on observation order.
+fn evo_split_indices(length : Int, window_sha256 : String) -> (Array[Int], Array[Int]) {
+  let digest = @base.hex_hash("evo-holdout-v1\n" + window_sha256)
+  let mut s0 = evo_rng_word(digest, 0)
+  let mut s1 = evo_rng_word(digest, 8)
+  let mut s2 = evo_rng_word(digest, 16)
+  let mut s3 = evo_rng_word(digest, 24)
+  let indices = Array::make(length, 0)
+  for i = 0; i < length; i = i + 1 { indices[i] = i }
+  let mut i = length
+  while i > 1 {
+    let t = s0 ^ (s0 << 11)
+    s0 = s1
+    s1 = s2
+    s2 = s3
+    s3 = s3 ^ (s3 >> 19) ^ t ^ (t >> 8)
+    let unit = s3.to_double() / 4294967296.0
+    let j = (unit * i.to_double()).to_int()
+    let tmp = indices[i - 1]
+    indices[i - 1] = indices[j]
+    indices[j] = tmp
+    i = i - 1
+  }
+  let train_count = Int::max(1, (length.to_double() * 0.7).to_int())
+  (indices[:train_count].to_owned(), indices[train_count:].to_owned())
+}
+
 fn evo_segment(
-  trajectory : EvoTrajectory, mean : Array[Array[Double]], start : Int, end : Int,
+  trajectory : EvoTrajectory, mean : Array[Array[Double]], indices : Array[Int],
 ) -> EvoSegment {
-  let length = if end > start { end - start } else { 1 }
+  let length = if indices.length() > 0 { indices.length() } else { 1 }
   let mut unstable = 0
   let mut fired = 0
   let mut blowups = 0
@@ -922,7 +953,7 @@ fn evo_segment(
   let mut novelty = 0.0
   let mut positive = 0
   let mut emotional_sum = 0.0
-  for step = start; step < end; step = step + 1 {
+  for step in indices {
     if trajectory.nonfinite { unstable = unstable + 1 }
     if trajectory.fired[step] { fired = fired + 1 }
     blowups = blowups + trajectory.blowups[step]
@@ -940,7 +971,7 @@ fn evo_segment(
   }
   let steps = length.to_double()
   let stability = 1.0 - evo_clamp((unstable + blowups).to_double() / steps, 0.0, 1.0)
-  let responsiveness = evo_responsiveness(trajectory, start, end)
+  let responsiveness = evo_responsiveness(trajectory, indices)
   let growth_score = if subject_events == 0 { 0.5 } else { evo_clamp(0.5 + 0.5 * growth, 0.0, 1.0) }
   let novelty_score = novelty / steps
   let energy = evo_clamp(fired.to_double() / 8.0, 0.0, 1.0)
@@ -949,7 +980,7 @@ fn evo_segment(
   let positive_penalty = evo_clamp(2.0 * (positive_share - 0.5), 0.0, 1.0)
   let mean_emotion = emotional_sum / steps
   let mut variance = 0.0
-  for step = start; step < end; step = step + 1 {
+  for step in indices {
     let delta = trajectory.emotion[step][0] - mean_emotion
     variance = variance + delta * delta
   }
@@ -969,11 +1000,11 @@ fn evo_segment(
 
 // Responsiveness measures recovery after a strong host stimulus. Arousal is
 // emotion[1]; overshoot above 0.70 and a slow return both cost score.
-fn evo_responsiveness(trajectory : EvoTrajectory, start : Int, end : Int) -> Double {
+fn evo_responsiveness(trajectory : EvoTrajectory, indices : Array[Int]) -> Double {
   let total_steps = trajectory.emotion.length()
   let mut stimuli = 0
   let mut total = 0.0
-  for step = start; step < end; step = step + 1 {
+  for step in indices {
     if trajectory.valence[step].abs() < 0.5 { continue }
     stimuli = stimuli + 1
     let mut peak = 0.0
@@ -1616,9 +1647,8 @@ fn evo_evaluate_op(
     trajectories.push(evo_trajectory(genome.weights, state.window))
   }
   let mean = evo_mean_trajectory(trajectories, state.window.length())
-  let train_end = Int::min(state.window.length(),
-    (state.window.length().to_double() * 0.7).to_int())
-  let split = if train_end < 1 { 1 } else { train_end }
+  let (train_steps, holdout_steps) = evo_split_indices(state.window.length(),
+    state.window_sha256)
   let updated_members : Array[EvoMember] = []
   let mut best_genome = ""
   let mut best_fitness = -2.0
@@ -1627,8 +1657,8 @@ fn evo_evaluate_op(
   for index = 0; index < alive.length(); index = index + 1 {
     let row = alive[index]
     let trajectory = trajectories[index]
-    let segment = evo_segment(trajectory, mean, 0, split)
-    let holdout_segment = evo_segment(trajectory, mean, split, state.window.length())
+    let segment = evo_segment(trajectory, mean, train_steps)
+    let holdout_segment = evo_segment(trajectory, mean, holdout_steps)
     let (raw, train, holdout, holdout_penalty) = evo_fitness_from_segments(
       segment, holdout_segment, policy.params)
     let lethal = trajectory.nonfinite || !evo_finite(raw)

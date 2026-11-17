@@ -1165,6 +1165,20 @@ MUTATIONS = [
      "evo expression e2e:",
      "evo_expression_e2e.py"),
 
+    ("holdout split must be seeded by the window, not a fixed suffix",
+     "agent/evo.mbt",
+     '    let j = (unit * i.to_double()).to_int()',
+     '    let j = i - 1',
+     "evo holdout split is seeded, covers the window and is not a time suffix",
+     None),
+
+    ("holdout split must leave a holdout set",
+     "agent/evo.mbt",
+     '  let train_count = Int::max(1, (length.to_double() * 0.7).to_int())',
+     '  let train_count = length',
+     "evo holdout split is seeded, covers the window and is not a time suffix",
+     None),
+
     ("thread append must respect the turn limit",
      "agent/evo.mbt",
      '  if turns.length() >= max_turns { @base.fail("evo_thread_turn_limit") }',

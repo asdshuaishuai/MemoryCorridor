@@ -431,7 +431,9 @@ test "evo fitness punishes flat, always-positive and held-out-gap behaviour" {
   let zero = Array::make(@core.EVO_WEIGHTS, 0.0)
   let flat = evo_trajectory(zero, window)
   let mean = evo_mean_trajectory([flat], 16)
-  let flat_segment = evo_segment(flat, mean, 0, 16)
+  let all_steps : Array[Int] = []
+  for i = 0; i < 16; i = i + 1 { all_steps.push(i) }
+  let flat_segment = evo_segment(flat, mean, all_steps)
   assert_eq(flat_segment.flatness_penalty, 1.0)
   assert_eq(flat_segment.positive_penalty, 0.0)
   // A genome whose first emotion dimension saturates positive is charged on
@@ -441,7 +443,7 @@ test "evo fitness punishes flat, always-positive and held-out-gap behaviour" {
   positive[329] = 8.0 // b_o[5]: slow emotion decay
   let trajectory = evo_trajectory(positive, window)
   let positive_mean = evo_mean_trajectory([trajectory], 16)
-  let holdout_segment = evo_segment(trajectory, positive_mean, 11, 16)
+  let holdout_segment = evo_segment(trajectory, positive_mean, [11, 12, 13, 14, 15])
   assert_eq(holdout_segment.positive_penalty, 1.0)
   // Train far above holdout must be charged, so fitness falls below train.
   let params = evo_default_params()
@@ -1115,4 +1117,24 @@ test "evo knowledge alignment rewards matching valence and ignores absent outcom
   let (none, has_none) = evo_knowledge_alignment([0.5], [0.0])
   assert_false(has_none)
   assert_eq(none, 0.0)
+}
+
+test "evo holdout split is seeded, covers the window and is not a time suffix" {
+  let (train, holdout) = evo_split_indices(16, "window-hash")
+  assert_eq(train.length() + holdout.length(), 16)
+  assert_eq(train.length(), 11)
+  assert_eq(holdout.length(), 5)
+  let covered = train.copy()
+  for index in holdout { covered.push(index) }
+  covered.sort_by((a, b) => a - b)
+  for i = 0; i < 16; i = i + 1 { assert_eq(covered[i], i) }
+  let suffix = [11, 12, 13, 14, 15]
+  let mut is_suffix = true
+  for i = 0; i < 5; i = i + 1 {
+    if holdout[i] != suffix[i] { is_suffix = false }
+  }
+  assert_false(is_suffix)
+  let (train2, holdout2) = evo_split_indices(16, "window-hash")
+  for i = 0; i < 11; i = i + 1 { assert_eq(train2[i], train[i]) }
+  for i = 0; i < 5; i = i + 1 { assert_eq(holdout2[i], holdout[i]) }
 }

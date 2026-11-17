@@ -922,3 +922,6 @@
 
 
 - [x] **2026-11-17 续五十五：多轮用户对话输入契约（evo-thread-*）**：用户轮次第一次作为引擎 state 进入主动式闭环。新增 `state/evo/threads/<id>.json`（version/id/created_at/updated_at/status/max_turns/turns/last_proactive；turn 为 `{role,text,at,proactive?}`，role agent/user，text≤4096 无 `\r`，proactive 可空）与四 op：`evo-thread-open`（父必须 done+delivered，同 `(proactive,at)` 重放零写、同 id 不同载荷 `evo_thread_already_open`）、`evo-thread-append`（仅 open、同轮同 at 重放、上限 16）、`evo-thread-close`（终态/重放）、`evo-thread-list`（只读，含完整 turns 供宿主取上下文）。事件 `evo-thread-open/append/close` 身份校验。驱动开口 ack 后自动 open 线程，prompt 带最近 6 轮；daemon 感知用户消息后 append user 轮（仅当上一轮是 agent）。验收：`evo_thread_e2e.py`（契约全部分支 + daemon 开口→线程→用户消息→user 轮）+ 3 条 mutation（轮次上限/已投递父/closed 终态）；三面 124→128。文档：protocol 四 op、neuro-evolution v1.14、soul-layer、acceptance 行。**待 CI 落账**。
+
+
+- [x] **2026-11-17 续五十六：评估留出切分改为窗口哈希种子的确定性洗牌（evo v2 第一刀）**：`evo_segment` 从连续区间改为索引数组成员；新增 `evo_split_indices(length, window_sha256)`：Fisher-Yates 洗牌（文件内 xorshift128，种子 = `hex_hash("evo-holdout-v1\n"+window_sha256)` 的四个字），前 70% 训练 / 后 30% 留出；同一窗口所有成员同切分、逐字节重放，留出不再依赖观察顺序。`evo_wbtest` 固定覆盖全窗口、大小 11/5、确定性、且不等于时间后缀 {11..15}；`evo_e2e` 评估/回归/回滚语义回归通过。2 条 mutation（固定后缀、无留出）登记。文档：neuro-evolution v1.15、protocol evaluate、acceptance 行。**待 CI 落账**。
