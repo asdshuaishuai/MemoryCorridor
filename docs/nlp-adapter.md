@@ -100,7 +100,19 @@ expand  query     -> {queries: [original, ...]}
 `scripts/search_expansion_e2e.py` 固定：auto 回退标记、原查询第一、合并去重、
 来源记录、知识页字节不变。
 
-## 八、后续
+## 八、真实路径的离线验证（续五十四）
+
+CI 不连外网，但 `--mock` 不能代表真实调用。`scripts/nlp_real_path_e2e.py` 在本地
+起一个 OpenAI 兼容 HTTP 服务，跑通：
+- `nlp_adapter affect/expand --provider llm` 的请求形状、JSON 解析、越界夹紧；
+- 模型返回非法 JSON 时失败关闭（`model did not return JSON`）；
+- `rsi_agent_driver` 正式模式：prompt → judgments → `dream-work-complete`，
+  以及模型失败 → `dream-work-fail` 记录原因；
+- `evo_agent_driver` 正式模式：prompt → 文本 → `evo-proactive-complete` → `ack`。
+
+HanLP 真实模型路径仍因 CI 无 Java/包而干净 SKIP；选择与回退逻辑由本 e2e 固定。
+
+## 九、后续
 
 - 情感侧：多模态（语音/表情）适配器，同样只输出结构化信号。
 - 评估：用固定语料做 lexicon 与 LLM provider 的一致性/偏差对照，报告如实标注。

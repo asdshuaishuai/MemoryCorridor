@@ -916,3 +916,6 @@
 
 
 - [x] **2026-11-17 续五十三：补全 RSI 驱动正式模式的 staged 提案**：`--propose` 原先只有 mock 写草稿，正式 LLM 路径丢提案。现 `build_prompt` 允许模型返回可选 `page{title,body}`（title≤128、body≤8192）；`parse_judgments` 解析并校验（空标题/越界键/非对象失败关闭），`process_task` 在 `--propose` 且模型给了 page 时写 `staging/dream-work/<id>.md` 并登记 proposal；无 page 时行为不变。验收：`rsi_driver_e2e.py` 4c（解析/拒绝/默认）+ 第 4 段 mock 提案回归。**CI 落账**：run 43919987966（32d2ba2）conclusion=success（2026-11-16）；完整门禁 172 mutation 全部捕获（170 CAUGHT + 2 COMPILE，0 SURVIVED）；rsi driver/evo followup/nlp adapter/search expansion e2e 与 map check 全过。
+
+
+- [x] **2026-11-17 续五十四：真实路径离线可测（本地 OpenAI 兼容服务）**：CI 不连外网，`--mock` 不能代表真实调用。新增 `scripts/nlp_real_path_e2e.py`：本地 HTTP 服务跑通 `nlp_adapter affect/expand --provider llm`（请求形状、JSON 解析、越界夹紧）、模型非法 JSON 失败关闭（`parse_json_object` 包一层 `model did not return JSON`）、`rsi_agent_driver` 正式模式 prompt→judgments→complete 与失败→fail 记录、`evo_agent_driver` 正式模式 prompt→文本→complete→ack。HanLP 真实模型路径仍因 CI 无 Java/包干净 SKIP；选择与回退逻辑由本 e2e 固定。接进 verify.sh。**待 CI 落账**。

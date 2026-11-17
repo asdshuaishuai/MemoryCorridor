@@ -164,7 +164,10 @@ def llm_json(system, user, endpoint, model, key):
 
 
 def parse_json_object(text):
-    value = json.loads(text)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("model did not return JSON: %s" % error) from error
     if not isinstance(value, dict):
         raise RuntimeError("model did not return a JSON object")
     return value
