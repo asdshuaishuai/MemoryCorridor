@@ -1186,6 +1186,13 @@ MUTATIONS = [
      "evo thread e2e:",
      "evo_thread_e2e.py"),
 
+    ("thread open must require a completed parent",
+     "agent/evo.mbt",
+     '  if @base.text(@base.field(parent_row, "status")) != "done" {\n    @base.fail("evo_thread_parent_not_done")\n  }',
+     '  if false {\n    @base.fail("evo_thread_parent_not_done")\n  }',
+     "evo thread e2e:",
+     "evo_thread_e2e.py"),
+
     ("thread open must require a delivered parent",
      "agent/evo.mbt",
      '  if delivered == Json::null() { @base.fail("evo_thread_parent_not_delivered") }',

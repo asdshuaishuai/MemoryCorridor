@@ -3435,7 +3435,7 @@ pub fn evo_thread_open_op(store : @vault.Storage, entries : Array[@core.Entry], 
   }
   let parent_row = @base.parse(parent_text)
   if @base.text(@base.field(parent_row, "status")) != "done" {
-    @base.fail("evo_thread_parent_not_delivered")
+    @base.fail("evo_thread_parent_not_done")
   }
   let delivered = match evo_optional(parent_row, "delivered_at") {
     None => Json::null()

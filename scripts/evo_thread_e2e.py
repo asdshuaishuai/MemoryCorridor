@@ -75,7 +75,11 @@ def main():
         claimed = call("evo-proactive-open", driver="driver-b",
                        lease_until=at(300001), at=at(3020))
         call("evo-thread-open", proactive=claimed["id"], text="未投递",
-             driver="driver-b", at=at(3021), error="evo_thread_parent_not_delivered")
+             driver="driver-b", at=at(3021), error="evo_thread_parent_not_done")
+        call("evo-proactive-complete", id=claimed["id"], driver="driver-b",
+             at=at(3022), result={"text": "未投递", "model": "mock"})
+        call("evo-thread-open", proactive=claimed["id"], text="已完成未送达",
+             driver="driver-b", at=at(3023), error="evo_thread_parent_not_delivered")
 
         # 2. append / replay / role+text validation / turn limit.
         assert call("evo-thread-append", id=opened["id"], role="user",

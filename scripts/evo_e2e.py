@@ -343,7 +343,9 @@ def main():
         evaluated = call("evo-evaluate", at="2026-11-12T00:07:10Z")
         best_a = evaluated["checkpoint"]["fitness"]
         replay_eval = call("evo-evaluate", at="2026-11-12T00:07:20Z")
-        assert replay_eval["replayed"] is True and replay_eval["best"]["fitness"] == best_a
+        assert replay_eval["replayed"] is True
+        assert replay_eval["checkpoint"]["fitness"] == best_a, (replay_eval, best_a)
+        assert replay_eval["best"] == evaluated["best"], (replay_eval, evaluated)
 
         population_before = read_record("state/evo/population.json")
         ranked = sorted(population_before["members"],
