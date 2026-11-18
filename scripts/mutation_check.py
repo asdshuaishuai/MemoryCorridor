@@ -1325,6 +1325,25 @@ MUTATIONS = [
      '        last_at = ""',
      "evo batch e2e:",
      "evo_batch_e2e.py"),
+
+    # 续六十二 slice 1: the sidecar keeps vault-grade integrity on its own.
+    ("sidecar load must fail closed on a tampered record",
+     "agent/evo_sidecar.mbt",
+     '      Some(digest) => if digest != files[path] {\n        @base.fail("evo_sidecar_corrupt: " + path)\n      }',
+     '      Some(digest) => if false {\n        @base.fail("evo_sidecar_corrupt: " + path)\n      }',
+     "evo sidecar load fails closed on tamper and demands recovery"),
+
+    ("sidecar commit must refuse a conflicting write",
+     "agent/evo_sidecar.mbt",
+     '    if !matches {\n      @base.fail("evo_sidecar_write_conflict: " + change.path)\n    }',
+     '    if false {\n      @base.fail("evo_sidecar_write_conflict: " + change.path)\n    }',
+     "evo sidecar refuses conflicting writes without side effects"),
+
+    ("sidecar commit must journal before applying files",
+     "agent/evo_sidecar.mbt",
+     '  (store.write)(EVO_SIDECAR_JOURNAL, journal)',
+     '  ignore(journal)',
+     "evo sidecar recovers forward from a crash at any publish point"),
 ]
 
 

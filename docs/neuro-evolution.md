@@ -79,12 +79,16 @@
    指纹与 `index.mbt.md` 字节不变；启用后，`dream-plan`/`page-redundancy`/
    `impact-audit`/`inbox`/`graph`/`stats` 等业务的**非指纹字段逐字段相同**；
    wiki/raw/非 evo 事件零字节变化。
-3. **容器级（如实记录，v1 不消除）**：evo 记录作为 `state/` 持久记录，与其它所有
-   state 记录一样参与目录指纹、`verify`、`read-log`、`pack` 与缓存失效。因此
-   enable→disable 之后，`status` 的 `index_cache`、`search` 的 `cache_rebuilt`、
-   `read-log` 行数会与「从未启用」的金库不同——这是持久记录的容器语义，不是 evo
-   专用行为耦合。若需要字节级隔离，v2 可把 evo 状态移到 vault 外的 sidecar 存储
-   （代价：pack/unpack 不再覆盖它），本设计不宣称已实现。
+3. **容器级（v1 现状 + 续六十二迁移中）**：evo 记录目前仍作为 `state/` 持久记录，
+   与其它 state 记录一样参与目录指纹、`verify`、`read-log`、`pack` 与缓存失效；
+   enable→disable 后 `index_cache`/`cache_rebuilt`/`read-log` 行数与「从未启用」的
+   金库不同——这是持久记录的容器语义，不是 evo 专用行为耦合。字节级隔离的 sidecar
+   迁移已开工（续六十二）：切片一交付 `agent/evo_sidecar.mbt`——`evo/index.json`
+   mini-catalog（路径→sha256）+ 两阶段 journal（`evo/transactions/pending.json`，
+   前滚恢复到唯一一致态）+ 冲突/重复/保留路径/篡改失败关闭，中断恢复有
+   wbtest 在每个发布点崩溃验证；**路由迁移（evo op 改走 sidecar、records 前缀、
+   既有金库一次性迁移、enable→disable 字节不变的隔离验收）尚未交付，不写成已交付**。
+   代价重申：pack/unpack 不再覆盖 evo 状态。
 
 另外，v1 已修一处真实安全缺口：pending 建议记录损坏时，`evo-policy(enabled=false)`
 **仍必须可用**（安全开关豁免，损坏记录只对启用/改参 fail-closed）。
