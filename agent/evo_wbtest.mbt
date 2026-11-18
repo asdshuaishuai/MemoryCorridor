@@ -1138,3 +1138,78 @@ test "evo holdout split is seeded, covers the window and is not a time suffix" {
   for i = 0; i < 11; i = i + 1 { assert_eq(train2[i], train[i]) }
   for i = 0; i < 5; i = i + 1 { assert_eq(holdout2[i], holdout[i]) }
 }
+
+// ---- scenario rotation (续五十八) -----------------------------------------
+
+fn evo_test_scenario_row() -> Json {
+  let input = [0.0, 1.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25, 0.125,
+    0.1, 0.1, 0.1]
+  { "step": 3, "at": "2026-11-12T00:10:00Z",
+    "input": input.map(value => value.to_json()).to_json(),
+    "emotion": [0.1, 0.2, 0.3].map(value => value.to_json()).to_json(),
+    "impulse": 0.1, "fired": false, "subject": "同伴".to_json(), "outcome": 0.2 }
+}
+
+fn evo_test_scenario_input(row : Json) -> Array[Double] raise @base.Fault {
+  @base.array(evo_test_object_field(row, "input")).map(item => match item {
+    Number(n, ..) => n
+    _ => 0.0
+  })
+}
+
+test "evo scenario rotation follows the generation" {
+  assert_eq(evo_scenario(0), 0)
+  assert_eq(evo_scenario(1), 1)
+  assert_eq(evo_scenario(3), 3)
+  assert_eq(evo_scenario(4), 0)
+  assert_eq(evo_scenario(7), 3)
+}
+
+test "evo scenario row transform bounds each drift axis" {
+  let row = evo_test_scenario_row()
+  assert_eq(@base.canonical(evo_scenario_row(row, 0)), @base.canonical(row))
+  let stressed = evo_scenario_row(row, 1)
+  let stressed_input = evo_test_scenario_input(stressed)
+  assert_eq(stressed_input[5], 0.5)
+  assert_eq(stressed_input[6], 0.75)
+  assert_eq(evo_test_text_field(stressed, "subject"), "同伴")
+  let ceiling = evo_scenario_row(evo_test_set(row, "input",
+    [0.0, 1.0, 0.0, 0.0, 0.5, 0.5, 0.9, 0.9, 0.9, 0.9, 0.5, 0.25, 0.125,
+      0.1, 0.1, 0.1].map(value => value.to_json()).to_json()), 1)
+  assert_eq(evo_test_scenario_input(ceiling)[6], 1.0)
+  let hostile = evo_scenario_row(row, 2)
+  assert_eq(evo_test_scenario_input(hostile)[5], 0.0)
+  assert_eq(evo_test_scenario_input(hostile)[6], 0.5)
+  let churned = evo_scenario_row(row, 3)
+  let churned_input = evo_test_scenario_input(churned)
+  assert_eq(churned_input[10], 0.0)
+  assert_eq(churned_input[11], 0.0)
+  assert_eq(churned_input[12], 0.0)
+  assert_eq(churned_input[5], 0.5)
+  assert_true(match evo_test_object_field(churned, "subject") {
+    Json::Null => true
+    _ => false
+  })
+  for scenario = 0; scenario < 4; scenario = scenario + 1 {
+    let moved = evo_scenario_row(row, scenario)
+    assert_eq(evo_test_number_field(moved, "step"), 3.0)
+    assert_eq(evo_test_number_field(moved, "outcome"), 0.2)
+    assert_eq(evo_test_text_field(moved, "at"), "2026-11-12T00:10:00Z")
+  }
+}
+
+test "evo scenario drift is observable on the same window" {
+  let row = evo_test_scenario_row()
+  let baseline = evo_test_scenario_input(evo_scenario_row(row, 0))
+  let stressed = evo_test_scenario_input(evo_scenario_row(row, 1))
+  let hostile = evo_test_scenario_input(evo_scenario_row(row, 2))
+  let churned = evo_test_scenario_input(evo_scenario_row(row, 3))
+  let mut moved = 0
+  for i = 0; i < 16; i = i + 1 {
+    if stressed[i] != baseline[i] { moved = moved + 1 }
+    if hostile[i] != baseline[i] { moved = moved + 1 }
+    if churned[i] != baseline[i] { moved = moved + 1 }
+  }
+  assert_eq(moved, 8)
+  assert_eq(baseline[4], 0.5)
+}

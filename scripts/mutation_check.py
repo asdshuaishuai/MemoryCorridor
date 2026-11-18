@@ -1275,6 +1275,33 @@ MUTATIONS = [
      "  let holdout_penalty = 0.0",
      "evo fitness punishes flat, always-positive and held-out-gap behaviour",
      "evo_e2e.py"),
+
+    # 续五十八: scenario rotation. The drift must advance with the generation
+    # and every axis must stay individually observable, or a champion fitted to
+    # one condition silently stops being challenged.
+    ("evo scenario rotation must advance with the generation",
+     "agent/evo.mbt",
+     "  generation % EVO_SCENARIO_COUNT",
+     "  0",
+     "evo scenario rotation follows the generation"),
+
+    ("evo scenario drift must reach the body stress axis",
+     "agent/evo.mbt",
+     "    for i = 6; i <= 9; i = i + 1 { next[i] = evo_clamp(next[i] * 1.5, 0.0, 1.0) }",
+     "    for i = 6; i <= 9; i = i + 1 { next[i] = evo_clamp(next[i] * 1.0, 0.0, 1.0) }",
+     "evo scenario row transform bounds each drift axis"),
+
+    ("evo scenario drift must shift the event valence axis",
+     "agent/evo.mbt",
+     "    next[5] = evo_clamp(next[5] - 0.5, -1.0, 1.0)",
+     "    next[5] = evo_clamp(next[5] - 0.0, -1.0, 1.0)",
+     "evo scenario row transform bounds each drift axis"),
+
+    ("evo scenario churn must withdraw the relationship subject",
+     "agent/evo.mbt",
+     '  if scenario == 3 { evo_row_set(updated, "subject", Json::null()) } else { updated }',
+     '  if false { evo_row_set(updated, "subject", Json::null()) } else { updated }',
+     "evo scenario row transform bounds each drift axis"),
 ]
 
 

@@ -6,7 +6,8 @@ story and the isolation claims on the real CLI:
   evo-policy    default-off gate, closed parameter table, bootstrap, locks
   evo-init      seeded Xavier population bound to (seed, at, policy_hash)
   evo-observe   clamped affect/impulse drift, replay/conflict and the ring window
-  evo-evaluate  full-window replay, train/held-out split, checkpoint update
+  evo-evaluate  full-window replay, train/held-out split, scenario rotation,
+                checkpoint update
   evo-evolve    elites, tournaments, crossover, fossils, regression rollback
   evo-status    cross-record integrity and ledger reconciliation
   evo-rollback  manual checkpoint restore with immutable failure evidence
@@ -341,11 +342,13 @@ def main():
         observe_favorable(17, "2026-11-12T00:06:00Z")
         call("evo-evolve", error="evo_window_changed", at="2026-11-12T00:07:00Z")
         evaluated = call("evo-evaluate", at="2026-11-12T00:07:10Z")
+        assert evaluated["scenario"] == 0, evaluated["scenario"]
         best_a = evaluated["checkpoint"]["fitness"]
         replay_eval = call("evo-evaluate", at="2026-11-12T00:07:20Z")
         assert replay_eval["replayed"] is True
         assert replay_eval["checkpoint"]["fitness"] == best_a, (replay_eval, best_a)
         assert replay_eval["best"] == evaluated["best"], (replay_eval, evaluated)
+        assert replay_eval["scenario"] == 0, replay_eval["scenario"]
 
         population_before = read_record("state/evo/population.json")
         ranked = sorted(population_before["members"],
@@ -375,6 +378,7 @@ def main():
         for index in range(16):
             observe_pressure(18 + index, "2026-11-12T00:09:00Z")
         pressure_eval = call("evo-evaluate", at="2026-11-12T00:10:00Z")
+        assert pressure_eval["scenario"] == 1, pressure_eval["scenario"]
         best_b = pressure_eval["best"]["fitness"]
         assert best_b < best_a - 0.05, (best_a, best_b)
         regressed = call("evo-evolve", at="2026-11-12T00:11:00Z")
@@ -401,7 +405,8 @@ def main():
 
         # ---- 14. manual rollback -------------------------------------------
         call("evo-rollback", error="evo_rollback_noop", at="2026-11-12T00:12:00Z")
-        call("evo-evaluate", at="2026-11-12T00:12:10Z")
+        rollback_eval = call("evo-evaluate", at="2026-11-12T00:12:10Z")
+        assert rollback_eval["scenario"] == 0, rollback_eval["scenario"]
         call("evo-evolve", at="2026-11-12T00:12:20Z")
         call("evo-evaluate", at="2026-11-12T00:12:30Z")
         rollbacks_before = status()["rollbacks"]
@@ -618,8 +623,9 @@ def main():
             assert name in names, name
 
     print("evo e2e: default-off gate, policy bootstrap, fast-loop replay, "
-          "same-seed determinism, window evaluation, elite/fossil/regression/"
-          "rollback evidence, tamper branches, pack round trip and isolation passed")
+          "same-seed determinism, window evaluation, scenario rotation, "
+          "elite/fossil/regression/rollback evidence, tamper branches, pack "
+          "round trip and isolation passed")
     return 0
 
 

@@ -941,6 +941,50 @@ fn evo_split_indices(length : Int, window_sha256 : String) -> (Array[Int], Array
   (indices[:train_count].to_owned(), indices[train_count:].to_owned())
 }
 
+// 续五十八: scenario rotation. The same window is re-scored under a rotated
+// environment every generation (event distribution, body stress, relationship
+// objects), so a champion fitted to one condition can fail outright once the
+// scenario turns — the mechanismized "good days do not last". The scenario is
+// a pure function of the generation, so evaluation stays deterministic and a
+// replay of the same (window, generation) always sees the same drift.
+const EVO_SCENARIO_COUNT : Int = 4
+
+fn evo_scenario(generation : Int) -> Int {
+  generation % EVO_SCENARIO_COUNT
+}
+
+fn evo_row_set(row : Json, key : String, value : Json) -> Json {
+  match row {
+    Object(fields) => {
+      let copy = fields.copy()
+      copy[key] = value
+      Json::object(copy)
+    }
+    _ => row
+  }
+}
+
+// Returns a transformed *copy* of one window row. The stored window, its hash
+// and the holdout split seed stay on the raw rows; only the controller sees
+// the drifted condition.
+fn evo_scenario_row(row : Json, scenario : Int) -> Json raise @base.Fault {
+  if scenario == 0 { return row }
+  let input = evo_window_input(row)
+  let next = input.copy()
+  if scenario == 1 {
+    // body stress: every vitals channel is pushed toward its ceiling
+    for i = 6; i <= 9; i = i + 1 { next[i] = evo_clamp(next[i] * 1.5, 0.0, 1.0) }
+  } else if scenario == 2 {
+    // event skew: the host's affect turns hostile
+    next[5] = evo_clamp(next[5] - 0.5, -1.0, 1.0)
+  } else if scenario == 3 {
+    // subject churn: the relationship object withdraws
+    for i = 10; i <= 12; i = i + 1 { next[i] = 0.0 }
+  }
+  let updated = evo_row_set(row, "input", next.map(value => value.to_json()).to_json())
+  if scenario == 3 { evo_row_set(updated, "subject", Json::null()) } else { updated }
+}
+
 fn evo_segment(
   trajectory : EvoTrajectory, mean : Array[Array[Double]], indices : Array[Int],
 ) -> EvoSegment {
@@ -1641,12 +1685,15 @@ fn evo_evaluate_op(
   }
   let alive = evo_alive_members(population)
   if alive.is_empty() { @base.fail("evo_population_exhausted") }
+  let scenario = evo_scenario(population.generation)
+  let rows : Array[Json] = []
+  for row in state.window { rows.push(evo_scenario_row(row, scenario)) }
   let trajectories : Array[EvoTrajectory] = []
   for row in alive {
     let genome = evo_load_genome(store, entries, row.genome)
-    trajectories.push(evo_trajectory(genome.weights, state.window))
+    trajectories.push(evo_trajectory(genome.weights, rows))
   }
-  let mean = evo_mean_trajectory(trajectories, state.window.length())
+  let mean = evo_mean_trajectory(trajectories, rows.length())
   let (train_steps, holdout_steps) = evo_split_indices(state.window.length(),
     state.window_sha256)
   let updated_members : Array[EvoMember] = []
@@ -1764,6 +1811,7 @@ fn evo_evaluate_op(
     "train_mean": evo_mean_breakdown(updated_population.members, true),
     "holdout_mean": evo_mean_breakdown(updated_population.members, false),
     "members": members.map(evo_member_json).to_json(),
+    "scenario": scenario.to_json(),
     "replayed": false, "fingerprint": @vault.fingerprint(batch.next.val),
   }
 }
@@ -1783,6 +1831,7 @@ fn evo_evaluate_response(
     "train_mean": evo_mean_breakdown(population.members, true),
     "holdout_mean": evo_mean_breakdown(population.members, false),
     "members": population.members.map(evo_member_json).to_json(),
+    "scenario": evo_scenario(last.generation).to_json(),
     "replayed": replayed, "fingerprint": fingerprint,
   }
 }
