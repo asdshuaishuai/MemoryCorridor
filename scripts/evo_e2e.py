@@ -28,6 +28,8 @@ EXE = ROOT / "_build/native/debug/build/cli/cli.exe"
 ALLOWED = {
     "agent/evo.mbt",
     "agent/evo_wbtest.mbt",
+    "agent/evo_sidecar.mbt",
+    "agent/evo_sidecar_wbtest.mbt",
     "core/records.mbt",
     "agent/tools.mbt",
     "agent/schema.mbt",
