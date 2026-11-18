@@ -1302,6 +1302,29 @@ MUTATIONS = [
      '  if scenario == 3 { evo_row_set(updated, "subject", Json::null()) } else { updated }',
      '  if false { evo_row_set(updated, "subject", Json::null()) } else { updated }',
      "evo scenario row transform bounds each drift axis"),
+
+    # 续五十九: the batch must refuse malformed row sets, validate every row
+    # and timestamp its rows in order.
+    ("observe batch must reject an empty or oversized row array",
+     "agent/evo.mbt",
+     "  if rows.length() == 0 || rows.length() > EVO_OBSERVE_BATCH_MAX {",
+     "  if false {",
+     "evo batch e2e:",
+     "evo_batch_e2e.py"),
+
+    ("observe batch must validate every row",
+     "agent/evo.mbt",
+     "    let args = evo_observe_args(row)",
+     "    let args = evo_observe_args(request)",
+     "evo batch e2e:",
+     "evo_batch_e2e.py"),
+
+    ("observe batch must timestamp its rows in order",
+     "agent/evo.mbt",
+     "        last_at = args.at",
+     '        last_at = ""',
+     "evo batch e2e:",
+     "evo_batch_e2e.py"),
 ]
 
 

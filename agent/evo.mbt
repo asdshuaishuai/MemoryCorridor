@@ -1481,66 +1481,108 @@ fn evo_init_op(
 
 // ---- observe --------------------------------------------------------------
 
-fn evo_observe_op(
-  store : @vault.Storage, entries : Array[@core.Entry], request : Json,
-) -> Json raise @base.Fault {
-  evo_request_keys(request, ["step", "kind", "salience", "valence", "body",
+// 续五十九: the observe tick is factored out so a host may apply a burst of
+// observations in one atomic call. Identity, replay and step semantics are the
+// single-row semantics applied in order; any invalid row fails the whole batch
+// before the single commit, so a batch is byte-identical to applying its rows
+// one by one.
+const EVO_OBSERVE_BATCH_MAX : Int = 64
+
+priv struct EvoObserveArgs {
+  step : Int
+  kind : String
+  salience : Double
+  valence : Double
+  outcome : Double
+  body : Json
+  subject : String?
+  at : String
+}
+
+priv struct EvoObserveTick {
+  state : EvoState
+  emotion : Json
+  impulse : Double
+  fired : Bool
+  action : Json
+  threshold : Double
+  outcome : Double
+  replayed : Bool
+}
+
+fn evo_stored_number(row : Json, key : String) -> Double raise @base.Fault {
+  match @base.field(row, key) {
+    Number(n, ..) => n
+    _ => { @base.fail("evo_state_corrupt"); 0.0 }
+  }
+}
+
+fn evo_stored_bool(row : Json, key : String) -> Bool raise @base.Fault {
+  match @base.field(row, key) {
+    True => true
+    False => false
+    _ => { @base.fail("evo_state_corrupt"); false }
+  }
+}
+
+fn evo_observe_args(source : Json) -> EvoObserveArgs raise @base.Fault {
+  evo_request_keys(source, ["step", "kind", "salience", "valence", "body",
     "subject", "outcome", "at"])
-  let policy = evo_load_policy(store)
-  @vault.verify(store, entries)
-  evo_pause_if_pending(store, entries)
-  let at = evo_at_text(request)
-  let step = evo_request_int(request, "step", 1, 2147483647)
-  let kind = evo_text(request, "kind")
+  let at = evo_at_text(source)
+  let step = evo_request_int(source, "step", 1, 2147483647)
+  let kind = evo_text(source, "kind")
   if !["social", "task", "body", "novel"].contains(kind) { @base.fail("evo_kind_invalid") }
-  let salience = evo_request_number(request, "salience", 0.0, 1.0)
-  let valence = evo_request_number(request, "valence", -1.0, 1.0)
-  let outcome = match evo_optional(request, "outcome") {
+  let salience = evo_request_number(source, "salience", 0.0, 1.0)
+  let valence = evo_request_number(source, "valence", -1.0, 1.0)
+  let outcome = match evo_optional(source, "outcome") {
     None => 0.0
     Some(Number(n, ..)) if n >= -1.0 && n <= 1.0 && !n.is_nan() && !n.is_inf() => n
     Some(_) => raise @base.Fault("evo_outcome_invalid")
   }
-  let body = evo_body_arg(request)
-  let subject = evo_subject_arg(request)
-  let state_text = match (store.read)("state/evo/state.json") {
-    None => { @base.fail("evo_not_initialized"); "" }
-    Some(value) => value
-  }
-  match (store.read)("state/evo/population.json") {
-    None => @base.fail("evo_state_corrupt")
-    Some(_) => ()
-  }
-  let state = evo_state_from_json(@base.parse(state_text))
-  if state.active_genome is None { @base.fail("evo_genome_not_found") }
-  if state.window.length() > policy.params.window { @base.fail("evo_state_corrupt") }
-  let identity = evo_payload(kind, salience, valence, body, subject, outcome)
+  let body = evo_body_arg(source)
+  let subject = evo_subject_arg(source)
+  { step, kind, salience, valence, outcome, body, subject, at }
+}
+
+// A replay of the last applied row: same step, same identity. Returns None
+// when the row is not a replay; a same-step different-identity row is a
+// conflict, not a fresh apply.
+fn evo_observe_replay(
+  state : EvoState, args : EvoObserveArgs,
+) -> EvoObserveTick? raise @base.Fault {
+  if args.step != state.steps { return None }
+  let identity = evo_payload(args.kind, args.salience, args.valence, args.body,
+    args.subject, args.outcome)
   let payload_sha256 = @base.hex_hash(@base.canonical(identity))
-  if step == state.steps {
-    let same = match state.last_observe {
-      Object(_) => @base.text(@base.field(state.last_observe, "payload_sha256")) == payload_sha256
-      _ => false
-    }
-    if !same { @base.fail("evo_observe_conflict") }
-    let result = @base.field(state.last_observe, "result")
-    return {
-      "step": step,
-      "emotion": @base.field(result, "emotion"),
-      "impulse": @base.field(result, "impulse"),
-      "fired": @base.field(result, "fired"),
-      "action": @base.field(result, "action"),
-      "threshold": @base.field(result, "threshold"),
-      "outcome": match evo_optional(result, "outcome") { Some(Number(n, ..)) => n.to_json(); _ => 0.0.to_json() },
-      "window": { "have": state.window.length(), "capacity": policy.params.window },
-      "replayed": true, "fingerprint": @vault.fingerprint(entries),
-    }
+  let same = match state.last_observe {
+    Object(_) => @base.text(@base.field(state.last_observe, "payload_sha256")) == payload_sha256
+    _ => false
   }
-  if step != state.steps + 1 {
+  if !same { @base.fail("evo_observe_conflict") }
+  let result = @base.field(state.last_observe, "result")
+  Some({
+    state,
+    emotion: @base.field(result, "emotion"),
+    impulse: evo_stored_number(result, "impulse"),
+    fired: evo_stored_bool(result, "fired"),
+    action: @base.field(result, "action"),
+    threshold: evo_stored_number(result, "threshold"),
+    outcome: match evo_optional(result, "outcome") { Some(Number(n, ..)) => n; _ => 0.0 },
+    replayed: true,
+  })
+}
+
+fn evo_observe_apply(
+  params : EvoParams, weights : Array[Double], state : EvoState, args : EvoObserveArgs,
+) -> EvoObserveTick raise @base.Fault {
+  if args.step != state.steps + 1 {
     @base.fail("evo_step_invalid: expected " + (state.steps + 1).to_string())
   }
-  let genome_id = state.active_genome.unwrap()
-  let genome = evo_load_genome(store, entries, genome_id)
-  let relation = match subject { None => None; Some(name) => evo_relation_find(state.relations, name) }
-  match subject {
+  let identity = evo_payload(args.kind, args.salience, args.valence, args.body,
+    args.subject, args.outcome)
+  let payload_sha256 = @base.hex_hash(@base.canonical(identity))
+  let relation = match args.subject { None => None; Some(name) => evo_relation_find(state.relations, name) }
+  match args.subject {
     Some(_) => if relation is None && state.relations.length() >= 8 { @base.fail("evo_subject_limit") }
     None => ()
   }
@@ -1548,24 +1590,24 @@ fn evo_observe_op(
   let relation_familiarity = match relation { None => 0.0; Some(value) => value.familiarity }
   let relation_tension = match relation { None => 0.0; Some(value) => value.tension }
   let input : Array[Double] = [
-    if kind == "social" { 1.0 } else { 0.0 },
-    if kind == "task" { 1.0 } else { 0.0 },
-    if kind == "body" { 1.0 } else { 0.0 },
-    if kind == "novel" { 1.0 } else { 0.0 },
-    salience, valence,
-    evo_body_value(body, "cpu"), evo_body_value(body, "memory"),
-    evo_body_value(body, "latency"), evo_body_value(body, "budget"),
+    if args.kind == "social" { 1.0 } else { 0.0 },
+    if args.kind == "task" { 1.0 } else { 0.0 },
+    if args.kind == "body" { 1.0 } else { 0.0 },
+    if args.kind == "novel" { 1.0 } else { 0.0 },
+    args.salience, args.valence,
+    evo_body_value(args.body, "cpu"), evo_body_value(args.body, "memory"),
+    evo_body_value(args.body, "latency"), evo_body_value(args.body, "budget"),
     relation_trust, relation_familiarity, relation_tension,
     state.emotion[0], state.emotion[1], state.emotion[2],
   ]
-  let result = evo_apply(genome.weights, state.emotion, state.impulse,
-    state.last_fire_step, input, step)
+  let result = evo_apply(weights, state.emotion, state.impulse,
+    state.last_fire_step, input, args.step)
   if result.nonfinite { @base.fail("evo_numeric_invalid:controller") }
   let mut relations = state.relations.copy()
-  match subject {
+  match args.subject {
     None => ()
     Some(name) => {
-      let (trust, familiarity, tension) = evo_relation_delta(relation, result.relation_output, valence)
+      let (trust, familiarity, tension) = evo_relation_delta(relation, result.relation_output, args.valence)
       let updated : EvoRelation = { subject: name, trust, familiarity, tension }
       let kept : Array[EvoRelation] = []
       for item in relations {
@@ -1577,40 +1619,140 @@ fn evo_observe_op(
   }
   let mut window : Array[Json] = []
   for entry in state.window { window.push(entry) }
-  window.push(evo_window_entry_json(step, at, input, result.emotion,
-    result.impulse, result.fired, subject, outcome))
-  while window.length() > policy.params.window {
+  window.push(evo_window_entry_json(args.step, args.at, input, result.emotion,
+    result.impulse, result.fired, args.subject, args.outcome))
+  while window.length() > params.window {
     window = window[1:].to_owned()
   }
   let observation : Json = {
-    "step": step, "payload_sha256": payload_sha256,
+    "step": args.step, "payload_sha256": payload_sha256,
     "result": {
       "emotion": result.emotion.map(value => value.to_json()).to_json(),
       "impulse": result.impulse, "fired": result.fired.to_json(),
       "action": result.action.map(value => value.to_json()).to_json(),
-      "threshold": result.threshold, "outcome": outcome,
+      "threshold": result.threshold, "outcome": args.outcome,
     },
   }
   let updated_state : EvoState = {
-    ..state, steps: step, window, window_sha256: @core.evo_window_hash(window),
-    emotion: result.emotion, impulse: result.impulse, body,
+    ..state, steps: args.step, window, window_sha256: @core.evo_window_hash(window),
+    emotion: result.emotion, impulse: result.impulse, body: args.body,
     relations, last_observe: observation, last_fire_step: result.last_fire_step,
     impulses: state.impulses + (if result.fired { 1 } else { 0 }),
     blowups: state.blowups + result.blowup,
   }
-  let content = @base.canonical(evo_state_json(updated_state, at))
+  {
+    state: updated_state,
+    emotion: result.emotion.map(value => value.to_json()).to_json(),
+    impulse: result.impulse, fired: result.fired,
+    action: result.action.map(value => value.to_json()).to_json(),
+    threshold: result.threshold, outcome: args.outcome, replayed: false,
+  }
+}
+
+fn evo_observe_response(tick : EvoObserveTick, capacity : Int, fingerprint : String) -> Json {
+  {
+    "step": tick.state.steps,
+    "emotion": tick.emotion,
+    "impulse": tick.impulse, "fired": tick.fired.to_json(),
+    "action": tick.action,
+    "threshold": tick.threshold, "outcome": tick.outcome,
+    "window": { "have": tick.state.window.length(), "capacity": capacity },
+    "replayed": tick.replayed.to_json(), "fingerprint": fingerprint,
+  }
+}
+
+fn evo_observe_op(
+  store : @vault.Storage, entries : Array[@core.Entry], request : Json,
+) -> Json raise @base.Fault {
+  evo_request_keys(request, ["step", "kind", "salience", "valence", "body",
+    "subject", "outcome", "at"])
+  let policy = evo_load_policy(store)
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let args = evo_observe_args(request)
+  let state_text = match (store.read)("state/evo/state.json") {
+    None => { @base.fail("evo_not_initialized"); "" }
+    Some(value) => value
+  }
+  match (store.read)("state/evo/population.json") {
+    None => @base.fail("evo_state_corrupt")
+    Some(_) => ()
+  }
+  let state = evo_state_from_json(@base.parse(state_text))
+  if state.active_genome is None { @base.fail("evo_genome_not_found") }
+  if state.window.length() > policy.params.window { @base.fail("evo_state_corrupt") }
+  match evo_observe_replay(state, args) {
+    Some(tick) => {
+      return evo_observe_response(tick, policy.params.window,
+        @vault.fingerprint(entries))
+    }
+    None => ()
+  }
+  let genome = evo_load_genome(store, entries, state.active_genome.unwrap())
+  let tick = evo_observe_apply(policy.params, genome.weights, state, args)
+  let content = @base.canonical(evo_state_json(tick.state, args.at))
   let batch = evo_batch(entries)
   evo_add_update(batch, "state/evo/state.json", state_text, content)
   @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
-  {
-    "step": step,
-    "emotion": result.emotion.map(value => value.to_json()).to_json(),
-    "impulse": result.impulse, "fired": result.fired.to_json(),
-    "action": result.action.map(value => value.to_json()).to_json(),
-    "threshold": result.threshold, "outcome": outcome,
-    "window": { "have": window.length(), "capacity": policy.params.window },
-    "replayed": false, "fingerprint": @vault.fingerprint(batch.next.val),
+  evo_observe_response(tick, policy.params.window, @vault.fingerprint(batch.next.val))
+}
+
+fn evo_observe_batch_op(
+  store : @vault.Storage, entries : Array[@core.Entry], request : Json,
+) -> Json raise @base.Fault {
+  evo_request_keys(request, ["rows"])
+  let policy = evo_load_policy(store)
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let rows = match @base.field(request, "rows") {
+    Array(items) => items
+    _ => { @base.fail("evo_batch_invalid:rows"); [] }
   }
+  if rows.length() == 0 || rows.length() > EVO_OBSERVE_BATCH_MAX {
+    @base.fail("evo_batch_invalid: count 1.." + EVO_OBSERVE_BATCH_MAX.to_string())
+  }
+  let state_text = match (store.read)("state/evo/state.json") {
+    None => { @base.fail("evo_not_initialized"); "" }
+    Some(value) => value
+  }
+  match (store.read)("state/evo/population.json") {
+    None => @base.fail("evo_state_corrupt")
+    Some(_) => ()
+  }
+  let mut current = evo_state_from_json(@base.parse(state_text))
+  if current.active_genome is None { @base.fail("evo_genome_not_found") }
+  if current.window.length() > policy.params.window { @base.fail("evo_state_corrupt") }
+  let genome = evo_load_genome(store, entries, current.active_genome.unwrap())
+  let mut applied = 0
+  let mut replays = 0
+  let mut last_at = ""
+  let mut last_tick : EvoObserveTick? = None
+  for row in rows {
+    let args = evo_observe_args(row)
+    let tick = match evo_observe_replay(current, args) {
+      Some(value) => { replays = replays + 1; value }
+      None => {
+        applied = applied + 1
+        last_at = args.at
+        evo_observe_apply(policy.params, genome.weights, current, args)
+      }
+    }
+    current = tick.state
+    last_tick = Some(tick)
+  }
+  let tick = last_tick.unwrap()
+  let fingerprint = if applied > 0 {
+    let content = @base.canonical(evo_state_json(current, last_at))
+    let batch = evo_batch(entries)
+    evo_add_update(batch, "state/evo/state.json", state_text, content)
+    @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+    @vault.fingerprint(batch.next.val)
+  } else {
+    @vault.fingerprint(entries)
+  }
+  let response = evo_observe_response(tick, policy.params.window, fingerprint)
+  evo_row_set(evo_row_set(response, "applied", applied.to_json()),
+    "replays", replays.to_json())
 }
 
 // ---- evaluate -------------------------------------------------------------
@@ -3671,6 +3813,7 @@ pub fn evo(
     "evo-policy" => evo_policy_op(store, entries, request)
     "evo-init" => evo_init_op(store, entries, request)
     "evo-observe" => evo_observe_op(store, entries, request)
+    "evo-observe-batch" => evo_observe_batch_op(store, entries, request)
     "evo-evaluate" => evo_evaluate_op(store, entries, request)
     "evo-evolve" => evo_evolve_op(store, entries, request)
     "evo-status" => evo_status_op(store, entries, request)
