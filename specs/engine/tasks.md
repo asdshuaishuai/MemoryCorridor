@@ -932,3 +932,6 @@
 
 
 - [x] **2026-11-18 续五十九：批量 observe（evo v2 第三刀）**：observe tick 重构为 `evo_observe_args`/`evo_observe_apply`/`evo_observe_replay`/`evo_observe_response` 四件，单条 `evo-observe` 语义逐字节不变（全仓 322 测试回归）。新增 `evo-observe-batch`：`rows` 1..64 行按序内存应用、单次原子提交 `state.json`；任一行非法（键/值/步序/`evo_observe_conflict`）整批零写失败关闭；批内重复上一已应用行计 `replays`，全重放批零写返回原指纹；响应 = 末行字段 + `applied`/`replays`。**批处理与逐条单发对同一行序列产生逐字节相同的 state.json**（双金库 e2e 固定）。工具三面 128→129；字典描述顺带修正 evaluate 残留的「时间后缀留出」旧文案。验收：`scripts/evo_batch_e2e.py`（字节等价、批内重放、失败零写、空/超限/非数组拒绝、拒后可续行）+ 3 条 mutation 登记（上限、逐行校验、时序戳），182→185。文档：protocol 新 op 行与数组 schema 注、neuro-evolution v1.17（延后清单移出，内存快路径仍延后）。**待 CI 落账**。
+
+
+- [x] **2026-11-18 续六十：staged 提案的正式 commit 应用（宿主手动订单流）**：新增 `scripts/rsi_apply_proposal.py` 人工应用工具：选择 `staging/dream-work/<task>.md` 草稿 + raw 来源，走**既有**订单流 scan→context→analysis-submit→渲染 `staging/<order>/rsi-page.md`→commit 发布页面；零引擎改动、零新写路径，来源撤销照常使已应用页失效。幂等守卫：目标页仍活跃则拒绝（stale 允许重发布）；工单不唯一须 `--order`；草稿缺失/空正文/来源缺失拒绝；`not_a_page`/`entry_not_found` 视为 id 可用。验收：`scripts/rsi_apply_e2e.py`（草稿用**真实** `write_staged_proposal` 写入；正规流发布、read-page 校验来源、重复应用拒绝、三类拒绝、双新源歧义须 --order、按源选单成功、删源 scan 后页面 stale 而他页不受累）；无引擎改动故无新 mutation。文档：rsi-loop 三·六应用小节。**待 CI 落账**。

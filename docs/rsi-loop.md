@@ -88,6 +88,13 @@ dream-work-list                              # 队列视图（含背压计数/�
 提案仍由宿主暂存并经既有 commit 流应用。驱动是宿主适配层，不进入 MoonBit 核心，
 也不改变「引擎不调用模型」的分层。
 
+staged 提案的正式应用（续六十已交付）：`scripts/rsi_apply_proposal.py` 是**人工**的
+应用工具——人选择一份 `staging/dream-work/<task>.md` 草稿与使其成立的 raw 来源，
+工具按既有订单流 `scan → context → analysis-submit → 渲染 staging/<order>/rsi-page.md
+→ commit` 发布页面。它不发明任何新写路径：每个字节都走普通 commit 事务，因此来源
+撤销照常使已应用页面失效（e2e 固定）。拒绝分支：草稿缺失/正文为空/来源缺失/目标页
+仍活跃/工单不唯一（须 `--order` 指定）。驱动绝不调用它；应用是人的决定。
+
 另修复一处续三十一遗留：`dream-list` 曾把 `state/dreams/policy.json` 当轮次读取，
 导致写入节奏策略后列举报 `missing_field: status`；现按 `dream-due` 同样的规则跳过，
 `dream_e2e` 增加回归断言。
