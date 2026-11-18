@@ -156,30 +156,61 @@ class Daemon:
         self.state["message_offset"] = consumed
         return lines[-20:]
 
+    def observe_row(self, step, affect, at):
+        return {"step": step, "kind": "social", "salience": affect["salience"],
+                "valence": affect["valence"], "subject": "user",
+                "body": {"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
+                "at": at}
+
     def sense_messages(self):
         messages = self.read_messages()
         if not messages:
             return []
         status = driver.call(self.cli, self.vault, "evo-status")
         step = int(status["window"]["steps"])
-        observed = []
+        affects = []
         for text in messages:
             try:
-                affect = nlp_adapter.affect(text, provider=self.affect_provider)
-                step += 1
-                driver.call(self.cli, self.vault, "evo-observe", step=step,
-                            kind="social", salience=affect["salience"],
-                            valence=affect["valence"], subject="user",
-                            body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
-                            at=self.clock.stamp())
-                appended = self.append_user_turn(text)
-                observed.append({"step": step, "valence": affect["valence"],
-                                 "arousal": affect["arousal"],
-                                 "topics": affect["topics"],
-                                 "provider": affect["provider"],
-                                 "thread_turn": appended})
+                affects.append((text, nlp_adapter.affect(text, provider=self.affect_provider)))
             except RuntimeError as error:
-                observed.append({"error": str(error)[:300]})
+                affects.append((text, {"error": str(error)[:300]}))
+        good = [(text, affect) for text, affect in affects if "error" not in affect]
+        stamp = self.clock.stamp()
+        # One atomic batch per tick (续五十九); its bytes equal the sequential
+        # singles, so the observable behaviour is unchanged. Only if the engine
+        # refuses the whole batch do we fall back to per-message observes so a
+        # single bad row cannot block the others.
+        try:
+            if good:
+                driver.call(self.cli, self.vault, "evo-observe-batch",
+                            rows=[self.observe_row(step + index + 1, affect, stamp)
+                                  for index, (text, affect) in enumerate(good)])
+        except RuntimeError:
+            # Steps must be exactly state.steps+1 each, so a row that fails
+            # without applying must not consume a number: count successes only.
+            applied_fallback = 0
+            for position, (text, affect) in enumerate(affects):
+                if "error" in affect:
+                    continue
+                try:
+                    driver.call(self.cli, self.vault, "evo-observe",
+                                **self.observe_row(step + applied_fallback + 1, affect, stamp))
+                    applied_fallback = applied_fallback + 1
+                except RuntimeError as error:
+                    affects[position] = (text, {"error": str(error)[:300]})
+        observed = []
+        applied = 0
+        for text, affect in affects:
+            if "error" in affect:
+                observed.append({"error": affect["error"]})
+                continue
+            applied += 1
+            appended = self.append_user_turn(text)
+            observed.append({"step": step + applied, "valence": affect["valence"],
+                             "arousal": affect["arousal"],
+                             "topics": affect["topics"],
+                             "provider": affect["provider"],
+                             "thread_turn": appended})
         return observed
 
     def append_user_turn(self, text):

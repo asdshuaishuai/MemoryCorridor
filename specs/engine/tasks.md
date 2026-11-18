@@ -935,3 +935,5 @@
 
 
 - [x] **2026-11-18 续六十：staged 提案的正式 commit 应用（宿主手动订单流）**：新增 `scripts/rsi_apply_proposal.py` 人工应用工具：选择 `staging/dream-work/<task>.md` 草稿 + raw 来源，走**既有**订单流 scan→context→analysis-submit→渲染 `staging/<order>/rsi-page.md`→commit 发布页面；零引擎改动、零新写路径，来源撤销照常使已应用页失效。幂等守卫：目标页仍活跃则拒绝（stale 允许重发布）；工单不唯一须 `--order`；草稿缺失/空正文/来源缺失拒绝；`not_a_page`/`entry_not_found` 视为 id 可用。验收：`scripts/rsi_apply_e2e.py`（草稿用**真实** `write_staged_proposal` 写入；正规流发布、read-page 校验来源、重复应用拒绝、三类拒绝、双新源歧义须 --order、按源选单成功、删源 scan 后页面 stale 而他页不受累）；无引擎改动故无新 mutation。文档：rsi-loop 三·六应用小节。**待 CI 落账**。
+
+- [x] **2026-11-18 续六十一：daemon 感知接入批量 observe**：`evo_daemon.sense_messages` 从逐条 `evo-observe`（每消息一个事务）改为同 tick 一次 `evo-observe-batch`（单事务），行为字节等价由续五十九的双金库等价 e2e 保证；批量被引擎整体拒绝时回退逐条以保持「单条坏行不阻塞其余」的旧有韧性，且回退按**仅成功计数**编步号（顺带消除旧实现失败消息占步号、致后续消息 `evo_step_invalid` 的隐患——原逻辑仅在单条 observe 失败时才可触发）。`observe_row` 辅助统一单/批行构造。验收：daemon/thread/night/schedule 四 e2e 全过（行为不变）；`evo_thread_e2e` 新增同 tick 双消息段（两条都被感知、步号连续、无逐条错误）。无引擎改动、无新 mutation。**待 CI 落账**。

@@ -163,6 +163,15 @@ def main():
         assert len(turns) == 2 and turns[1]["role"] == "user", turns
         assert turns[1]["text"] == "我有点担心这个项目。", turns
 
+        # Two fresh messages in one tick ride a single evo-observe-batch (续六十一);
+        # both are sensed with consecutive steps and no per-message errors.
+        messages.write_text("第二句话，仍然有些不安。\n还有第三句，想多了解一点。\n",
+                            encoding="utf-8")
+        third = daemon()
+        sensed = third["messages"]
+        assert len(sensed) == 2 and all("error" not in row for row in sensed), sensed
+        assert sensed[0]["step"] + 1 == sensed[1]["step"], sensed
+
     print("evo thread e2e: open/replay/limit/close contract, delivered-parent gate, "
           "daemon speech opens thread and user message appends her turn passed")
     return 0
