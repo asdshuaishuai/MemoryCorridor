@@ -208,9 +208,9 @@ def main():
             chat_calls = [row for row in FakeOpenAI.seen
                           if row["path"] == "/chat/completions"][-2:]
             assert len(chat_calls) == 2, len(FakeOpenAI.seen)
-            for marker in ("【角色】", "【当前时间】", "【内在状态】", "【身体负荷】",
-                           "【关系对象】", "【记忆线索】", "【自主性】",
-                           "【怎样推理】", "【输出要求】"):
+            for marker in ("【这是你心中涌现出来的想法】", "【角色】", "【当前时间】",
+                           "【内在状态】", "【身体负荷】", "【关系对象】", "【记忆线索】",
+                           "【自主性】", "【怎样推理】", "【输出要求】"):
                 assert marker in chat_calls[0]["prompt"], (marker, chat_calls[0]["prompt"][:400])
             assert "没有相关记忆线索" in chat_calls[0]["prompt"]
             assert "【网络内容】" in chat_calls[1]["prompt"], chat_calls[1]["prompt"][:400]
@@ -222,8 +222,8 @@ def main():
 
     print("nlp/llm real-path e2e: local OpenAI-compatible server drives affect/expand, "
           "RSI judgments + failure recording, evo proactive reply with the fixed "
-          "evo-prompt-v2 template (nine sections), the FETCH curiosity round and "
-          "ack passed")
+          "evo-prompt-v3 emergence template (ten sections), the FETCH curiosity "
+          "round and ack passed")
     return 0
 
 
