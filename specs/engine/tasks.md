@@ -945,3 +945,6 @@
 
 
 - [x] **2026-11-18 续六十四：daemon 对话闭环（复用既有 followup 链）**：`evo_daemon` 新增 reply 步——感知到用户消息后，在开线程上自动走「`evo-proactive-followup` 开口 → mock/LLM 回复 → complete → ack → 追加 agent 轮」，不等待主动门；回复是应答不是发起，安静时段门只管发起（注释如实）。每 tick 至多一条回复（链上单飞），答最后一条消息；链深耗尽或线程满则 close 滚动、下次开口开新线程。`append_user_turn` 补满线程滚动（不论末轮角色）与 tick 内消息序号偏移时间戳——thread-append 事件身份绑定 (role, at)，同拍多消息必须不同戳。连带修正 `evo_thread_e2e` 的模拟时钟：每 tick 推进 `--now`（真实宿主时钟单调；同一瞬间跨 tick 重放必碰撞，旧断言掩盖了这一点）。链父恢复：优先 evo-proactive-list 最新 delivered，重启不依赖 daemon state。验收：`evo_thread_e2e`（回复 delivered+turn=1+线程 agent 轮、双消息答最后一条 turn=2、16 轮满滚动 closed）+ daemon/thread/night/schedule/batch/proactive/followup/expression 八 e2e 回归全过。无引擎改动、无新 mutation。**待 CI 落账**。
+
+
+- [x] **2026-11-18 续六十五：RSI 提案生命周期闭环（host-owned）**：`rsi_apply_proposal` 三补全——①应用成功写 `<stem>.applied.json` 审计标记（mode/page/order/source/at）；②`--list` 按**页面实态**枚举草稿（active→applied / stale→stale / missing→pending，标记仅审计非真值）；③stale 页复活走同一 apply 流程：源变更后 scan 产生新工单、或按 source 复用既有开放工单（单源免 `--order`），commit 重发布清 stale；源未变 sticky 拒绝并如实报 `no open order for <source>`。顺带修 explore 复用前先在 apply 内复用按源工单的语义（原实现只认 scan 新工单，重发布场景误报 ambiguous）。无引擎改动、无新 mutation。验收：`rsi_apply_e2e`（marker 写入与 mode、--list 四态、双源按源绑定、源撤销→页 stale→源变更→重应用复活且正文保持提案草稿）+ rsi_driver/dream_work 回归全过。文档：rsi-loop 三·六生命周期段。**待 CI 落账**。

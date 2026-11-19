@@ -99,21 +99,17 @@ def main():
              "--proposal", "staging/dream-work/task-amb.md",
              "--source", "raw/apply-source-2.md", "--at", "2026-11-18T06:10:00Z"],
             capture_output=True, text=True, timeout=300)
-        assert ambiguous.returncode != 0 and "ambiguous" in ambiguous.stderr, ambiguous
-        open_orders = [row["id"] for row in call(vault, "status")["orders"]
-                       if row["phase"] in ("pending", "context-ready", "analysis-done")]
-        assert len(open_orders) == 2, open_orders
-        wanted = [row["id"] for row in call(vault, "status")["orders"]
-                  if row["source"] == "raw/apply-source-2.md"][0]
-        pinned = subprocess.run(
-            [sys.executable, str(APPLY), "--vault", str(vault), "--cli", str(EXE),
-             "--proposal", "staging/dream-work/task-amb.md",
-             "--source", "raw/apply-source-2.md", "--at", "2026-11-18T06:11:00Z",
-             "--order", wanted],
-            capture_output=True, text=True, timeout=300)
-        assert pinned.returncode == 0, (pinned.stdout, pinned.stderr)
+        # With several fresh sources in flight, the tool binds by SOURCE: the
+        # open order for raw/apply-source-2.md is unique, so no --order is
+        # needed (an order id only pins when a source could be ambiguous).
+        assert ambiguous.returncode == 0, (ambiguous.stdout, ambiguous.stderr)
         amb_page = call(vault, "read-page", id="dream-work/task-amb")
         assert amb_page["stale"] is False, amb_page
+        assert json.loads(ambiguous.stdout)["source"] == "raw/apply-source-2.md"
+        open_orders = [row for row in call(vault, "status")["orders"]
+                       if row["phase"] in ("pending", "context-ready", "analysis-done")]
+        assert len(open_orders) == 1 and open_orders[0]["source"] == "raw/apply-source-3.md", \
+            open_orders
 
         # 5. revocation still bites: delete the source, scan, page goes stale.
         (vault / "raw/apply-source.md").unlink()
@@ -123,9 +119,51 @@ def main():
         amb_kept = call(vault, "read-page", id="dream-work/task-amb")
         assert amb_kept["stale"] is False, amb_kept
 
+        # 6. proposal lifecycle (续六十四): applied markers, --list states and
+        # --revive for a stale page whose source came back.
+        marker = vault / "staging/dream-work/task-demo.applied.json"
+        assert marker.is_file(), "apply must write an applied marker"
+        assert json.loads(marker.read_text())["mode"] == "commit"
+        write_staged_proposal(str(vault), {"id": "task-fresh", "subject": "待应用"},
+                              "尚未应用的提案正文。")
+        listing = subprocess.run(
+            [sys.executable, str(APPLY), "--vault", str(vault), "--cli", str(EXE),
+             "--list"], capture_output=True, text=True, timeout=300)
+        assert listing.returncode == 0, listing.stderr
+        states = {row["page"]: row["state"]
+                  for row in json.loads(listing.stdout)["proposals"]}
+        assert states["dream-work/task-demo"] == "stale", states
+        assert states["dream-work/task-amb"] == "applied", states
+        assert states["dream-work/task-fresh"] == "pending", states
+        # A stale page comes back through the SAME flow once its source
+        # changes: the changed bytes yield an open order, and the commit
+        # revives the page. An unchanged source stays sticky by design.
+        (vault / "raw/apply-source.md").write_text("提案依据的原始来源，第二版。\n",
+                                                   encoding="utf-8")
+        call(vault, "scan")
+        reapply = subprocess.run(
+            [sys.executable, str(APPLY), "--vault", str(vault), "--cli", str(EXE),
+             "--proposal", "staging/dream-work/task-demo.md",
+             "--source", "raw/apply-source.md", "--at", "2026-11-19T03:00:00Z"],
+            capture_output=True, text=True, timeout=300)
+        assert reapply.returncode == 0, (reapply.stdout, reapply.stderr)
+        revived = call(vault, "read-page", id="dream-work/task-demo")
+        assert revived["stale"] is False, revived
+        # The page body stays the proposal's draft; what the republish
+        # refreshes is the source binding (new source digest, stale:false).
+        assert revived["entry"]["sources"] == ["raw/apply-source.md"], revived
+        assert json.loads(marker.read_text())["mode"] == "commit"
+        listing2 = subprocess.run(
+            [sys.executable, str(APPLY), "--vault", str(vault), "--cli", str(EXE),
+             "--list"], capture_output=True, text=True, timeout=300)
+        states2 = {row["page"]: row["state"]
+                   for row in json.loads(listing2.stdout)["proposals"]}
+        assert states2["dream-work/task-demo"] == "applied", states2
+
     print("rsi apply e2e: staged proposal through the ordinary order flow, "
-          "idempotence and refusals, ambiguous-order pinning and source "
-          "revocation passed")
+          "idempotence and refusals, ambiguous-order pinning, source "
+          "revocation, applied markers, lifecycle listing and stale-page "
+          "republish passed")
     return 0
 
 

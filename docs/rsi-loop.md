@@ -95,6 +95,14 @@ staged 提案的正式应用（续六十已交付）：`scripts/rsi_apply_propos
 撤销照常使已应用页面失效（e2e 固定）。拒绝分支：草稿缺失/正文为空/来源缺失/目标页
 仍活跃/工单不唯一（须 `--order` 指定）。驱动绝不调用它；应用是人的决定。
 
+提案生命周期（续六十四已交付）：应用成功后在草稿旁写 `<stem>.applied.json`
+审计标记（mode=commit/revive、page、order、source、at）；`--list` 按页面实态
+枚举全部草稿——active→applied、stale→stale、missing→pending（标记只是审计，
+不是真值）。stale 页（来源被撤销）在同源变更后经**同一流程**复活：scan 产生
+新工单，或按 source 复用既有开放工单，commit 以新字节重发布并清 stale——源
+未变则 sticky（如实拒绝：`no open order for <source>`）。按源绑定工单后，
+单源场景无需 `--order`。
+
 另修复一处续三十一遗留：`dream-list` 曾把 `state/dreams/policy.json` 当轮次读取，
 导致写入节奏策略后列举报 `missing_field: status`；现按 `dream-due` 同样的规则跳过，
 `dream_e2e` 增加回归断言。
