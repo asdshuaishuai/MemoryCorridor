@@ -138,11 +138,20 @@ def main():
         messages = vault / "messages.txt"
         messages.write_text("", encoding="utf-8")
 
+        ticks = [0]
+
         def daemon():
+            # Simulated clock, advanced per tick: a real host's clock moves
+            # forward, and a thread-append's event identity binds (role, at),
+            # so replaying one instant across ticks would collide events.
+            minute = ticks[0]
+            ticks[0] += 1
+            now = (datetime(2026, 11, 17, 10, 0, 0, tzinfo=timezone.utc) +
+                   timedelta(minutes=minute)).strftime("%Y-%m-%dT%H:%M:%SZ")
             run = subprocess.run([sys.executable, str(DAEMON), "--vault", str(vault),
                                   "--cli", str(EXE), "--once", "--mock",
-                                  "--driver", "thread-daemon", "--now",
-                                  "2026-11-17T10:00:00Z", "--tick-seconds", "60",
+                                  "--driver", "thread-daemon", "--now", now,
+                                  "--tick-seconds", "60",
                                   "--message-file", str(messages),
                                   "--reflect-every", "0", "--consolidate-every", "0"],
                                  capture_output=True, text=True, timeout=300)
@@ -154,23 +163,51 @@ def main():
         thread = call("evo-thread-list")
         assert thread["counts"]["open"] == 1, thread
         assert thread["threads"][0]["turns"][0]["role"] == "agent", thread
+        thread_row_id = thread["threads"][0]["id"]
 
         messages.write_text("我有点担心这个项目。\n", encoding="utf-8")
         second = daemon()
         assert second["messages"] and second["messages"][0]["valence"] < 0, second
+        # The daemon answers on the follow-up chain (续六十四): the reply is a
+        # delivered follow-up of the speech that opened the thread.
+        reply = second["reply"]
+        assert reply and reply["acked"] is True and reply["turn"] == 1, reply
+        assert "mock 跟进·第1轮" in reply["text"], reply
         thread = call("evo-thread-list")
         turns = thread["threads"][0]["turns"]
-        assert len(turns) == 2 and turns[1]["role"] == "user", turns
+        assert len(turns) == 3 and turns[1]["role"] == "user", turns
         assert turns[1]["text"] == "我有点担心这个项目。", turns
+        assert turns[2]["role"] == "agent" and "mock 跟进" in turns[2]["text"], turns
+        assert call("evo-proactive-list")["counts"]["delivered"] == 2
 
         # Two fresh messages in one tick ride a single evo-observe-batch (续六十一);
-        # both are sensed with consecutive steps and no per-message errors.
+        # both are sensed with consecutive steps; the reply answers the LAST
+        # message (one follow-up per tick) as chain turn 2.
         messages.write_text("第二句话，仍然有些不安。\n还有第三句，想多了解一点。\n",
                             encoding="utf-8")
         third = daemon()
         sensed = third["messages"]
         assert len(sensed) == 2 and all("error" not in row for row in sensed), sensed
         assert sensed[0]["step"] + 1 == sensed[1]["step"], sensed
+        assert third["reply"]["turn"] == 2, third["reply"]
+        assert "还有第三句" in third["reply"]["text"], third["reply"]
+        turns = call("evo-thread-list")["threads"][0]["turns"]
+        assert len(turns) == 5 and turns[4]["role"] == "agent", turns
+
+        # A full thread rolls over: the daemon closes it instead of appending.
+        for index in range(11):
+            role = "user" if index % 2 == 0 else "agent"
+            call("evo-thread-append", id=thread_row_id, role=role,
+                 text=f"填充第{index}轮", at=at(5000 + index))
+        full = call("evo-thread-list")["threads"][0]
+        assert full["status"] == "open" and len(full["turns"]) == 16, full
+        messages.write_text("第四句，线程该滚动了吧。\n", encoding="utf-8")
+        fourth = daemon()
+        assert fourth["messages"] and not fourth["reply"], fourth
+        rolled = fourth["messages"][0]["thread_turn"]
+        assert rolled and rolled["reason"] == "thread_full", rolled
+        counts = call("evo-thread-list")["counts"]
+        assert counts == {"open": 0, "closed": 1}, counts
 
     print("evo thread e2e: open/replay/limit/close contract, delivered-parent gate, "
           "daemon speech opens thread and user message appends her turn passed")

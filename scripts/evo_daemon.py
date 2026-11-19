@@ -129,6 +129,7 @@ class Daemon:
         self.affect_provider = affect_provider
         self.thread = thread
         self.state = load_state(vault)
+        self.sensed_texts = []
 
     def read_messages(self):
         """Read complete, newline-terminated lines appended since the cursor."""
@@ -165,7 +166,9 @@ class Daemon:
     def sense_messages(self):
         messages = self.read_messages()
         if not messages:
+            self.sensed_texts = []
             return []
+        self.sensed_texts = list(messages)
         status = driver.call(self.cli, self.vault, "evo-status")
         step = int(status["window"]["steps"])
         affects = []
@@ -205,7 +208,7 @@ class Daemon:
                 observed.append({"error": affect["error"]})
                 continue
             applied += 1
-            appended = self.append_user_turn(text)
+            appended = self.append_user_turn(text, offset=len(observed))
             observed.append({"step": step + applied, "valence": affect["valence"],
                              "arousal": affect["arousal"],
                              "topics": affect["topics"],
@@ -213,18 +216,110 @@ class Daemon:
                              "thread_turn": appended})
         return observed
 
-    def append_user_turn(self, text):
-        """Append a user turn to the open thread when the last turn is hers."""
+    def append_user_turn(self, text, offset=0):
+        """Append a user turn to the open thread when the last turn is hers.
+
+        `offset` spaces same-tick appends apart in time: a thread-append's
+        event identity binds (role, at), so two messages in one tick must not
+        share a stamp. A full thread (max_turns reached) is closed instead:
+        the conversation rolls over, and the next proactive speech opens a
+        fresh thread.
+        """
         rows = driver.call(self.cli, self.vault, "evo-thread-list").get("threads", [])
         open_row = next((row for row in rows if row.get("status") == "open"), None)
         if open_row is None:
             return None
         turns = open_row.get("turns", [])
+        if len(turns) >= open_row.get("max_turns", 16):
+            # A full thread rolls over regardless of whose turn is last.
+            driver.call(self.cli, self.vault, "evo-thread-close",
+                        id=open_row["id"], at=self.clock.stamp_in(offset))
+            return {"closed": open_row["id"], "reason": "thread_full"}
         if turns and turns[-1].get("role") != "agent":
             return None
         driver.call(self.cli, self.vault, "evo-thread-append", id=open_row["id"],
-                    role="user", text=text, at=self.clock.stamp())
+                    role="user", text=text, at=self.clock.stamp_in(offset))
         return {"id": open_row["id"], "role": "user"}
+
+    def chain_parent(self, thread_row):
+        """The latest delivered proactive reply continues the follow-up chain
+        across daemon restarts; the thread's original parent is the fallback
+        for a vault that never had a follow-up."""
+        rows = driver.call(self.cli, self.vault, "evo-proactive-list").get("proactive", [])
+        delivered = [row for row in rows
+                     if row.get("status") == "done" and row.get("delivered_at")]
+        if delivered:
+            delivered.sort(key=lambda row: row.get("delivered_at") or "")
+            return delivered[-1]["id"]
+        return thread_row.get("last_proactive")
+
+    def reply(self, user_texts):
+        """Answer the last sensed user message on the open thread through the
+        existing follow-up chain: open follow-up -> reply -> complete -> ack
+        -> append the agent turn. A reply is a conversational response, not a
+        proactive initiation, so the quiet-hours gate does not apply to it.
+        One reply per tick (the chain allows a single in-flight request)."""
+        if not user_texts:
+            return None
+        rows = driver.call(self.cli, self.vault, "evo-thread-list").get("threads", [])
+        open_row = next((row for row in rows if row.get("status") == "open"), None)
+        if open_row is None:
+            return None
+        turns = open_row.get("turns", [])
+        if not turns or turns[-1].get("role") != "user":
+            return None
+        # The reply lands after every same-tick user append in time.
+        reply_offset = len(user_texts)
+        parent = self.chain_parent(open_row)
+        if parent is None:
+            return None
+        user_text = user_texts[-1]
+        try:
+            opened = driver.call(self.cli, self.vault, "evo-proactive-followup",
+                                 id=parent, user_text=user_text, driver=self.name,
+                                 lease_until=self.clock.stamp_in(300),
+                                 at=self.clock.stamp())
+        except RuntimeError as error:
+            code = str(error)
+            if "evo_proactive_followup_depth" in code:
+                # The chain has reached its depth limit: close the thread so
+                # the conversation rolls over on the next proactive speech.
+                driver.call(self.cli, self.vault, "evo-thread-close",
+                            id=open_row["id"], at=self.clock.stamp_in(reply_offset))
+                return {"closed": open_row["id"], "reason": "followup_depth"}
+            if ("evo_proactive_backpressure" in code or
+                    "evo_proactive_parent_not_delivered" in code):
+                return {"skipped": code[:120]}
+            raise
+        try:
+            if self.mock:
+                text = (f"（mock 跟进·第{opened['turn']}轮）你说“{user_text[:40]}”，"
+                        "我接着回应。")
+                model = "mock"
+            else:
+                history = driver.parent_reply(self.cli, self.vault, parent)
+                thread = driver.thread_turns(self.cli, self.vault)
+                text, model = driver.llm(driver.build_prompt(opened, history, thread))
+            driver.call(self.cli, self.vault, "evo-proactive-complete",
+                        id=opened["id"], driver=self.name, at=self.clock.stamp(),
+                        result={"text": text, "model": model})
+            acked = False
+            if self.ack:
+                driver.call(self.cli, self.vault, "evo-proactive-ack",
+                            id=opened["id"], at=self.clock.stamp())
+                acked = True
+            driver.call(self.cli, self.vault, "evo-thread-append", id=open_row["id"],
+                        role="agent", text=text, at=self.clock.stamp_in(reply_offset))
+            return {"id": opened["id"], "text": text, "model": model,
+                    "acked": acked, "turn": opened["turn"]}
+        except Exception as error:  # noqa: BLE001 - record and keep the loop alive
+            try:
+                driver.call(self.cli, self.vault, "evo-proactive-fail",
+                            id=opened["id"], driver=self.name,
+                            reason=str(error)[:1000], at=self.clock.stamp())
+            except RuntimeError:
+                pass
+            return {"id": opened["id"], "error": str(error)}
 
     def is_quiet(self):
         if self.quiet_start < 0:
@@ -363,6 +458,12 @@ class Daemon:
                 return {"at": at, "paused": str(error)}
             raise
         try:
+            reply_row = self.reply(self.sensed_texts)
+        except RuntimeError as error:
+            if "evo_paused_human_gate" in str(error):
+                return {"at": at, "paused": str(error)}
+            raise
+        try:
             sense = bridge.run_pass(self.cli, self.vault, self.limit, True,
                                     stamp=self.clock.stamp())
         except RuntimeError as error:
@@ -388,6 +489,7 @@ class Daemon:
         save_state(self.vault, self.state)
         self.clock.advance()
         return {"at": at, "cycle": self.state["cycles"], "messages": messages,
+                "reply": reply_row,
                 "sense": sense, "speech": speech, "reflection": reflection,
                 "expression": expression, "rsi": rsi}
 
