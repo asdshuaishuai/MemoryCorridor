@@ -101,6 +101,19 @@ pub fn evo_sidecar_commit(
   let seen : Map[String, Bool] = Map([])
   for change in changes {
     evo_sidecar_validate_path(change.path)
+    match change.after {
+      Some(text) => {
+        // Sidecar records satisfy the same closed schemas as vault state
+        // records (AGENTS: unknown fields rejected), so the commit
+        // synthesizes the catalog entry @core.validate_record expects.
+        let entry : @core.Entry = {
+          id: change.path, path: change.path, kind: "state", format: "json",
+          sha256: @base.hex_hash(text), sources: [], stale: false,
+        }
+        @core.validate_record(entry, text)
+      }
+      None => ()
+    }
     if seen.contains(change.path) {
       @base.fail("evo_sidecar_duplicate_change: " + change.path)
     }
@@ -193,4 +206,94 @@ pub fn evo_sidecar_recover(store : @vault.Storage) -> Bool raise @base.Fault {
     @base.text(@base.field(journal, "new_index")))
   (store.remove)(EVO_SIDECAR_JOURNAL)
   true
+}
+
+/// Digest-verified (path, text) pairs for every indexed record under a
+/// sidecar prefix, sorted by path for deterministic iteration.
+pub fn evo_sidecar_records(
+  store : @vault.Storage, prefix : String,
+) -> Array[(String, String)] raise @base.Fault {
+  let files = evo_sidecar_load(store)
+  // Host `files` implementations take a DIRECTORY (they join the child name
+  // themselves), so list the prefix's own directory and filter by the full
+  // prefix afterwards — a count prefix like "evo/events/evo-regression-" is
+  // not a directory.
+  let normalized = if prefix.has_suffix("/") {
+    let chars = prefix.to_array()
+    let kept : Array[Char] = []
+    for i = 0; i < chars.length() - 1; i = i + 1 { kept.push(chars[i]) }
+    String::from_array(kept)
+  } else {
+    prefix
+  }
+  let chars = normalized.to_array()
+  let mut last = -1
+  for i = 0; i < chars.length(); i = i + 1 {
+    if chars[i] == '/' { last = i }
+  }
+  let kept_dir : Array[Char] = []
+  for i = 0; i < last; i = i + 1 { kept_dir.push(chars[i]) }
+  let directory = String::from_array(kept_dir)
+  // The prefix is a plain path prefix: it may name a record directory
+  // ("evo/fossils") or a filename family ("evo/events/evo-rollback-<hash>").
+  let marker = normalized
+  let rows : Array[(String, String)] = []
+  for path in (store.files)(directory) {
+    if path.has_prefix(marker) && files.contains(path) {
+      match (store.read)(path) {
+        Some(text) => rows.push((path, text))
+        None => @base.fail("evo_sidecar_corrupt: " + path)
+      }
+    }
+  }
+  rows.sort_by((a, b) => @base.compare(a.0, b.0))
+  rows
+}
+
+/// One-time forward migration: vault records from the pre-sidecar layout
+/// (state/evo/... and state/events/evo-...) move into the sidecar and leave
+/// the vault catalog, so an enabled vault stops polluting the fingerprint.
+/// Interrupted runs converge: the sidecar overwrite is byte-identical and the
+/// vault removal simply retries. Returns the entries the caller must use from
+/// now on (legacy entries dropped once the removal has landed).
+pub fn evo_migrate_legacy(
+  store : @vault.Storage, entries : Array[@core.Entry],
+) -> Array[@core.Entry] raise @base.Fault {
+  let legacy = entries.filter(e =>
+    e.path.has_prefix("state/evo/") || e.path.has_prefix("state/events/evo-"))
+  if legacy.is_empty() { return entries }
+  let sidecar_changes : Array[@vault.Change] = []
+  let vault_changes : Array[@vault.Change] = []
+  for entry in legacy {
+    let text = @vault.required(store, entry.path)
+    if @base.hex_hash(text) != entry.sha256 {
+      @base.fail("content_changed: " + entry.path +
+        "; rescan sources or submit explicit page edit")
+    }
+    let tail = if entry.path.has_prefix("state/events/") {
+      evo_after_prefix(entry.path, "state/events/")
+    } else {
+      evo_after_prefix(entry.path, "state/evo/")
+    }
+    let target = if entry.path.has_prefix("state/events/") {
+      "evo/events/" + tail
+    } else {
+      "evo/" + tail
+    }
+    sidecar_changes.push({ path: target, before: (store.read)(target), after: Some(text) })
+    vault_changes.push({ path: entry.path, before: Some(text), after: None })
+  }
+  evo_sidecar_commit(store, sidecar_changes)
+  let kept = entries.filter(e =>
+    !(e.path.has_prefix("state/evo/") || e.path.has_prefix("state/events/evo-")))
+  @vault.commit(store, @vault.fingerprint(entries), kept, vault_changes)
+  kept
+}
+
+fn evo_after_prefix(path : String, prefix : String) -> String {
+  let chars = path.to_array()
+  let head = prefix.length()
+  let tail : Array[Char] = []
+  for i = head; i < chars.length(); i = i + 1 { tail.push(chars[i]) }
+  String::from_array(tail)
 }

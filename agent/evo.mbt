@@ -199,7 +199,6 @@ priv struct EvoSegment {
 }
 
 priv struct EvoBatch {
-  next : Ref[Array[@core.Entry]]
   changes : Array[@vault.Change]
 }
 
@@ -387,7 +386,15 @@ fn evo_params_from_json(value : Json) -> EvoParams raise @base.Fault {
 }
 
 fn evo_load_policy(store : @vault.Storage) -> EvoPolicy raise @base.Fault {
-  match (store.read)("state/evo/policy.json") {
+  // Pre-sidecar vaults keep the policy at state/evo/policy.json until the
+  // migration moves it; the gate must read it there (read-only) so a legacy
+  // vault is not locked out of its own enable switch.
+  let path = if (store.read)("evo/policy.json") is Some(_) {
+    "evo/policy.json"
+  } else {
+    "state/evo/policy.json"
+  }
+  match (store.read)(path) {
     None => {
       {
         exists: false, enabled: false, params: evo_default_params(),
@@ -753,14 +760,14 @@ fn evo_genome_from_json(record : Json) -> EvoGenome raise @base.Fault {
 }
 
 fn evo_genome_path(id : String) -> String {
-  "state/evo/genomes/" + id + ".json"
+  "evo/genomes/" + id + ".json"
 }
 
 fn evo_load_genome(
   store : @vault.Storage, entries : Array[@core.Entry], id : String,
 ) -> EvoGenome raise @base.Fault {
+  ignore(entries)
   let path = evo_genome_path(id)
-  if !entries.any(entry => entry.path == path) { @base.fail("evo_genome_not_found: " + id) }
   let text = match (store.read)(path) {
     None => { @base.fail("evo_genome_not_found: " + id); "" }
     Some(value) => value
@@ -1198,24 +1205,17 @@ fn evo_mean_trajectory(trajectories : Array[EvoTrajectory], count : Int) -> Arra
 // ---- batch helpers --------------------------------------------------------
 
 fn evo_batch(entries : Array[@core.Entry]) -> EvoBatch {
+  ignore(entries)
   let changes : Array[@vault.Change] = []
-  { next: { val: entries }, changes }
+  { changes, }
 }
 
 fn evo_add_new(batch : EvoBatch, path : String, content : String) -> Unit {
   batch.changes.push({ path, before: None, after: Some(content) })
-  batch.next.val = upsert(batch.next.val, {
-    id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false,
-  })
 }
 
 fn evo_add_update(batch : EvoBatch, path : String, before : String, content : String) -> Unit {
   batch.changes.push({ path, before: Some(before), after: Some(content) })
-  batch.next.val = upsert(batch.next.val, {
-    id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false,
-  })
 }
 
 fn evo_emit_genome(
@@ -1227,7 +1227,6 @@ fn evo_emit_genome(
   if created.contains(id) { return id }
   created[id] = true
   let path = evo_genome_path(id)
-  if batch.next.val.any(entry => entry.path == path) { return id }
   let record : Json = {
     "version": 1, "id": id, "generation": generation,
     "parents": parents.to_json(), "origin": origin,
@@ -1235,10 +1234,11 @@ fn evo_emit_genome(
     "weights_sha256": weights_sha256, "created_at": at,
   }
   let content = @base.canonical(record)
-  match (store.read)(path) {
-    Some(existing) => if existing != content { @base.fail("evo_genome_conflict: " + id) }
-    None => evo_add_new(batch, path, content)
-  }
+  // The id binds origin/generation/parents/weights, so a record already on
+  // disk IS this genome; only created_at may differ between rebuilds, and a
+  // repeated rebuild must reuse the existing record instead of conflicting.
+  if (store.read)(path) is Some(_) { return id }
+  evo_add_new(batch, path, content)
   id
 }
 
@@ -1246,12 +1246,12 @@ fn evo_emit_event(batch : EvoBatch, path : String, event : Json) -> Unit {
   evo_add_new(batch, path, @base.canonical(event))
 }
 
-fn evo_fossil_count(entries : Array[@core.Entry]) -> Int {
-  entries.iter().filter(entry => entry.path.has_prefix("state/evo/fossils/")).count()
+fn evo_fossil_count(store : @vault.Storage) -> Int raise @base.Fault {
+  evo_sidecar_records(store, "evo/fossils/").length()
 }
 
-fn evo_event_count(entries : Array[@core.Entry], prefix : String) -> Int {
-  entries.iter().filter(entry => entry.path.has_prefix(prefix)).count()
+fn evo_event_count(store : @vault.Storage, prefix : String) -> Int raise @base.Fault {
+  evo_sidecar_records(store, prefix).length()
 }
 
 // ---- human gate -----------------------------------------------------------
@@ -1308,8 +1308,8 @@ fn evo_policy_op(
 ) -> Json raise @base.Fault {
   evo_request_keys(request, ["enabled", "params", "at"])
   let policy = evo_load_policy(store)
-  let locked = entries.any(entry =>
-    entry.path == "state/evo/state.json" || entry.path == "state/evo/population.json")
+  let locked = (store.read)("evo/state.json") is Some(_) ||
+    (store.read)("evo/population.json") is Some(_)
   let gate = evo_pending_gate(store, entries)
   let enabled_arg = evo_optional(request, "enabled")
   let params_arg = evo_optional(request, "params")
@@ -1360,7 +1360,7 @@ fn evo_policy_op(
   }
   let content = @base.canonical(record)
   let binding : Json = { "enabled": enabled.to_json(), "params": new_params_json }
-  let event_path = "state/events/evo-policy-" +
+  let event_path = "evo/events/evo-policy-" +
     @base.hex_hash(@base.canonical(binding) + "\n" + at) + ".json"
   let event : Json = {
     "op": "evo-policy", "at": at, "enabled": enabled.to_json(),
@@ -1368,18 +1368,18 @@ fn evo_policy_op(
     "params_hash": @base.hex_hash(@base.canonical(new_params_json)),
   }
   let batch = evo_batch(entries)
-  match (store.read)("state/evo/policy.json") {
-    Some(before) => evo_add_update(batch, "state/evo/policy.json", before, content)
-    None => evo_add_new(batch, "state/evo/policy.json", content)
+  match (store.read)("evo/policy.json") {
+    Some(before) => evo_add_update(batch, "evo/policy.json", before, content)
+    None => evo_add_new(batch, "evo/policy.json", content)
   }
   evo_emit_event(batch, event_path, event)
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+  evo_sidecar_commit(store, batch.changes)
   let updated : EvoPolicy = {
     exists: true, enabled, params: new_params, params_json: new_params_json,
     updated_at: at,
   }
   evo_policy_response(updated, locked, gate is Some(_), true, false,
-    @vault.fingerprint(batch.next.val))
+    @vault.fingerprint(entries))
 }
 
 // ---- init -----------------------------------------------------------------
@@ -1403,8 +1403,8 @@ fn evo_init_op(
   evo_pause_if_pending(store, entries)
   let policy = evo_load_policy(store)
   let policy_hash = @core.evo_policy_hash(evo_policy_record(policy))
-  let population_text = (store.read)("state/evo/population.json")
-  let state_text = (store.read)("state/evo/state.json")
+  let population_text = (store.read)("evo/population.json")
+  let state_text = (store.read)("evo/state.json")
   match population_text {
     Some(text) => {
       match state_text {
@@ -1465,17 +1465,17 @@ fn evo_init_op(
     "guard_hits": 0, "impulses": 0, "blowups": 0,
     "created_at": at, "updated_at": at,
   }
-  evo_add_new(batch, "state/evo/population.json", @base.canonical(population))
-  evo_add_new(batch, "state/evo/state.json", @base.canonical(state))
-  let event_path = "state/events/evo-init-" +
+  evo_add_new(batch, "evo/population.json", @base.canonical(population))
+  evo_add_new(batch, "evo/state.json", @base.canonical(state))
+  let event_path = "evo/events/evo-init-" +
     @base.hex_hash(seed.to_string() + "\n" + at) + ".json"
   evo_emit_event(batch, event_path, {
     "op": "evo-init", "at": at, "seed": seed, "policy_hash": policy_hash,
   })
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+  evo_sidecar_commit(store, batch.changes)
   {
     "generation": 0, "population": count, "genomes": created.keys().length(),
-    "seed": seed, "replayed": false, "fingerprint": @vault.fingerprint(batch.next.val),
+    "seed": seed, "replayed": false, "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -1670,11 +1670,11 @@ fn evo_observe_op(
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
   let args = evo_observe_args(request)
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
-  match (store.read)("state/evo/population.json") {
+  match (store.read)("evo/population.json") {
     None => @base.fail("evo_state_corrupt")
     Some(_) => ()
   }
@@ -1692,9 +1692,9 @@ fn evo_observe_op(
   let tick = evo_observe_apply(policy.params, genome.weights, state, args)
   let content = @base.canonical(evo_state_json(tick.state, args.at))
   let batch = evo_batch(entries)
-  evo_add_update(batch, "state/evo/state.json", state_text, content)
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
-  evo_observe_response(tick, policy.params.window, @vault.fingerprint(batch.next.val))
+  evo_add_update(batch, "evo/state.json", state_text, content)
+  evo_sidecar_commit(store, batch.changes)
+  evo_observe_response(tick, policy.params.window, @vault.fingerprint(entries))
 }
 
 fn evo_observe_batch_op(
@@ -1711,11 +1711,11 @@ fn evo_observe_batch_op(
   if rows.length() == 0 || rows.length() > EVO_OBSERVE_BATCH_MAX {
     @base.fail("evo_batch_invalid: count 1.." + EVO_OBSERVE_BATCH_MAX.to_string())
   }
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
-  match (store.read)("state/evo/population.json") {
+  match (store.read)("evo/population.json") {
     None => @base.fail("evo_state_corrupt")
     Some(_) => ()
   }
@@ -1744,9 +1744,9 @@ fn evo_observe_batch_op(
   let fingerprint = if applied > 0 {
     let content = @base.canonical(evo_state_json(current, last_at))
     let batch = evo_batch(entries)
-    evo_add_update(batch, "state/evo/state.json", state_text, content)
-    @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
-    @vault.fingerprint(batch.next.val)
+    evo_add_update(batch, "evo/state.json", state_text, content)
+    evo_sidecar_commit(store, batch.changes)
+    @vault.fingerprint(entries)
   } else {
     @vault.fingerprint(entries)
   }
@@ -1793,11 +1793,11 @@ fn evo_evaluate_op(
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
   let at = evo_at_text(request)
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
-  let population_text = match (store.read)("state/evo/population.json") {
+  let population_text = match (store.read)("evo/population.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
@@ -1934,18 +1934,18 @@ fn evo_evaluate_op(
   }
   let updated_state : EvoState = { ..state, active_genome, }
   let batch = evo_batch(entries)
-  evo_add_update(batch, "state/evo/population.json", population_text,
+  evo_add_update(batch, "evo/population.json", population_text,
     @base.canonical(evo_population_json(updated_population, at)))
-  evo_add_update(batch, "state/evo/state.json", state_text,
+  evo_add_update(batch, "evo/state.json", state_text,
     @base.canonical(evo_state_json(updated_state, at)))
-  let event_path = "state/events/evo-evaluate-" + @base.hex_hash(
+  let event_path = "evo/events/evo-evaluate-" + @base.hex_hash(
     population.generation.to_string() + "\n" + state.window_sha256 + "\n" + at) + ".json"
   evo_emit_event(batch, event_path, {
     "op": "evo-evaluate", "at": at, "generation": population.generation,
     "window_sha256": state.window_sha256, "best": best_fitness,
     "mean": mean_fitness, "worst": worst_fitness, "alive": alive.length(),
   })
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+  evo_sidecar_commit(store, batch.changes)
   {
     "generation": population.generation, "window_sha256": state.window_sha256,
     "alive": alive.length(), "best": { "genome": best_genome, "fitness": best_fitness },
@@ -1954,7 +1954,7 @@ fn evo_evaluate_op(
     "holdout_mean": evo_mean_breakdown(updated_population.members, false),
     "members": members.map(evo_member_json).to_json(),
     "scenario": scenario.to_json(),
-    "replayed": false, "fingerprint": @vault.fingerprint(batch.next.val),
+    "replayed": false, "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -2081,8 +2081,9 @@ fn evo_emit_fossil(
   let id = @core.evo_fossil_id(row.genome, reason, died_generation)
   if created.contains(id) { return None }
   created[id] = true
-  let path = "state/evo/fossils/" + id + ".json"
-  if batch.next.val.any(entry => entry.path == path) { return None }
+  let path = "evo/fossils/" + id + ".json"
+  if batch.changes.any(change => change.path == path) { return None }
+  if (store.read)(path) is Some(_) { return None }
   let fitness = match row.fitness { None => -1.0; Some(value) => value }
   let breakdown = match row.breakdown {
     Object(_) => row.breakdown
@@ -2104,7 +2105,7 @@ fn evo_emit_fossil(
   }
   evo_add_new(batch, path, @base.canonical(record))
   evo_emit_event(batch,
-    "state/events/evo-fossilize-" + id + ".json", {
+    "evo/events/evo-fossilize-" + id + ".json", {
       "op": "evo-fossilize", "at": at, "fossil": id, "genome": row.genome,
       "reason": reason, "generation": genome.generation,
     })
@@ -2190,7 +2191,7 @@ fn evo_rebuild_from_checkpoint(
     ..population, generation: checkpoint.generation,
     members: evo_member_sort_by_genome(members),
     extinct_total: population.extinct_total + dying.length(),
-    fossil_total: evo_fossil_count(entries) + fossil_ids.length(),
+    fossil_total: evo_fossil_count(store) + fossil_ids.length(),
     rollbacks_total: population.rollbacks_total + 1,
     regression_streak: if reason == "regression" { 0 } else { streak },
     no_improve_streak: 0,
@@ -2258,11 +2259,11 @@ fn evo_evolve_op(
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
   let at = evo_at_text(request)
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
-  let population_text = match (store.read)("state/evo/population.json") {
+  let population_text = match (store.read)("evo/population.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
@@ -2424,7 +2425,7 @@ fn evo_evolve_op(
       members: evo_member_sort_by_genome(new_members),
       history,
       extinct_total: population.extinct_total + extinct,
-      fossil_total: evo_fossil_count(entries) + fossils.length(),
+      fossil_total: evo_fossil_count(store) + fossils.length(),
       regressions_total: population.regressions_total + (if regressed { 1 } else { 0 }),
       regression_streak: streak,
       no_improve_streak,
@@ -2445,7 +2446,7 @@ fn evo_evolve_op(
     "elite": elite, "protected": protected_count, "rng_seed": rng_seed,
   }
   updated = { ..updated, last_evolve: last_evolve_json }
-  let event_path = "state/events/evo-evolve-" + @base.hex_hash(
+  let event_path = "evo/events/evo-evolve-" + @base.hex_hash(
     population.generation.to_string() + "\n" + state.window_sha256 + "\n" + at) + ".json"
   evo_emit_event(batch, event_path, {
     "op": "evo-evolve", "at": at, "from_generation": population.generation,
@@ -2455,7 +2456,7 @@ fn evo_evolve_op(
     "fossils": fossils.length(), "extinct": extinct,
   })
   if saturated {
-    let saturation_path = "state/events/evo-saturation-" + @base.hex_hash(
+    let saturation_path = "evo/events/evo-saturation-" + @base.hex_hash(
       population.generation.to_string() + "\n" + EVO_SATURATION_PATIENCE.to_string() +
         "\n" + at) + ".json"
     evo_emit_event(batch, saturation_path, {
@@ -2464,7 +2465,7 @@ fn evo_evolve_op(
     })
   }
   if regressed {
-    let regression_path = "state/events/evo-regression-" + @base.hex_hash(
+    let regression_path = "evo/events/evo-regression-" + @base.hex_hash(
       population.generation.to_string() + "\n" + state.window_sha256 + "\n" + at) + ".json"
     evo_emit_event(batch, regression_path, {
       "op": "evo-regression", "at": at, "generation": population.generation,
@@ -2476,7 +2477,7 @@ fn evo_evolve_op(
   }
   if rollback {
     let checkpoint = evo_checkpoint(population.checkpoint).unwrap()
-    let rollback_path = "state/events/evo-rollback-" + @base.hex_hash(
+    let rollback_path = "evo/events/evo-rollback-" + @base.hex_hash(
       next_generation.to_string() + "\nregression\n" + at) + ".json"
     evo_emit_event(batch, rollback_path, {
       "op": "evo-rollback", "at": at, "from_generation": population.generation,
@@ -2486,7 +2487,7 @@ fn evo_evolve_op(
     updated = { ..updated,
       rollbacks_total: population.rollbacks_total + 1 }
   }
-  evo_add_update(batch, "state/evo/population.json", population_text,
+  evo_add_update(batch, "evo/population.json", population_text,
     @base.canonical(evo_population_json(updated, at)))
   if rolled_back {
     let refreshed_state : EvoState = { ..state,
@@ -2495,10 +2496,10 @@ fn evo_evolve_op(
         Some(value) => Some(value.genome)
       },
     }
-    evo_add_update(batch, "state/evo/state.json", state_text,
+    evo_add_update(batch, "evo/state.json", state_text,
       @base.canonical(evo_state_json(refreshed_state, at)))
   }
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+  evo_sidecar_commit(store, batch.changes)
   {
     "generation": population.generation, "next_generation": next_generation,
     "best": best, "mean": mean, "worst": worst, "delta": delta,
@@ -2509,7 +2510,7 @@ fn evo_evolve_op(
     "saturated": saturated.to_json(),
     "no_improve_streak": updated.no_improve_streak,
     "fossils": fossils.to_json(), "rng_seed": rng_seed, "replayed": false,
-    "fingerprint": @vault.fingerprint(batch.next.val),
+    "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -2530,9 +2531,8 @@ fn evo_evolve_replay(
   // Fossil ids are rebuilt from the immutable fossil records themselves: the
   // evolve ledger stores only their count, and the records are never rewritten.
   let ids : Array[String] = []
-  for entry in entries {
-    if !entry.path.has_prefix("state/evo/fossils/") { continue }
-    let record = @base.parse(@vault.required(store, entry.path))
+  for pair in evo_sidecar_records(store, "evo/fossils/") {
+    let record = @base.parse(pair.1)
     match @base.field(record, "died_generation") {
       Number(n, ..) => if n.to_int() == last.from_generation {
         match @base.field(record, "id") {
@@ -2571,8 +2571,8 @@ fn evo_status_op(
   let policy = evo_load_policy(store)
   @vault.verify(store, entries)
   let gate = evo_pending_gate(store, entries)
-  let state_text = (store.read)("state/evo/state.json")
-  let population_text = (store.read)("state/evo/population.json")
+  let state_text = (store.read)("evo/state.json")
+  let population_text = (store.read)("evo/population.json")
   let initialized = state_text is Some(_) && population_text is Some(_)
   if (state_text is Some(_)) != (population_text is Some(_)) {
     @base.fail("evo_state_corrupt")
@@ -2610,9 +2610,9 @@ fn evo_status_op(
     let init_seed = evo_json_int(population.init, "seed", "evo_population_record_invalid")
     let init_at = @base.text(@base.field(population.init, "at"))
     let init_hash = @base.text(@base.field(population.init, "policy_hash"))
-    let init_event_path = "state/events/evo-init-" +
+    let init_event_path = "evo/events/evo-init-" +
       @base.hex_hash(init_seed.to_string() + "\n" + init_at) + ".json"
-    if !entries.any(entry => entry.path == init_event_path) {
+    if (store.read)(init_event_path) is None {
       @base.fail("evo_state_corrupt")
     }
     let init_event = @base.parse(@vault.required(store, init_event_path))
@@ -2667,9 +2667,9 @@ fn evo_status_op(
         ignore(evo_load_genome(store, entries, value))
       }
     }
-    if population.fossil_total != evo_fossil_count(entries) ||
-      population.regressions_total != evo_event_count(entries, "state/events/evo-regression-") ||
-      population.rollbacks_total != evo_event_count(entries, "state/events/evo-rollback-") {
+    if population.fossil_total != evo_fossil_count(store) ||
+      population.regressions_total != evo_event_count(store, "evo/events/evo-regression-") ||
+      population.rollbacks_total != evo_event_count(store, "evo/events/evo-rollback-") {
       @base.fail("evo_population_corrupt")
     }
   }
@@ -2715,11 +2715,11 @@ fn evo_rollback_op(
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
   let at = evo_at_text(request)
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
-  let population_text = match (store.read)("state/evo/population.json") {
+  let population_text = match (store.read)("evo/population.json") {
     None => { @base.fail("evo_not_initialized"); "" }
     Some(value) => value
   }
@@ -2729,9 +2729,8 @@ fn evo_rollback_op(
   match last_rollback {
     Some(last) => if last.at == at && last.reason == "manual" {
       let ids : Array[String] = []
-      for entry in entries {
-        if !entry.path.has_prefix("state/evo/fossils/") { continue }
-        let record = @base.parse(@vault.required(store, entry.path))
+      for pair in evo_sidecar_records(store, "evo/fossils/") {
+        let record = @base.parse(pair.1)
         let match_at = match @base.field(record, "at") {
           String(value) => value == last.at
           _ => false
@@ -2782,25 +2781,25 @@ fn evo_rollback_op(
   let (rebuilt, ids, _) = evo_rebuild_from_checkpoint(store, entries, batch,
     population, policy.params, population.generation, at, "manual",
     population.regression_streak, state.window_sha256)
-  evo_add_update(batch, "state/evo/population.json", population_text,
+  evo_add_update(batch, "evo/population.json", population_text,
     @base.canonical(evo_population_json(rebuilt, at)))
-  evo_add_update(batch, "state/evo/state.json", state_text,
+  evo_add_update(batch, "evo/state.json", state_text,
     @base.canonical(evo_state_json({ ..state,
       active_genome: Some(checkpoint.genome) }, at)))
-  let rollback_path = "state/events/evo-rollback-" + @base.hex_hash(
+  let rollback_path = "evo/events/evo-rollback-" + @base.hex_hash(
     checkpoint.generation.to_string() + "\nmanual\n" + at) + ".json"
   evo_emit_event(batch, rollback_path, {
     "op": "evo-rollback", "at": at, "from_generation": population.generation,
     "to_generation": checkpoint.generation, "reason": "manual",
     "checkpoint": checkpoint.genome, "fossils": ids.length(),
   })
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+  evo_sidecar_commit(store, batch.changes)
   {
     "rolled_back": true.to_json(), "reason": "manual",
     "from_generation": population.generation,
     "to_generation": checkpoint.generation, "checkpoint": checkpoint.genome,
     "fossils": ids.to_json(), "replayed": false,
-    "fingerprint": @vault.fingerprint(batch.next.val),
+    "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -2885,7 +2884,7 @@ pub fn evo_expression_op(store : @vault.Storage, entries : Array[@core.Entry], r
   @base.keys(request, ["op", "vault", "request_id", "at"])
   @vault.verify(store, entries)
   let at = evo_at_text(request)
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => {
       @base.fail("evo_not_initialized")
       ""
@@ -2929,7 +2928,7 @@ fn evo_checkpoint_op(
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
   evo_pause_if_pending(store, entries)
-  let text = match (store.read)("state/evo/population.json") {
+  let text = match (store.read)("evo/population.json") {
     None => {
       @base.fail("evo_not_initialized")
       ""
@@ -2953,15 +2952,10 @@ fn evo_fossils_op(
   store : @vault.Storage, entries : Array[@core.Entry],
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/evo/fossils/"))
-  let keyed : Array[(String, @core.Entry)] = rows.map(entry => {
-    let row = @base.parse(@vault.required(store, entry.path))
-    (@base.text(@base.field(row, "id")), entry)
-  })
-  keyed.sort_by((a, b) => @base.compare(a.0, b.0))
+  let keyed = evo_sidecar_records(store, "evo/fossils/")
   let fossils : Array[Json] = []
   for pair in keyed {
-    let row = @base.parse(@vault.required(store, pair.1.path))
+    let row = @base.parse(pair.1)
     fossils.push({
       "id": @base.text(@base.field(row, "id")),
       "genome": @base.text(@base.field(row, "genome")),
@@ -3000,11 +2994,10 @@ priv struct EvoProactiveDue {
 }
 
 fn evo_proactive_rows(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[Json] raise @base.Fault {
+  ignore(entries)
   let rows : Array[Json] = []
-  for entry in entries {
-    if entry.kind == "state" && entry.path.has_prefix("state/evo/proactive/") {
-      rows.push(@base.parse(@vault.required(store, entry.path)))
-    }
+  for pair in evo_sidecar_records(store, "evo/proactive/") {
+    rows.push(@base.parse(pair.1))
   }
   rows
 }
@@ -3041,7 +3034,7 @@ fn evo_proactive_lease_expired(row : Json, at : String) -> Bool raise @base.Faul
 }
 
 fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry], at : String) -> EvoProactiveDue raise @base.Fault {
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => {
       @base.fail("evo_not_initialized")
       ""
@@ -3192,13 +3185,13 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
       }
     }
     let expired_id = @base.text(@base.field(expired_row, "id"))
-    let expired_path = "state/evo/proactive/" + expired_id + ".json"
+    let expired_path = "evo/proactive/" + expired_id + ".json"
     let expired_text = @vault.required(store, expired_path)
     let updated = evo_proactive_set(expired_row, [
       ("driver", driver.to_json()), ("lease_until", lease.to_json()),
     ])
     let content = @base.canonical(updated)
-    let event_path = "state/events/evo-proactive-reclaim-" + expired_id + "-" +
+    let event_path = "evo/events/evo-proactive-reclaim-" + expired_id + "-" +
       @base.hex_hash(driver + "\n" + at) + ".json"
     let event_content = @base.canonical({
       "op": "evo-proactive-reclaim", "proactive": expired_id, "driver": driver, "at": at,
@@ -3207,11 +3200,7 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
       { path: expired_path, before: Some(expired_text), after: Some(content) },
       { path: event_path, before: None, after: Some(event_content) },
     ]
-    let next = upsert(upsert(entries, { id: expired_path, path: expired_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(content), sources: [], stale: false }),
-      { id: event_path, path: event_path, kind: "state", format: "json",
-        sha256: @base.hex_hash(event_content), sources: [], stale: false })
-    @vault.commit(store, @vault.fingerprint(entries), next, changes)
+      evo_sidecar_commit(store, changes)
     return {
       "id": expired_id, "reclaimed": true.to_json(),
       "step": @base.field(expired_row, "step"),
@@ -3219,10 +3208,10 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
       "urgency": @base.field(expired_row, "urgency"),
       "context": @base.field(expired_row, "context"),
       "driver": driver, "lease_until": lease,
-      "fingerprint": @vault.fingerprint(next),
+      "fingerprint": @vault.fingerprint(entries),
     }
   }
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => {
       @base.fail("evo_not_initialized")
       ""
@@ -3238,7 +3227,7 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
     Some(value) => value
   }
   let id = evo_proactive_id(state.steps, genome, state.window_sha256)
-  let path = "state/evo/proactive/" + id + ".json"
+  let path = "evo/proactive/" + id + ".json"
   let record : Json = {
     "version": 1, "id": id, "step": state.steps, "genome": genome,
     "state_sha256": @base.hex_hash(state_text), "reason": due.reason,
@@ -3249,7 +3238,7 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
     "parent": Json::null(), "turn": 0, "user_text": Json::null(),
   }
   let content = @base.canonical(record)
-  let event_path = "state/events/evo-proactive-open-" + id + "-" +
+  let event_path = "evo/events/evo-proactive-open-" + id + "-" +
     @base.hex_hash(driver + "\n" + at) + ".json"
   let event_content = @base.canonical({
     "op": "evo-proactive-open", "proactive": id, "driver": driver, "at": at,
@@ -3258,16 +3247,12 @@ pub fn evo_proactive_open_op(store : @vault.Storage, entries : Array[@core.Entry
     { path, before: (store.read)(path), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   {
     "id": id, "reclaimed": false.to_json(),
     "step": state.steps, "reason": due.reason, "urgency": due.urgency,
     "context": due.context, "driver": driver, "lease_until": lease,
-    "fingerprint": @vault.fingerprint(next),
+    "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -3286,7 +3271,7 @@ pub fn evo_proactive_complete_op(store : @vault.Storage, entries : Array[@core.E
   @vault.verify(store, entries)
   let id = @base.text(@base.field(request, "id"))
   if !evo_proactive_hash_ok(id) { @base.fail("evo_proactive_id_invalid") }
-  let path = "state/evo/proactive/" + id + ".json"
+  let path = "evo/proactive/" + id + ".json"
   let text = match (store.read)(path) {
     None => {
       @base.fail("evo_proactive_not_found: " + id)
@@ -3313,7 +3298,7 @@ pub fn evo_proactive_complete_op(store : @vault.Storage, entries : Array[@core.E
     ("status", "done".to_json()), ("closed_at", at.to_json()), ("result", result),
   ])
   let content = @base.canonical(updated)
-  let event_path = "state/events/evo-proactive-complete-" + id + "-" +
+  let event_path = "evo/events/evo-proactive-complete-" + id + "-" +
     @base.hex_hash(driver + "\n" + at) + ".json"
   let event_content = @base.canonical({
     "op": "evo-proactive-complete", "proactive": id, "driver": driver, "at": at,
@@ -3322,11 +3307,7 @@ pub fn evo_proactive_complete_op(store : @vault.Storage, entries : Array[@core.E
     { path, before: Some(text), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   { "id": id, "status": "done", "replayed": false }
 }
 
@@ -3335,7 +3316,7 @@ pub fn evo_proactive_fail_op(store : @vault.Storage, entries : Array[@core.Entry
   @vault.verify(store, entries)
   let id = @base.text(@base.field(request, "id"))
   if !evo_proactive_hash_ok(id) { @base.fail("evo_proactive_id_invalid") }
-  let path = "state/evo/proactive/" + id + ".json"
+  let path = "evo/proactive/" + id + ".json"
   let text = match (store.read)(path) {
     None => {
       @base.fail("evo_proactive_not_found: " + id)
@@ -3363,7 +3344,7 @@ pub fn evo_proactive_fail_op(store : @vault.Storage, entries : Array[@core.Entry
     ("status", "failed".to_json()), ("closed_at", at.to_json()), ("error", reason.to_json()),
   ])
   let content = @base.canonical(updated)
-  let event_path = "state/events/evo-proactive-fail-" + id + "-" +
+  let event_path = "evo/events/evo-proactive-fail-" + id + "-" +
     @base.hex_hash(driver + "\n" + at) + ".json"
   let event_content = @base.canonical({
     "op": "evo-proactive-fail", "proactive": id, "driver": driver, "at": at,
@@ -3372,11 +3353,7 @@ pub fn evo_proactive_fail_op(store : @vault.Storage, entries : Array[@core.Entry
     { path, before: Some(text), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   { "id": id, "status": "failed", "replayed": false }
 }
 
@@ -3452,7 +3429,7 @@ pub fn evo_proactive_ack_op(store : @vault.Storage, entries : Array[@core.Entry]
   @vault.verify(store, entries)
   let id = @base.text(@base.field(request, "id"))
   if !evo_proactive_hash_ok(id) { @base.fail("evo_proactive_id_invalid") }
-  let path = "state/evo/proactive/" + id + ".json"
+  let path = "evo/proactive/" + id + ".json"
   let text = match (store.read)(path) {
     None => {
       @base.fail("evo_proactive_not_found: " + id)
@@ -3478,18 +3455,14 @@ pub fn evo_proactive_ack_op(store : @vault.Storage, entries : Array[@core.Entry]
   if @base.compare(at, closed) < 0 { @base.fail("evo_proactive_ack_time_invalid") }
   let updated = evo_proactive_set(row, [("delivered_at", at.to_json())])
   let content = @base.canonical(updated)
-  let event_path = "state/events/evo-proactive-ack-" + id + "-" +
+  let event_path = "evo/events/evo-proactive-ack-" + id + "-" +
     @base.hex_hash(at) + ".json"
   let event_content = @base.canonical({ "op": "evo-proactive-ack", "proactive": id, "at": at })
   let changes : Array[@vault.Change] = [
     { path, before: Some(text), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   { "id": id, "status": "acknowledged", "delivered_at": at, "replayed": false }
 }
 
@@ -3502,7 +3475,7 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
   evo_pause_if_pending(store, entries)
   let parent_id = @base.text(@base.field(request, "id"))
   if !evo_proactive_hash_ok(parent_id) { @base.fail("evo_proactive_id_invalid") }
-  let parent_path = "state/evo/proactive/" + parent_id + ".json"
+  let parent_path = "evo/proactive/" + parent_id + ".json"
   let parent_text = match (store.read)(parent_path) {
     None => {
       @base.fail("evo_proactive_not_found: " + parent_id)
@@ -3541,7 +3514,7 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
   }
   if inflight > 0 { @base.fail("evo_proactive_backpressure") }
   let due = evo_proactive_due_state(store, entries, at)
-  let state_text = match (store.read)("state/evo/state.json") {
+  let state_text = match (store.read)("evo/state.json") {
     None => {
       @base.fail("evo_not_initialized")
       ""
@@ -3558,7 +3531,7 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
   }
   let id = @base.hex_hash("evo-proactive-followup-v1\n" + parent_id + "\n" +
     turn.to_string() + "\n" + at)
-  let path = "state/evo/proactive/" + id + ".json"
+  let path = "evo/proactive/" + id + ".json"
   let record : Json = {
     "version": 1, "id": id, "step": state.steps, "genome": genome,
     "state_sha256": @base.hex_hash(state_text), "reason": "followup",
@@ -3569,7 +3542,7 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
     "parent": parent_id.to_json(), "turn": turn, "user_text": user_text.to_json(),
   }
   let content = @base.canonical(record)
-  let event_path = "state/events/evo-proactive-followup-" + id + "-" +
+  let event_path = "evo/events/evo-proactive-followup-" + id + "-" +
     @base.hex_hash(parent_id + "\n" + driver + "\n" + at) + ".json"
   let event_content = @base.canonical({
     "op": "evo-proactive-followup", "proactive": id, "parent": parent_id,
@@ -3579,15 +3552,11 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
     { path, before: (store.read)(path), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   {
     "id": id, "parent": parent_id, "turn": turn, "reason": "followup",
     "user_text": user_text, "context": due.context, "driver": driver,
-    "lease_until": lease, "fingerprint": @vault.fingerprint(next),
+    "lease_until": lease, "fingerprint": @vault.fingerprint(entries),
   }
 }
 
@@ -3616,7 +3585,7 @@ pub fn evo_thread_open_op(store : @vault.Storage, entries : Array[@core.Entry], 
   let driver = @base.text(@base.field(request, "driver"))
   evo_proactive_driver(driver)
   let at = evo_at_text(request)
-  let parent_path = "state/evo/proactive/" + proactive + ".json"
+  let parent_path = "evo/proactive/" + proactive + ".json"
   let parent_text = match (store.read)(parent_path) {
     None => {
       @base.fail("evo_proactive_not_found: " + proactive)
@@ -3634,7 +3603,7 @@ pub fn evo_thread_open_op(store : @vault.Storage, entries : Array[@core.Entry], 
   }
   if delivered == Json::null() { @base.fail("evo_thread_parent_not_delivered") }
   let id = @base.hex_hash("evo-thread-v1\n" + proactive + "\n" + at)
-  let path = "state/evo/threads/" + id + ".json"
+  let path = "evo/threads/" + id + ".json"
   match (store.read)(path) {
     Some(existing) => {
       let old = @base.parse(existing)
@@ -3657,7 +3626,7 @@ pub fn evo_thread_open_op(store : @vault.Storage, entries : Array[@core.Entry], 
     "max_turns": 16, "turns": [turn], "last_proactive": proactive.to_json(),
   }
   let content = @base.canonical(record)
-  let event_path = "state/events/evo-thread-open-" + id + "-" +
+  let event_path = "evo/events/evo-thread-open-" + id + "-" +
     @base.hex_hash(driver + "\n" + proactive + "\n" + at) + ".json"
   let event_content = @base.canonical({ "op": "evo-thread-open", "thread": id,
     "agent": driver, "proactive": proactive, "at": at })
@@ -3665,13 +3634,9 @@ pub fn evo_thread_open_op(store : @vault.Storage, entries : Array[@core.Entry], 
     { path, before: (store.read)(path), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   { "id": id, "status": "open", "turns": 1, "last_proactive": proactive,
-    "replayed": false, "fingerprint": @vault.fingerprint(next) }
+    "replayed": false, "fingerprint": @vault.fingerprint(entries) }
 }
 
 pub fn evo_thread_append_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
@@ -3685,7 +3650,7 @@ pub fn evo_thread_append_op(store : @vault.Storage, entries : Array[@core.Entry]
   let text = @base.text(@base.field(request, "text"))
   evo_thread_text(text)
   let at = evo_at_text(request)
-  let path = "state/evo/threads/" + id + ".json"
+  let path = "evo/threads/" + id + ".json"
   let row_text = match (store.read)(path) {
     None => {
       @base.fail("evo_thread_not_found: " + id)
@@ -3718,7 +3683,7 @@ pub fn evo_thread_append_op(store : @vault.Storage, entries : Array[@core.Entry]
     ("updated_at", at.to_json()),
   ])
   let content = @base.canonical(updated)
-  let event_path = "state/events/evo-thread-append-" + id + "-" +
+  let event_path = "evo/events/evo-thread-append-" + id + "-" +
     @base.hex_hash(role + "\n" + at) + ".json"
   let event_content = @base.canonical({ "op": "evo-thread-append", "thread": id,
     "role": role, "at": at })
@@ -3726,13 +3691,9 @@ pub fn evo_thread_append_op(store : @vault.Storage, entries : Array[@core.Entry]
     { path, before: Some(row_text), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   { "id": id, "role": role, "turns": turns.length() + 1, "replayed": false,
-    "fingerprint": @vault.fingerprint(next) }
+    "fingerprint": @vault.fingerprint(entries) }
 }
 
 pub fn evo_thread_close_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
@@ -3742,7 +3703,7 @@ pub fn evo_thread_close_op(store : @vault.Storage, entries : Array[@core.Entry],
   let id = @base.text(@base.field(request, "id"))
   if !evo_proactive_hash_ok(id) { @base.fail("evo_thread_id_invalid") }
   let at = evo_at_text(request)
-  let path = "state/evo/threads/" + id + ".json"
+  let path = "evo/threads/" + id + ".json"
   let row_text = match (store.read)(path) {
     None => {
       @base.fail("evo_thread_not_found: " + id)
@@ -3761,29 +3722,25 @@ pub fn evo_thread_close_op(store : @vault.Storage, entries : Array[@core.Entry],
   }
   let updated = evo_proactive_set(row, [("status", "closed".to_json()), ("updated_at", at.to_json())])
   let content = @base.canonical(updated)
-  let event_path = "state/events/evo-thread-close-" + id + "-" +
+  let event_path = "evo/events/evo-thread-close-" + id + "-" +
     @base.hex_hash(at) + ".json"
   let event_content = @base.canonical({ "op": "evo-thread-close", "thread": id, "at": at })
   let changes : Array[@vault.Change] = [
     { path, before: Some(row_text), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
-  let next = upsert(upsert(entries, { id: path, path, kind: "state", format: "json",
-    sha256: @base.hex_hash(content), sources: [], stale: false }),
-    { id: event_path, path: event_path, kind: "state", format: "json",
-      sha256: @base.hex_hash(event_content), sources: [], stale: false })
-  @vault.commit(store, @vault.fingerprint(entries), next, changes)
+  evo_sidecar_commit(store, changes)
   { "id": id, "status": "closed", "replayed": false,
-    "fingerprint": @vault.fingerprint(next) }
+    "fingerprint": @vault.fingerprint(entries) }
 }
 
 pub fn evo_thread_list_op(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  let rows = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/evo/threads/"))
-  let keyed : Array[(String, Json)] = rows.map(entry => {
-    let row = @base.parse(@vault.required(store, entry.path))
-    (@base.text(@base.field(row, "id")), row)
-  })
+  let keyed : Array[(String, Json)] = []
+  for pair in evo_sidecar_records(store, "evo/threads/") {
+    let row = @base.parse(pair.1)
+    keyed.push((@base.text(@base.field(row, "id")), row))
+  }
   keyed.sort_by((a, b) => @base.compare(a.0, b.0))
   let items : Array[Json] = []
   let mut open = 0
@@ -3809,6 +3766,11 @@ pub fn evo(
   let op = @base.text(@base.field(request, "op"))
   let policy = evo_load_policy(store)
   if op != "evo-policy" && !policy.enabled { @base.fail("evo_disabled") }
+  // Sidecar face (续六十二 slice 2): recover any interrupted transaction and
+  // verify every indexed record before the op reads, then pull pre-sidecar
+  // vault records forward so the vault fingerprint stops tracking evo.
+  ignore(evo_sidecar_load(store))
+  let entries = evo_migrate_legacy(store, entries)
   match op {
     "evo-policy" => evo_policy_op(store, entries, request)
     "evo-init" => evo_init_op(store, entries, request)

@@ -1,13 +1,35 @@
-// Sidecar machinery white-box tests (续六十二 slice 1): the mini-catalog, the
+// Sidecar machinery white-box tests (续六十二 slice 1/2): the mini-catalog, the
 // two-phase journal and forward recovery must give the same interruption
 // guarantees @vault.commit gives state/ records — crash at any publish point,
 // recover to exactly one consistent state, and fail closed on tamper or
-// conflicting writes.
+// conflicting writes. Fixture records are schema-valid: the sidecar commit
+// runs every written record through @core.validate_record.
+
+fn evo_sidecar_test_policy(updated_at : String) -> String {
+  @base.canonical({
+    "version": 1, "enabled": false.to_json(),
+    "params": evo_defaults_json(),
+    "updated_at": updated_at,
+  })
+}
+
+fn evo_sidecar_test_thread() -> String {
+  @base.canonical({
+    "version": 1, "id": "a".repeat(64),
+    "created_at": "2026-11-18T00:00:00Z", "updated_at": "2026-11-18T00:00:00Z",
+    "status": "open", "max_turns": 16,
+    "turns": [{ "role": "agent", "text": "你好", "at": "2026-11-18T00:00:00Z",
+      "proactive": Json::null() }],
+    "last_proactive": Json::null(),
+  })
+}
 
 fn evo_sidecar_test_changes() -> Array[@vault.Change] {
   [
-    { path: "evo/state/a.json", before: None, after: Some("{\"v\":1}\n") },
-    { path: "evo/genomes/b.json", before: None, after: Some("{\"v\":2}\n") },
+    { path: "evo/policy.json", before: None,
+      after: Some(evo_sidecar_test_policy("2026-11-18T00:00:00Z")) },
+    { path: "evo/threads/" + "a".repeat(64) + ".json", before: None,
+      after: Some(evo_sidecar_test_thread()) },
   ]
 }
 
@@ -16,19 +38,21 @@ test "evo sidecar commit and load round trip" {
   evo_sidecar_commit(store, evo_sidecar_test_changes())
   let files = evo_sidecar_load(store)
   assert_eq(files.length(), 2)
-  assert_eq(files.get("evo/state/a.json").unwrap(),
-    @base.hex_hash("{\"v\":1}\n"))
+  assert_eq(files.get("evo/policy.json").unwrap(),
+    @base.hex_hash(evo_sidecar_test_policy("2026-11-18T00:00:00Z")))
   assert_eq((store.read)("evo/transactions/pending.json") is None, true)
   // A second commit replaces a record and removes the other.
   evo_sidecar_commit(store, [
-    { path: "evo/state/a.json", before: Some("{\"v\":1}\n"), after: Some("{\"v\":3}\n") },
-    { path: "evo/genomes/b.json", before: Some("{\"v\":2}\n"), after: None },
+    { path: "evo/policy.json", before: Some(evo_sidecar_test_policy("2026-11-18T00:00:00Z")),
+      after: Some(evo_sidecar_test_policy("2026-11-18T01:00:00Z")) },
+    { path: "evo/threads/" + "a".repeat(64) + ".json",
+      before: Some(evo_sidecar_test_thread()), after: None },
   ])
   let updated = evo_sidecar_load(store)
   assert_eq(updated.length(), 1)
-  assert_eq(updated.get("evo/state/a.json").unwrap(),
-    @base.hex_hash("{\"v\":3}\n"))
-  assert_eq((store.read)("evo/genomes/b.json") is None, true)
+  assert_eq(updated.get("evo/policy.json").unwrap(),
+    @base.hex_hash(evo_sidecar_test_policy("2026-11-18T01:00:00Z")))
+  assert_eq((store.read)("evo/threads/" + "a".repeat(64) + ".json") is None, true)
 }
 
 test "evo sidecar recovers forward from a crash at any publish point" {
@@ -45,18 +69,19 @@ test "evo sidecar recovers forward from a crash at any publish point" {
     // Recovery runs inside load and must reach the intended final state.
     let files = evo_sidecar_load(store)
     assert_eq(files.length(), 2)
-    assert_eq(files.get("evo/state/a.json").unwrap(),
-      @base.hex_hash("{\"v\":1}\n"))
+    assert_eq(files.get("evo/policy.json").unwrap(),
+      @base.hex_hash(evo_sidecar_test_policy("2026-11-18T00:00:00Z")))
     assert_eq((store.read)("evo/transactions/pending.json") is None, true)
   }
 }
 
 test "evo sidecar refuses conflicting writes without side effects" {
   let (store, _, files) = crashing(1 << 20)
-  files["evo/state/a.json"] = "stale bytes"
+  files["evo/policy.json"] = "stale bytes"
   let code = try {
     evo_sidecar_commit(store, [
-      { path: "evo/state/a.json", before: None, after: Some("{\"v\":1}\n") },
+      { path: "evo/policy.json", before: None,
+        after: Some(evo_sidecar_test_policy("2026-11-18T00:00:00Z")) },
     ])
     "accepted"
   } catch {
@@ -65,15 +90,17 @@ test "evo sidecar refuses conflicting writes without side effects" {
   assert_eq(code, "evo_sidecar_write_conflict")
   assert_eq(files.get("evo/index.json") is None, true)
   assert_eq(files.get("evo/transactions/pending.json") is None, true)
-  assert_eq(files.get("evo/state/a.json").unwrap(), "stale bytes")
+  assert_eq(files.get("evo/policy.json").unwrap(), "stale bytes")
 }
 
 test "evo sidecar refuses duplicate, reserved and escaping paths" {
   let (store, _, _) = crashing(1 << 20)
   let duplicate = try {
     evo_sidecar_commit(store, [
-      { path: "evo/state/a.json", before: None, after: Some("x\n") },
-      { path: "evo/state/a.json", before: None, after: Some("y\n") },
+      { path: "evo/policy.json", before: None,
+        after: Some(evo_sidecar_test_policy("2026-11-18T00:00:00Z")) },
+      { path: "evo/policy.json", before: None,
+        after: Some(evo_sidecar_test_policy("2026-11-18T01:00:00Z")) },
     ])
     "accepted"
   } catch {
@@ -103,7 +130,7 @@ test "evo sidecar refuses duplicate, reserved and escaping paths" {
 test "evo sidecar load fails closed on tamper and demands recovery" {
   let (store, _, files) = crashing(1 << 20)
   evo_sidecar_commit(store, evo_sidecar_test_changes())
-  files["evo/state/a.json"] = "{\"v\":9}\n"
+  files["evo/policy.json"] = evo_sidecar_test_policy("2026-11-18T09:00:00Z")
   let tampered = try {
     ignore(evo_sidecar_load(store))
     "accepted"

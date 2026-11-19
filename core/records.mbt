@@ -687,7 +687,7 @@ fn evo_thread_record(path : String, value : Json) -> Unit raise @base.Fault {
     _ => raise @base.Fault(code + ":version")
   }
   let id = @base.text(@base.field(value, "id"))
-  if !valid_hash(id) || path != "state/evo/threads/" + id + ".json" {
+  if !valid_hash(id) || path != "evo/threads/" + id + ".json" {
     @base.fail(code + ":id")
   }
   let status = @base.text(@base.field(value, "status"))
@@ -738,7 +738,7 @@ fn evo_proactive_record(path : String, value : Json) -> Unit raise @base.Fault {
     _ => raise @base.Fault(code + ":version")
   }
   let id = @base.text(@base.field(value, "id"))
-  if !valid_hash(id) || path != "state/evo/proactive/" + id + ".json" {
+  if !valid_hash(id) || path != "evo/proactive/" + id + ".json" {
     @base.fail(code + ":id")
   }
   ignore(evo_record_int(value, "step", 0, 1000000000, code))
@@ -1097,7 +1097,7 @@ fn evo_genome_record(path : String, value : Json) -> Unit raise @base.Fault {
     _ => raise @base.Fault(code + ":version")
   }
   let id = evo_record_hash(value, "id", code)
-  if path != "state/evo/genomes/" + id + ".json" { @base.fail("evo_genome_identity_invalid:path") }
+  if path != "evo/genomes/" + id + ".json" { @base.fail("evo_genome_identity_invalid:path") }
   let generation = evo_record_int(value, "generation", 0, 1000000000, code)
   let origin = match @base.field(value, "origin") {
     String(text) => text
@@ -1133,7 +1133,7 @@ fn evo_fossil_record(path : String, value : Json) -> Unit raise @base.Fault {
     _ => raise @base.Fault(code + ":version")
   }
   let id = evo_record_hash(value, "id", code)
-  if path != "state/evo/fossils/" + id + ".json" { @base.fail("evo_fossil_identity_invalid:path") }
+  if path != "evo/fossils/" + id + ".json" { @base.fail("evo_fossil_identity_invalid:path") }
   let genome = evo_record_hash(value, "genome", code)
   let generation = evo_record_int(value, "generation", 0, 1000000000, code)
   let died = evo_record_int(value, "died_generation", 0, 1000000000, code)
@@ -1159,21 +1159,21 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
   let value = @base.parse(text)
   match value { Object(_) => (); _ => @base.fail("record_object_required: " + entry.path) }
   let string = key => @base.text(@base.field(value, key))
-  if entry.path == "state/evo/policy.json" {
+  if entry.path == "evo/policy.json" {
     evo_policy_record_shape(value)
-  } else if entry.path == "state/evo/state.json" {
+  } else if entry.path == "evo/state.json" {
     evo_state_record(value)
-  } else if entry.path == "state/evo/population.json" {
+  } else if entry.path == "evo/population.json" {
     evo_population_record(value)
-  } else if entry.path.has_prefix("state/evo/genomes/") {
+  } else if entry.path.has_prefix("evo/genomes/") {
     evo_genome_record(entry.path, value)
-  } else if entry.path.has_prefix("state/evo/fossils/") {
+  } else if entry.path.has_prefix("evo/fossils/") {
     evo_fossil_record(entry.path, value)
-  } else if entry.path.has_prefix("state/evo/proactive/") {
+  } else if entry.path.has_prefix("evo/proactive/") {
     evo_proactive_record(entry.path, value)
-  } else if entry.path.has_prefix("state/evo/threads/") {
+  } else if entry.path.has_prefix("evo/threads/") {
     evo_thread_record(entry.path, value)
-  } else if entry.path.has_prefix("state/evo/") {
+  } else if entry.path.has_prefix("evo/") && !entry.path.has_prefix("evo/events/") {
     @base.fail("evo_record_path_invalid")
   } else if entry.path.has_prefix("state/orders/") {
     @base.keys(value, ["id", "source", "source_hash", "baseline", "context_version", "phase", "analysis", "page_hashes"])
@@ -1682,7 +1682,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("dream_work_error_invalid")
       }
     }
-  } else if entry.path.has_prefix("state/events/") {
+  } else if entry.path.has_prefix("state/events/") || entry.path.has_prefix("evo/events/") {
     let op = string("op")
     if op.is_empty() { @base.fail("event_operation_required") }
     let supported = [
@@ -2140,7 +2140,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_proactive_event_invalid")
       }
       event_time(string("at"))
-      let expected = "state/events/evo-proactive-open-" + proactive + "-" +
+      let expected = "evo/events/evo-proactive-open-" + proactive + "-" +
         @base.hex_hash(driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-proactive-complete" || op == "evo-proactive-fail" {
@@ -2152,15 +2152,15 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_proactive_event_invalid")
       }
       event_time(string("at"))
-      let expected = "state/events/" + op + "-" + proactive + "-" +
+      let expected = "evo/events/" + op + "-" + proactive + "-" +
         @base.hex_hash(driver + "\n" + string("at")) + ".json"
-      if entry.path != expected { @base.fail("dream_event_identity_invalid") }
+      if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-proactive-ack" {
       @base.keys(value, ["op", "proactive", "at"])
       let proactive = string("proactive")
       if !valid_hash(proactive) { @base.fail("evo_proactive_event_invalid") }
       event_time(string("at"))
-      let expected = "state/events/evo-proactive-ack-" + proactive + "-" +
+      let expected = "evo/events/evo-proactive-ack-" + proactive + "-" +
         @base.hex_hash(string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-proactive-followup" {
@@ -2175,7 +2175,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_proactive_event_invalid")
       }
       event_time(string("at"))
-      let expected = "state/events/evo-proactive-followup-" + proactive + "-" +
+      let expected = "evo/events/evo-proactive-followup-" + proactive + "-" +
         @base.hex_hash(parent + "\n" + driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-thread-open" {
@@ -2190,7 +2190,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_thread_event_invalid")
       }
       event_time(string("at"))
-      let expected = "state/events/evo-thread-open-" + thread + "-" +
+      let expected = "evo/events/evo-thread-open-" + thread + "-" +
         @base.hex_hash(agent + "\n" + proactive + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-thread-append" {
@@ -2200,7 +2200,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       let role = string("role")
       if !["agent", "user"].contains(role) { @base.fail("evo_thread_event_invalid") }
       event_time(string("at"))
-      let expected = "state/events/evo-thread-append-" + thread + "-" +
+      let expected = "evo/events/evo-thread-append-" + thread + "-" +
         @base.hex_hash(role + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-thread-close" {
@@ -2208,7 +2208,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       let thread = string("thread")
       if !valid_hash(thread) { @base.fail("evo_thread_event_invalid") }
       event_time(string("at"))
-      let expected = "state/events/evo-thread-close-" + thread + "-" +
+      let expected = "evo/events/evo-thread-close-" + thread + "-" +
         @base.hex_hash(string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-proactive-reclaim" {
@@ -2220,7 +2220,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_proactive_event_invalid")
       }
       event_time(string("at"))
-      let expected = "state/events/evo-proactive-reclaim-" + proactive + "-" +
+      let expected = "evo/events/evo-proactive-reclaim-" + proactive + "-" +
         @base.hex_hash(driver + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "evo-saturation" {
@@ -2234,7 +2234,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         Number(n, ..) if n >= 0.0 && n == n.to_int().to_double() => n.to_int()
         _ => raise @base.Fault("evo_saturation_event_invalid")
       }
-      let expected = "state/events/evo-saturation-" +
+      let expected = "evo/events/evo-saturation-" +
         @base.hex_hash(generation.to_string() + "\n" + streak.to_string() + "\n" + string("at")) + ".json"
       if entry.path != expected { @base.fail("dream_event_identity_invalid") }
     } else if op == "dream-work-fail" {
@@ -2264,7 +2264,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_policy_record_invalid:params_hash")
       }
       let binding : Json = { "enabled": enabled.to_json(), "params": params }
-      let expected = "state/events/evo-policy-" +
+      let expected = "evo/events/evo-policy-" +
         @base.hex_hash(@base.canonical(binding) + "\n" + at) + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-init" {
@@ -2281,7 +2281,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         Number(n, ..) => n.to_int()
         _ => raise @base.Fault("evo_seed_invalid")
       }
-      let expected = "state/events/evo-init-" +
+      let expected = "evo/events/evo-init-" +
         @base.hex_hash(seed.to_string() + "\n" + at) + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-evaluate" {
@@ -2299,7 +2299,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         Number(n, ..) => n.to_int()
         _ => raise @base.Fault("evo_event_invalid:generation")
       }
-      let expected = "state/events/evo-evaluate-" +
+      let expected = "evo/events/evo-evaluate-" +
         @base.hex_hash(generation.to_string() + "\n" + string("window_sha256") + "\n" + at) + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-evolve" {
@@ -2325,7 +2325,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       for field in ["fossils", "extinct"] {
         ignore(evo_record_int(value, field, 0, 1000000000, "evo_event_invalid"))
       }
-      let expected = "state/events/evo-evolve-" +
+      let expected = "evo/events/evo-evolve-" +
         @base.hex_hash(from.to_string() + "\n" + string("window_sha256") + "\n" + at) + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-regression" {
@@ -2339,7 +2339,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       let checkpoint = evo_record_number(value, "checkpoint", -1.0, 1.0, "evo_event_invalid")
       let delta = evo_record_number(value, "delta", -2.0, 2.0, "evo_event_invalid")
       if delta >= 0.0 || delta != best - checkpoint { @base.fail("evo_event_invalid:delta") }
-      let expected = "state/events/evo-regression-" +
+      let expected = "evo/events/evo-regression-" +
         @base.hex_hash(generation.to_string() + "\n" + string("window_sha256") + "\n" + at) + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-rollback" {
@@ -2354,7 +2354,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       if !["regression", "manual"].contains(reason) { @base.fail("evo_event_invalid:reason") }
       if !valid_hash(string("checkpoint")) { @base.fail("evo_event_identity_invalid:checkpoint") }
       ignore(evo_record_int(value, "fossils", 0, 1000000000, "evo_event_invalid"))
-      let expected = "state/events/evo-rollback-" +
+      let expected = "evo/events/evo-rollback-" +
         @base.hex_hash(to.to_string() + "\n" + reason + "\n" + at) + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     } else if op == "evo-fossilize" {
@@ -2370,7 +2370,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
         @base.fail("evo_fossil_reason_invalid")
       }
       ignore(evo_record_int(value, "generation", 0, 1000000000, "evo_event_invalid"))
-      let expected = "state/events/evo-fossilize-" + fossil + ".json"
+      let expected = "evo/events/evo-fossilize-" + fossil + ".json"
       if entry.path != expected { @base.fail("evo_event_identity_invalid") }
     }
   } else if entry.kind == "vector" {

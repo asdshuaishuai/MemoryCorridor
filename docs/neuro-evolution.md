@@ -79,16 +79,7 @@
    指纹与 `index.mbt.md` 字节不变；启用后，`dream-plan`/`page-redundancy`/
    `impact-audit`/`inbox`/`graph`/`stats` 等业务的**非指纹字段逐字段相同**；
    wiki/raw/非 evo 事件零字节变化。
-3. **容器级（v1 现状 + 续六十二迁移中）**：evo 记录目前仍作为 `state/` 持久记录，
-   与其它 state 记录一样参与目录指纹、`verify`、`read-log`、`pack` 与缓存失效；
-   enable→disable 后 `index_cache`/`cache_rebuilt`/`read-log` 行数与「从未启用」的
-   金库不同——这是持久记录的容器语义，不是 evo 专用行为耦合。字节级隔离的 sidecar
-   迁移已开工（续六十二）：切片一交付 `agent/evo_sidecar.mbt`——`evo/index.json`
-   mini-catalog（路径→sha256）+ 两阶段 journal（`evo/transactions/pending.json`，
-   前滚恢复到唯一一致态）+ 冲突/重复/保留路径/篡改失败关闭，中断恢复有
-   wbtest 在每个发布点崩溃验证；**路由迁移（evo op 改走 sidecar、records 前缀、
-   既有金库一次性迁移、enable→disable 字节不变的隔离验收）尚未交付，不写成已交付**。
-   代价重申：pack/unpack 不再覆盖 evo 状态。
+3. **容器级（续六十二切片二已交付）**：evo 记录全部位于金库根 `evo/` sidecar（`evo/index.json` digest mini-catalog + `evo/transactions/pending.json` 两阶段 journal 前滚恢复 + 写入时封闭 schema 校验），不参与目录指纹、`verify`、`read-log`、`pack`。验收（`evo_e2e` 18a2/18c 固定）：纯 evo 序列（observe/evaluate）前后金库指纹与目录字节逐字节不变；`state/evo` 零残留；pre-sidecar 金库在首个启用 op 自动迁移（记录进 sidecar、金库副本与目录行删除，disabled 零写、仅只读 legacy policy 回退）；外部字节改动 `evo_sidecar_corrupt` 失败关闭。**代价如实入档**：pack/unpack 不携带 evo 状态——解包金库需重新 enable+init（e2e 断言 restored 金库 `evo_disabled` 且无 `evo/` 目录）。
 
 另外，v1 已修一处真实安全缺口：pending 建议记录损坏时，`evo-policy(enabled=false)`
 **仍必须可用**（安全开关豁免，损坏记录只对启用/改参 fail-closed）。

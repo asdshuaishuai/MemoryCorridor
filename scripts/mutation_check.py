@@ -1265,7 +1265,7 @@ MUTATIONS = [
     ("a non-evo module must not read evolution state",
      "agent/inbox.mbt",
      "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  @vault.verify(store, entries)",
-     "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  ignore((store.read)(\"state/evo/population.json\"))\n  @vault.verify(store, entries)",
+     "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  ignore((store.read)(\"evo/population.json\"))\n  @vault.verify(store, entries)",
      "evo isolation: no non-evo module reads evo state",
      "evo_e2e.py"),
 

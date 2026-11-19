@@ -80,7 +80,8 @@ def static_isolation():
         # Tests may name record paths; production code may not. The record
         # layer is one-way: only the controller and the record schema own the
         # literal state/evo prefix.
-        if not rel.endswith("_wbtest.mbt") and rel not in {"agent/evo.mbt", "core/records.mbt"}:
+        if not rel.endswith("_wbtest.mbt") and rel not in {
+                "agent/evo.mbt", "agent/evo_sidecar.mbt", "core/records.mbt"}:
             if "state/evo" in text:
                 literal_offenders.append(rel)
     # Exactly one session call site.
@@ -230,7 +231,8 @@ def main():
         for op, fields in disabled_requests:
             call(op, error="evo_disabled", **fields)
         assert not (vault / "state/evo").exists(), "disabled ops created state/evo"
-        assert not any(p.name.startswith("evo-") for p in record_paths("state/events")), \
+        assert not (vault / "evo").exists(), "disabled ops created the sidecar"
+        assert not any(p.name.startswith("evo-") for p in record_paths("evo/events")), \
             "disabled ops wrote an evo event"
         assert fingerprint() == disabled_fp, "disabled ops wrote the vault"
         assert (vault / "index.mbt.md").read_bytes() == index_before
@@ -277,20 +279,20 @@ def main():
         assert init_replay["replayed"] is True and init_replay["genomes"] == 8
         assert fingerprint() == init_fp, "init replay wrote state"
         seed_genomes = {p.name: p.read_bytes()
-                        for p in record_paths("state/evo/genomes")}
+                        for p in record_paths("evo/genomes")}
         assert len(seed_genomes) == 8, len(seed_genomes)
         call("evo-policy", error="evo_policy_locked",
              params=dict(PARAMS, window=32), at="2026-11-12T00:00:12Z")
-        params_before = json.dumps(read_record("state/evo/policy.json")["params"],
+        params_before = json.dumps(read_record("evo/policy.json")["params"],
                                    sort_keys=True, separators=(",", ":"))
         off = call("evo-policy", enabled=False, at="2026-11-12T00:00:13Z")
         assert off["changed"] is True
         on = call("evo-policy", enabled=True, at="2026-11-12T00:00:14Z")
         assert on["changed"] is True
-        params_after = json.dumps(read_record("state/evo/policy.json")["params"],
+        params_after = json.dumps(read_record("evo/policy.json")["params"],
                                   sort_keys=True, separators=(",", ":"))
         assert params_before == params_after, "toggle rewrote params"
-        policy_events = record_paths("state/events")
+        policy_events = record_paths("evo/events")
         policy_events = [p for p in policy_events
                          if p.name.startswith("evo-policy-")]
         assert len(policy_events) == 3, [p.name for p in policy_events]
@@ -352,12 +354,12 @@ def main():
         assert replay_eval["best"] == evaluated["best"], (replay_eval, evaluated)
         assert replay_eval["scenario"] == 0, replay_eval["scenario"]
 
-        population_before = read_record("state/evo/population.json")
+        population_before = read_record("evo/population.json")
         ranked = sorted(population_before["members"],
                         key=lambda m: (-m["fitness"], m["genome"]))
         elite_files = {}
         for member in ranked[:2]:
-            rel = "state/evo/genomes/" + member["genome"] + ".json"
+            rel = "evo/genomes/" + member["genome"] + ".json"
             elite_files[rel] = (vault / rel).read_bytes()
         evolved = call("evo-evolve", at="2026-11-12T00:08:00Z")
         assert evolved["generation"] == 0 and evolved["next_generation"] == 1
@@ -368,13 +370,13 @@ def main():
         for rel, content in elite_files.items():
             assert (vault / rel).read_bytes() == content, "elite genome was rewritten"
         fossil_rows = [read_record(p.relative_to(vault).as_posix())
-                       for p in record_paths("state/evo/fossils")]
+                       for p in record_paths("evo/fossils")]
         assert any(row["reason"] == "not_selected" for row in fossil_rows), fossil_rows
         first_rng_seed = evolved["rng_seed"]
         first_fossils = evolved["fossils"]
-        first_population = (vault / "state/evo/population.json").read_bytes()
+        first_population = (vault / "evo/population.json").read_bytes()
         first_genomes = {p.name: p.read_bytes()
-                         for p in record_paths("state/evo/genomes")}
+                         for p in record_paths("evo/genomes")}
 
         # ---- 12-13. non-monotonic evidence: regression and rollback ---------
         for index in range(16):
@@ -390,20 +392,20 @@ def main():
         assert regressed["regressed"] is True and regressed["rolled_back"] is True
         assert regressed["next_generation"] == 0, regressed["next_generation"]
         regression_fossils = [read_record(p.relative_to(vault).as_posix())
-                              for p in record_paths("state/evo/fossils")]
+                              for p in record_paths("evo/fossils")]
         assert any(row["reason"] == "regression_rollback" for row in regression_fossils)
-        events = [p.name for p in record_paths("state/events")]
+        events = [p.name for p in record_paths("evo/events")]
         assert any(name.startswith("evo-regression-") for name in events)
         assert any(name.startswith("evo-rollback-") for name in events)
         state_status = status()
         assert state_status["generation"] == 0
         assert state_status["regressions"] >= 1 and state_status["rollbacks"] >= 1
         assert state_status["history"][-1]["delta"] < 0
-        assert state_status["fossils"] == len(record_paths("state/evo/fossils"))
+        assert state_status["fossils"] == len(record_paths("evo/fossils"))
         assert state_status["regressions"] == len(
-            [p for p in record_paths("state/events") if p.name.startswith("evo-regression-")])
+            [p for p in record_paths("evo/events") if p.name.startswith("evo-regression-")])
         assert state_status["rollbacks"] == len(
-            [p for p in record_paths("state/events") if p.name.startswith("evo-rollback-")])
+            [p for p in record_paths("evo/events") if p.name.startswith("evo-rollback-")])
 
         # ---- 14. manual rollback -------------------------------------------
         call("evo-rollback", error="evo_rollback_noop", at="2026-11-12T00:12:00Z")
@@ -416,7 +418,7 @@ def main():
         assert manual["rolled_back"] is True and manual["reason"] == "manual"
         assert len(manual["fossils"]) >= 1, manual
         manual_rows = [read_record(p.relative_to(vault).as_posix())
-                       for p in record_paths("state/evo/fossils")]
+                       for p in record_paths("evo/fossils")]
         assert any(row["reason"] == "manual_rollback" for row in manual_rows)
         assert status()["rollbacks"] == rollbacks_before + 1
         replay_manual = call("evo-rollback", at="2026-11-12T00:13:00Z")
@@ -434,60 +436,64 @@ def main():
         assert status_one == status_two
         assert (vault / "index.mbt.md").read_bytes() == status_index_before
 
-        def tamper(rel, mutate, expected):
+        def tamper(rel, mutate, expected="evo_sidecar_corrupt"):
+            # Sidecar records are digest-locked: an external edit fails the
+            # next evo read closed and restoring the original bytes heals it.
+            # The policy file is read (and semantically validated) before the
+            # digest gate, so its tamper surfaces the semantic code instead.
             path = vault / rel
             original = path.read_text(encoding="utf-8")
             record = json.loads(original)
             mutate(record)
             write_record(rel, record)
-            lint_now = call("lint")
-            details = [v["detail"] for v in lint_now["violations"]
-                       if v["predicate"] == "record_invalid"]
-            assert any(expected in detail for detail in details), (rel, expected, details)
+            call("evo-status", error=expected)
             path.write_text(original, encoding="utf-8")
+            call("evo-status")
 
         def set_window_zero(record):
             record["params"]["window"] = 0
 
-        tamper("state/evo/policy.json", set_window_zero, "evo_policy_param_invalid:window")
-        tamper("state/evo/state.json",
-               lambda r: r.__setitem__("window_sha256", "0" * 64),
-               "evo_state_window_hash_mismatch")
-        tamper("state/evo/population.json",
-               lambda r: r["members"][0].__setitem__("status", "undead"),
-               "evo_population_record_invalid:status")
-        genome_rel = record_paths("state/evo/genomes")[0].relative_to(vault).as_posix()
-        tamper(genome_rel, lambda r: r.__setitem__("weights_sha256", "0" * 64),
-               "evo_genome_weights_hash_mismatch")
-        fossil_rel = record_paths("state/evo/fossils")[0].relative_to(vault).as_posix()
-        tamper(fossil_rel, lambda r: r.__setitem__("reason", "unknown"),
-               "evo_fossil_reason_invalid")
-        evaluate_event = [p for p in record_paths("state/events")
+        tamper("evo/policy.json", set_window_zero, "evo_policy_corrupt")
+        tamper("evo/state.json",
+               lambda r: r.__setitem__("window_sha256", "0" * 64))
+        tamper("evo/population.json",
+               lambda r: r["members"][0].__setitem__("status", "undead"))
+        genome_rel = record_paths("evo/genomes")[0].relative_to(vault).as_posix()
+        tamper(genome_rel, lambda r: r.__setitem__("weights_sha256", "0" * 64))
+        fossil_rel = record_paths("evo/fossils")[0].relative_to(vault).as_posix()
+        tamper(fossil_rel, lambda r: r.__setitem__("reason", "unknown"))
+        evaluate_event = [p for p in record_paths("evo/events")
                           if p.name.startswith("evo-evaluate-")][0]
         tamper(evaluate_event.relative_to(vault).as_posix(),
-               lambda r: r.__setitem__("generation", r["generation"] + 1),
-               "evo_event_identity_invalid")
-        evolve_event = [p for p in record_paths("state/events")
+               lambda r: r.__setitem__("generation", r["generation"] + 1))
+        evolve_event = [p for p in record_paths("evo/events")
                         if p.name.startswith("evo-evolve-")][0]
         tamper(evolve_event.relative_to(vault).as_posix(),
                lambda r: (r.__setitem__("from_generation", 0),
                           r.__setitem__("to_generation", 5),
-                          r.__setitem__("rolled_back", True)),
-               "evo_event_invalid:to_generation")
-        rollback_event = [p for p in record_paths("state/events")
+                          r.__setitem__("rolled_back", True)))
+        rollback_event = [p for p in record_paths("evo/events")
                           if p.name.startswith("evo-rollback-")][0]
         tamper(rollback_event.relative_to(vault).as_posix(),
-               lambda r: r.__setitem__("reason", "other"),
-               "evo_event_invalid:reason")
+               lambda r: r.__setitem__("reason", "other"))
         call("rebuild")
 
-        genome_path = record_paths("state/evo/genomes")[0]
+        # Sidecar records are digest-locked by evo/index.json: any external
+        # byte edit fails closed before the semantic validators are reached,
+        # and the vault-level verify stays clean because evo left the catalog.
+        genome_path = record_paths("evo/genomes")[0]
         original_genome = genome_path.read_bytes()
         genome_path.write_bytes(original_genome + b" ")
-        call("verify", error="content_changed")
-        call("evo-status", error="content_changed")
-        genome_path.write_bytes(original_genome)
         call("verify")
+        call("evo-status", error="evo_sidecar_corrupt")
+        genome_path.write_bytes(original_genome)
+        call("evo-status")
+        policy_rel = "evo/policy.json"
+        original_policy = (vault / policy_rel).read_bytes()
+        (vault / policy_rel).write_bytes(original_policy + b"\n")
+        call("evo-status", error="evo_sidecar_corrupt")
+        (vault / policy_rel).write_bytes(original_policy)
+        call("evo-status")
 
         # ---- 18. pack/unpack and cross-module isolation --------------------
         call("rebuild")
@@ -512,17 +518,29 @@ def main():
                 return response["result"]
 
             rcall("unpack", file="imports/evo.mcpack")
-            restored_status = rcall("evo-status")
-            assert restored_status["generation"] == final_status["generation"]
-            assert restored_status["fossils"] == final_status["fossils"]
-            assert restored_status["checkpoint"]["fitness"] == final_status["checkpoint"]["fitness"]
-            assert restored_status["window"]["steps"] == final_status["window"]["steps"]
-            next_step = restored_status["window"]["steps"] + 1
-            continued = rcall("evo-observe", step=next_step, kind="task", salience=0.5,
-                              valence=0.0,
-                              body={"cpu": 0.0, "memory": 0.0, "latency": 0.0, "budget": 0.0},
-                              at="2026-11-12T01:00:00Z")
-            assert continued["replayed"] is False
+            # The sidecar is deliberately not part of the pack: a restored
+            # vault carries the knowledge base, not the evolution state.
+            assert not (restored / "evo").exists(), "pack carried the sidecar"
+            rcall("evo-status", error="evo_disabled")
+            rcall("evo-observe", step=1, kind="task", salience=0.5, valence=0.0,
+                  body={"cpu": 0.0, "memory": 0.0, "latency": 0.0, "budget": 0.0},
+                  at="2026-11-12T01:00:00Z", error="evo_disabled")
+
+        # ---- 18a2. container-level isolation acceptance ---------------------
+        # A pure-evo sequence must not move the vault at all: same fingerprint,
+        # byte-identical catalog, no state/evo residue, sidecar index present.
+        iso_fp = fingerprint()
+        index_before_iso = (vault / "index.mbt.md").read_bytes()
+        iso_step = status()["window"]["steps"] + 1
+        call("evo-observe", step=iso_step, kind="task", salience=0.5, valence=0.0,
+             body={"cpu": 0.0, "memory": 0.0, "latency": 0.0, "budget": 0.0},
+             at="2026-11-12T02:20:00Z")
+        call("evo-evaluate", at="2026-11-12T02:30:00Z")
+        assert fingerprint() == iso_fp, "evo activity moved the vault fingerprint"
+        assert (vault / "index.mbt.md").read_bytes() == index_before_iso, \
+            "evo activity rewrote the catalog"
+        assert not (vault / "state/evo").exists(), "evo state left in the vault"
+        assert (vault / "evo/index.json").exists(), "sidecar index missing"
 
         # ---- 18b. same seed, same window = same population ------------------
         # Re-run init and the first generation in a second vault. Every genome
@@ -556,7 +574,7 @@ def main():
             tinit = tcall("evo-init", seed=7, at="2026-11-12T00:00:11Z")
             assert tinit["genomes"] == 8
             twin_seed = {p.name: p.read_bytes()
-                         for p in sorted((twin / "state/evo/genomes").glob("*.json"))}
+                         for p in sorted((twin / "evo/genomes").glob("*.json"))}
             assert twin_seed == seed_genomes, "same seed produced different genomes"
             tobserve(1, "2026-11-12T00:03:01Z")
             for step in range(2, 11):
@@ -574,10 +592,10 @@ def main():
             tevolved = tcall("evo-evolve", at="2026-11-12T00:08:00Z")
             assert tevolved["rng_seed"] == first_rng_seed, tevolved["rng_seed"]
             assert tevolved["fossils"] == first_fossils, tevolved["fossils"]
-            assert (twin / "state/evo/population.json").read_bytes() == first_population, \
+            assert (twin / "evo/population.json").read_bytes() == first_population, \
                 "same seed/window produced a different population"
             twin_genomes = {p.name: p.read_bytes()
-                            for p in sorted((twin / "state/evo/genomes").glob("*.json"))}
+                            for p in sorted((twin / "evo/genomes").glob("*.json"))}
             assert twin_genomes == first_genomes, "same seed/window produced different genomes"
 
         assert tree_bytes("raw") == raw_before, "evo lifecycle changed raw/"
@@ -624,10 +642,57 @@ def main():
                      "evo-checkpoint", "evo-fossils", "dream-policy", "dream-due"]:
             assert name in names, name
 
+        # ---- 18c. legacy vault migration ------------------------------------
+        # A pre-sidecar vault carries evo records in the catalog. The first
+        # enabled op pulls them forward: records move to the sidecar, the
+        # vault copies and their catalog lines disappear.
+        with tempfile.TemporaryDirectory(prefix="corridor-evo-legacy-") as legacy_work:
+            legacy = Path(legacy_work)
+
+            def lcall(op, error=None, **fields):
+                request = dict(fields, op=op, vault=str(legacy))
+                run = subprocess.run([str(EXE)], input=json.dumps(request) + "\n",
+                                     text=True, capture_output=True, timeout=180)
+                response = json.loads(run.stdout)
+                if error:
+                    assert not response["ok"], response
+                    assert error in response["error"], (op, error, response)
+                    return response
+                assert response["ok"], (op, response)
+                return response["result"]
+
+            lcall("init", purpose="legacy migration")
+            # A valid legacy policy record: reuse the live vault's own bytes.
+            legacy_policy = (vault / "evo/policy.json").read_bytes()
+            (legacy / "state/evo").mkdir(parents=True)
+            (legacy / "state/evo/policy.json").write_bytes(legacy_policy)
+            digest = hashlib.sha256(legacy_policy).hexdigest()
+            index = (legacy / "index.mbt.md").read_text()
+            line = ('    entry("state/evo/policy.json", "state/evo/policy.json", '
+                    '"state", "json", "' + digest + '", [], false),\n')
+            anchor = index.index('entry("')
+            index = index[:anchor] + line + index[anchor:]
+            count = re.search(r"corridor_entries\(\)\.length\(\), (\d+)\)", index)
+            assert count, "catalog count declaration not found"
+            index = index.replace(count.group(0),
+                                  f"corridor_entries().length(), {int(count.group(1)) + 1})")
+            (legacy / "index.mbt.md").write_text(index)
+
+            lcall("evo-status")
+            assert (legacy / "evo/policy.json").exists(), "migration did not land"
+            assert not (legacy / "state/evo/policy.json").exists(), \
+                "legacy copy survived"
+            assert "state/evo/policy.json" not in (legacy / "index.mbt.md").read_text(), \
+                "catalog line survived"
+            # Migrated policy keeps working: visible, enabled, unlocked (the
+            # legacy vault never initialized a population).
+            policy_now = lcall("evo-policy")
+            assert policy_now["enabled"] is True and policy_now["locked"] is False, policy_now
+
     print("evo e2e: default-off gate, policy bootstrap, fast-loop replay, "
           "same-seed determinism, window evaluation, scenario rotation, "
-          "elite/fossil/regression/rollback evidence, tamper branches, pack "
-          "round trip and isolation passed")
+          "elite/fossil/regression/rollback evidence, digest tamper branches, "
+          "sidecar isolation, legacy migration and pack exclusions passed")
     return 0
 
 

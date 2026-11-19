@@ -48,7 +48,7 @@ def call(op, vault, error=None, **fields):
 
 
 def state_bytes(vault):
-    return (vault / "state/evo/state.json").read_bytes()
+    return (vault / "evo/state.json").read_bytes()
 
 
 def main():

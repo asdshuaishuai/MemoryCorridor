@@ -153,7 +153,7 @@ fn evo_test_sorted_members(members : Array[Json]) -> Array[Json] {
 }
 
 fn evo_test_members(store : @vault.Storage) -> Array[Json] raise @base.Fault {
-  let population = @base.parse(@vault.required(store, "state/evo/population.json"))
+  let population = @base.parse(@vault.required(store, "evo/population.json"))
   @base.array(@base.field(population, "members"))
 }
 
@@ -162,12 +162,9 @@ fn evo_test_status(store : @vault.Storage) -> Json raise @base.Fault {
 }
 
 fn evo_test_fossil_rows(store : @vault.Storage) -> Array[Json] raise @base.Fault {
-  let entries = @vault.load(store)
   let rows : Array[Json] = []
-  for entry in entries {
-    if entry.path.has_prefix("state/evo/fossils/") {
-      rows.push(@base.parse(@vault.required(store, entry.path)))
-    }
+  for pair in evo_sidecar_records(store, "evo/fossils/") {
+    rows.push(@base.parse(pair.1))
   }
   rows
 }
@@ -197,10 +194,18 @@ test "evo directory and record paths reach their own validation branch" {
     @base.Fault(message) => @base.fault_code(message)
   }
   let records = [
-    "state/evo/policy.json", "state/evo/state.json", "state/evo/population.json",
-    "state/evo/genomes/" + "0".repeat(64) + ".json",
-    "state/evo/fossils/" + "1".repeat(64) + ".json",
+    "evo/policy.json", "evo/state.json", "evo/population.json",
+    "evo/genomes/" + "0".repeat(64) + ".json",
+    "evo/fossils/" + "1".repeat(64) + ".json",
   ]
+  // The sidecar owns evo records now: the vault layout refuses them by name.
+  let legacy = try {
+    @core.validate_record(evo_test_entry("state/evo/policy.json"), "{}")
+    "accepted"
+  } catch {
+    @base.Fault(message) => @base.fault_code(message)
+  }
+  assert_eq(legacy, "state_record_path_unsupported")
   for path in records {
     let code = code_of(path)
     assert_true(code != "evo_record_path_invalid", msg=path + " -> " + code)
@@ -208,21 +213,21 @@ test "evo directory and record paths reach their own validation branch" {
     assert_true(code != "accepted", msg=path + " accepted empty object")
   }
   let events = [
-    "state/events/evo-policy-" + "0".repeat(64) + ".json",
-    "state/events/evo-init-" + "0".repeat(64) + ".json",
-    "state/events/evo-evaluate-" + "0".repeat(64) + ".json",
-    "state/events/evo-evolve-" + "0".repeat(64) + ".json",
-    "state/events/evo-regression-" + "0".repeat(64) + ".json",
-    "state/events/evo-rollback-" + "0".repeat(64) + ".json",
-    "state/events/evo-fossilize-" + "0".repeat(64) + ".json",
+    "evo/events/evo-policy-" + "0".repeat(64) + ".json",
+    "evo/events/evo-init-" + "0".repeat(64) + ".json",
+    "evo/events/evo-evaluate-" + "0".repeat(64) + ".json",
+    "evo/events/evo-evolve-" + "0".repeat(64) + ".json",
+    "evo/events/evo-regression-" + "0".repeat(64) + ".json",
+    "evo/events/evo-rollback-" + "0".repeat(64) + ".json",
+    "evo/events/evo-fossilize-" + "0".repeat(64) + ".json",
   ]
   for path in events {
     let code = code_of(path)
     assert_true(code != "state_record_path_unsupported", msg=path)
     assert_true(code != "event_operation_unsupported", msg=path)
   }
-  // Anything else under state/evo/ is refused by name, not guessed.
-  assert_eq(code_of("state/evo/unknown.json"), "evo_record_path_invalid")
+    // Anything else under evo/ is refused by name, not guessed.
+  assert_eq(code_of("evo/unknown.json"), "evo_record_path_invalid")
 }
 
 // ---- rng ------------------------------------------------------------------
@@ -377,7 +382,7 @@ test "evo controller clamps emotion and impulse under any genome" {
 
 test "evo controller rejects non-finite host signals" {
   let (store, _files) = evo_test_store()
-  let before = @vault.required(store, "state/evo/state.json")
+  let before = @vault.required(store, "evo/state.json")
   let bad_salience = evo_test_observe_request(1, "task", evo_test_nan(), 0.0, 0.0, None)
   assert_eq(evo_test_dispatch_code(store, bad_salience), "evo_numeric_invalid")
   let infinity = {
@@ -388,7 +393,7 @@ test "evo controller rejects non-finite host signals" {
   let bad_body = evo_test_set(bad_body, "body",
     evo_test_set(evo_test_object_field(bad_body, "body"), "cpu", Json::number(infinity)))
   assert_eq(evo_test_dispatch_code(store, bad_body), "evo_numeric_invalid")
-  assert_eq(@vault.required(store, "state/evo/state.json"), before)
+  assert_eq(@vault.required(store, "evo/state.json"), before)
 }
 
 test "evo impulse cooldown counts only real violations" {
@@ -410,7 +415,7 @@ test "evo impulse cooldown counts only real violations" {
   for i in 0..<16 {
     ignore(evo_test_observe(store, i + 1, "task", 0.9, -0.4, 0.8, None))
   }
-  let state = @base.parse(@vault.required(store, "state/evo/state.json"))
+  let state = @base.parse(@vault.required(store, "evo/state.json"))
   let window = @base.array(@base.field(state, "window"))
   let active = evo_test_text_field(state, "active_genome")
   let entries = @vault.load(store)
@@ -462,14 +467,14 @@ test "evo fitness punishes flat, always-positive and held-out-gap behaviour" {
   assert_true(fitness < train)
   // Lethal is the only way to -1.0; a living genome may not hide there.
   let (store, _files) = evo_test_store()
-  let population_text = @vault.required(store, "state/evo/population.json")
+  let population_text = @vault.required(store, "evo/population.json")
   let population = @base.parse(population_text)
   let members = @base.array(@base.field(population, "members"))
   let lethal_member = evo_test_set(members[0], "status", "lethal".to_json())
   let lethal_member = evo_test_set(lethal_member, "fitness", (-0.5).to_json())
   let bad_population = evo_test_set(population, "members",
     evo_test_replace(members, 0, lethal_member).to_json())
-  let bad_entry = evo_test_entry("state/evo/population.json")
+  let bad_entry = evo_test_entry("evo/population.json")
   assert_true(evo_test_error_code(() => {
     @core.validate_record(bad_entry, @base.canonical(bad_population))
   }) != "accepted")
@@ -516,8 +521,8 @@ test "evo elite floor keeps the top two genomes unchanged" {
   ignore(dispatch(store, { "op": "evo-evaluate", "at": "2026-11-12T01:00:00Z" }))
   let before = evo_test_sorted_members(evo_test_members(store))
   let top_paths = [
-    "state/evo/genomes/" + evo_test_text_field(before[0], "genome") + ".json",
-    "state/evo/genomes/" + evo_test_text_field(before[1], "genome") + ".json",
+    "evo/genomes/" + evo_test_text_field(before[0], "genome") + ".json",
+    "evo/genomes/" + evo_test_text_field(before[1], "genome") + ".json",
   ]
   let top_bytes = [files[top_paths[0]], files[top_paths[1]]]
   let evolved = dispatch(store, { "op": "evo-evolve", "at": "2026-11-12T02:00:00Z" })
@@ -643,7 +648,7 @@ test "evo crossover uses two independent tournaments" {
     let id = evo_test_text_field(row, "genome")
     if previous_ids.contains(id) { continue }
     let record = @base.parse(@vault.required(store,
-      "state/evo/genomes/" + id + ".json"))
+      "evo/genomes/" + id + ".json"))
     match @base.field(record, "origin") {
       String("crossover") => {
         crossovers = crossovers + 1
@@ -670,7 +675,7 @@ test "evo crossover uses two independent tournaments" {
     let id = evo_test_text_field(row, "genome")
     if clone_ids.contains(id) { continue }
     let record = @base.parse(@vault.required(clone_store,
-      "state/evo/genomes/" + id + ".json"))
+      "evo/genomes/" + id + ".json"))
     match @base.field(record, "origin") {
       String("clone") => {
         clones = clones + 1
@@ -686,8 +691,8 @@ test "evo crossover uses two independent tournaments" {
   evo_test_observe_window(replay_store)
   ignore(dispatch(replay_store, { "op": "evo-evaluate", "at": "2026-11-12T01:00:00Z" }))
   ignore(dispatch(replay_store, { "op": "evo-evolve", "at": "2026-11-12T02:00:00Z" }))
-  assert_eq(@vault.required(store, "state/evo/population.json"),
-    @vault.required(replay_store, "state/evo/population.json"))
+  assert_eq(@vault.required(store, "evo/population.json"),
+    @vault.required(replay_store, "evo/population.json"))
   ignore(files)
 }
 
@@ -713,7 +718,7 @@ test "evo regression detection needs the checkpoint gap and patience" {
   let (regressed, streak, rollback) = evo_regression_decision(0.80, 0.79, patient, 3)
   assert_true(!regressed && streak == 0 && !rollback)
   // The first generation's delta is defined as exactly zero.
-  @core.validate_record(evo_test_entry("state/evo/population.json"),
+  @core.validate_record(evo_test_entry("evo/population.json"),
     @base.canonical({
       "version": 1, "generation": 0,
       "init": { "seed": 1, "at": "2026-11-12T00:00:00Z", "policy_hash": "0".repeat(64) },
@@ -744,6 +749,8 @@ test "evo fossils record extinction with a reason" {
   let ids = @base.strings(@base.field(evolved, "fossils"))
   assert_true(ids.length() >= 1)
   let rows = evo_test_fossil_rows(store)
+  assert_true(rows.length() == ids.length(),
+    msg="fossil rows " + rows.length().to_string() + " vs ids " + ids.length().to_string())
   let mut saw_not_selected = false
   let reasons : Map[String, Bool] = Map([])
   for row in rows {
@@ -755,7 +762,7 @@ test "evo fossils record extinction with a reason" {
   // The fossil id binds genome, reason and death generation; a replay of the
   // same triple must not add a second file.
   let entries = @vault.load(store)
-  let population = @base.parse(@vault.required(store, "state/evo/population.json"))
+  let population = @base.parse(@vault.required(store, "evo/population.json"))
   let members = @base.array(@base.field(population, "members"))
   let first = evo_member_from_json(members[0])
   let batch = evo_batch(entries)
@@ -765,7 +772,7 @@ test "evo fossils record extinction with a reason" {
   let again = evo_fossilize_members(store, entries, batch,
     [first], 8, "regression_rollback", 1, "3".repeat(64), "2026-11-12T03:00:00Z")
   assert_eq(again.length(), 0)
-  @vault.commit(store, @vault.fingerprint(entries), batch.next.val, batch.changes)
+  evo_sidecar_commit(store, batch.changes)
   let lethal : EvoMember = { ..first, fitness: Some(-1.0), status: "lethal" }
   let manual : EvoMember = { ..first, fitness: Some(0.2), status: "alive" }
   let second_entries = @vault.load(store)
@@ -776,8 +783,7 @@ test "evo fossils record extinction with a reason" {
     [manual], 8, "manual_rollback", 1, "3".repeat(64), "2026-11-12T03:20:00Z")
   assert_eq(lethal_ids.length(), 1)
   assert_eq(manual_ids.length(), 1)
-  @vault.commit(store, @vault.fingerprint(second_entries),
-    second_batch.next.val, second_batch.changes)
+evo_sidecar_commit(store, second_batch.changes)
   // The per-generation fossil cap is applied, and all four reasons have rows.
   let third_entries = @vault.load(store)
   let third_batch = evo_batch(third_entries)
@@ -788,15 +794,14 @@ test "evo fossils record extinction with a reason" {
   let capped_ids = evo_fossilize_members(store, third_entries, third_batch,
     capped, 2, "not_selected", 2, "3".repeat(64), "2026-11-12T03:30:00Z")
   assert_eq(capped_ids.length(), 2)
-  @vault.commit(store, @vault.fingerprint(third_entries),
-    third_batch.next.val, third_batch.changes)
+evo_sidecar_commit(store, third_batch.changes)
   let reason_rows = evo_test_fossil_rows(store)
   for reason in ["not_selected", "lethal", "regression_rollback", "manual_rollback"] {
     assert_true(reason_rows.any(row => evo_test_text_field(row, "reason") == reason),
       msg=reason)
   }
-  assert_eq(@vault.load(store).filter(entry =>
-    entry.path.has_prefix("state/evo/fossils/")).length(), reason_rows.length())
+  assert_eq(evo_sidecar_records(store, "evo/fossils/").length(),
+    reason_rows.length())
   ignore(files)
 }
 
@@ -810,13 +815,12 @@ test "evo counters match the ledger" {
   }
   ignore(dispatch(store, { "op": "evo-evaluate", "at": "2026-11-12T03:00:00Z" }))
   ignore(dispatch(store, { "op": "evo-rollback", "at": "2026-11-12T04:00:00Z" }))
-  let entries = @vault.load(store)
   let status = evo_test_status(store)
-  let fossil_files = entries.filter(entry => entry.path.has_prefix("state/evo/fossils/")).length()
-  let regression_events = entries.filter(entry =>
-    entry.path.has_prefix("state/events/evo-regression-")).length()
-  let rollback_events = entries.filter(entry =>
-    entry.path.has_prefix("state/events/evo-rollback-")).length()
+  let fossil_files = evo_sidecar_records(store, "evo/fossils/").length()
+  let regression_events = evo_sidecar_records(store,
+    "evo/events/evo-regression-").length()
+  let rollback_events = evo_sidecar_records(store,
+    "evo/events/evo-rollback-").length()
   assert_eq(evo_test_number_field(status, "fossils").to_int(), fossil_files)
   assert_eq(evo_test_number_field(status, "regressions").to_int(), regression_events)
   assert_eq(evo_test_number_field(status, "rollbacks").to_int(), rollback_events)
@@ -929,7 +933,9 @@ test "evo disabled gate answers every op before touching state" {
     assert_eq(code, "evo_disabled")
   }
   for (path, count) in reads {
-    if path != "state/evo/policy.json" {
+    // The policy gate reads the sidecar copy first and the pre-sidecar
+    // location second (read-only fallback for legacy vaults).
+    if path != "evo/policy.json" && path != "state/evo/policy.json" {
       assert_eq(count, 0, msg="read " + path)
     }
   }
@@ -995,7 +1001,7 @@ test "evo human gate pauses automatic writes" {
 
 test "evo policy tamper fails closed" {
   let (store, files) = evo_test_store()
-  let path = "state/evo/policy.json"
+  let path = "evo/policy.json"
   let record = @base.parse(@vault.required(store, path))
   let params = @base.field(record, "params")
   let cases = [
@@ -1027,15 +1033,49 @@ test "evo policy tamper fails closed" {
 
 // ---- interruption recovery -------------------------------------------------
 
+fn evo_each_crash_point(
+  seed : (@vault.Storage) -> Unit raise @base.Fault,
+  request : Json,
+) -> @vault.Storage raise {
+  // Same contract as the shared harness, but recovery is sidecar-aware: evo
+  // writes land through evo_sidecar_commit, so an interrupted transaction
+  // leaves evo/transactions/pending.json, not the vault journal.
+  let (probe, _, _) = crashing(1 << 20)
+  seed(probe)
+  try {
+    ignore(dispatch(probe, request))
+  } catch {
+    @base.Fault(message) =>
+      assert_true(false, msg="probe fault: " + message + " / " + @base.canonical(request))
+  }
+  let mut fail_after = 0
+  let mut landed = crashing(0).0
+  while (true) {
+    let (store, broken, files) = crashing(fail_after)
+    seed(store)
+    let failed = try { ignore(dispatch(broken, request)); false } catch { _ => true }
+    if !failed {
+      landed = store
+      let after = @vault.load(store)
+      @vault.verify(store, after)
+      break
+    }
+    ignore(evo_sidecar_recover(store))
+    assert_eq(files.contains("evo/transactions/pending.json"), false)
+    assert_eq(files.contains("state/transactions/pending.json"), false)
+    fail_after = fail_after + 1
+    if fail_after > 64 { @base.fail("operation never landed: " + @base.canonical(request)) }
+  }
+  landed
+}
+
 test "evo init recovers from a crash at any publish point" {
-  let store = each_crash_point(evo_test_seed_policy, {
+  let store = evo_each_crash_point(evo_test_seed_policy, {
     "op": "evo-init", "seed": 7, "at": "2026-11-12T00:00:01Z",
   })
-  let entries = @vault.load(store)
-  @vault.verify(store, entries)
-  assert_true(entries.any(entry => entry.path == "state/evo/population.json"))
-  assert_true(entries.any(entry => entry.path == "state/evo/state.json"))
-  let population = @base.parse(@vault.required(store, "state/evo/population.json"))
+  let population = @base.parse(@vault.required(store, "evo/population.json"))
+  let state_record = @base.parse(@vault.required(store, "evo/state.json"))
+  assert_eq(evo_test_number_field(state_record, "steps").to_int(), 0)
   assert_eq(evo_test_number_field(population, "generation").to_int(), 0)
   assert_eq(@base.array(@base.field(population, "members")).length(), 8)
   let replay = dispatch(store, {
@@ -1049,8 +1089,8 @@ test "evo init recovers from a crash at any publish point" {
 
 test "evo observe recovers from a crash at any publish point" {
   let request = evo_test_observe_request(1, "task", 0.5, 0.1, 0.2, Some("同伴"))
-  let store = each_crash_point(evo_test_seed_initialized, request)
-  let state = @base.parse(@vault.required(store, "state/evo/state.json"))
+  let store = evo_each_crash_point(evo_test_seed_initialized, request)
+  let state = @base.parse(@vault.required(store, "evo/state.json"))
   assert_eq(evo_test_number_field(state, "steps").to_int(), 1)
   assert_eq(@base.array(@base.field(state, "window")).length(), 1)
   let replay = dispatch(store, request)

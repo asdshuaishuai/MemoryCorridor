@@ -35,6 +35,7 @@
 | 确定性随机留出（续五十六） | `evo_wbtest`（split 覆盖/大小 11-5/确定性/非时间后缀）+ `evo_e2e` 评估回归 + 2 条 mutation（固定后缀/无留出） | pass |
 | 多轮用户对话输入契约（续五十五） | `evo_thread_e2e.py`（open/replay/already-open/delivered-parent 门禁、append 重放/role/text 校验/16 轮上限、close 终态与重放、list 只读、daemon 开口开线程+用户消息追加 user 轮）+ 3 条 mutation | pass(scope note：线程是 state 不是知识页；文字不进 wiki/来源) |
 | 真实路径离线可测（续五十四） | `nlp_real_path_e2e.py`（本地 OpenAI 兼容服务：affect/expand llm、非法 JSON 失败关闭、RSI judgments+失败记录、evo 文本+ack） | pass(scope note：HanLP 真实模型仍 SKIP；LLM 路径用本地服务，不连外网) |
+| sidecar 容器级隔离（续六十二切片二） | `evo_e2e.py` 18a2（纯 evo 序列指纹/目录字节不变、state/evo 零残留）+ 18c（legacy 金库自动迁移：记录进 sidecar、金库副本与目录行删除、迁移后策略可用）+ pack 段（解包金库无 evo 状态）+ `evo_sidecar_wbtest`（4 发布点崩溃前滚、篡改/冲突/保留路径失败关闭）+ 3 条 mutation | pass |
 | RSI 正式模式提案补全（续五十三） | `rsi_driver_e2e.py` 4c（`parse_judgments` 收 page{title,body}、拒空标题/越界键/非对象、无 page 默认）+ 第 4 段 mock 提案回归 | pass(scope note：真实 LLM 路径 CI 仍只测解析契约，不连网) |
 | NLP 基础强化（续五十二） | `nlp_adapter_e2e.py`（英文否定/程度双检、auto 回退、消息文件轮转不重放）+ `search_expansion_e2e.py`（单条扩展失败记入 errors 继续） | pass(scope note：lexicon 仍是确定性兜底；HanLP 真实模型路径 CI 干净 SKIP) |
 | 主动表达连续性（续五十） | `evo_proactive_e2e.py`（首轮投递后，driver-c 的 mock 输出带 `·续`，证明历史来自已 ack 回复并进入 prompt）+ daemon 回归 | pass(scope note：单轮承接；多轮用户对话契约未实现) |
