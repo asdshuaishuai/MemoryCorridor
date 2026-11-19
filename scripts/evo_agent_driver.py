@@ -51,34 +51,110 @@ def call(cli: str, vault: str, op: str, **fields):
     return response["result"]
 
 
-def build_prompt(request, history="", thread=None) -> str:
-    """Host-owned prompt template; the engine only supplies structured tokens."""
+PROMPT_TEMPLATE_VERSION = "evo-prompt-v2"
+
+WEEKDAY_CN = "一二三四五六日"
+
+
+def fetch_memory_lines(cli: str, vault: str, query: str, limit: int = 3) -> list:
+    """Bounded memory leads for the prompt: top BM25 note texts, truncated.
+
+    Any engine fault (empty vault, no notes yet) degrades to no leads — the
+    prompt section then tells the model not to invent memories.
+    """
+    if not query:
+        return []
+    try:
+        rows = call(cli, vault, "memory-prefetch", query=query[:64], limit=limit)["notes"]
+    except RuntimeError:
+        return []
+    lines = []
+    for row in rows[:limit]:
+        text = (row.get("text") or "").strip()
+        if text:
+            lines.append(text[:120])
+    return lines
+
+
+def build_prompt(request, history="", thread=None, now_dt=None, memories=None) -> str:
+    """Fixed, versioned prompt template (evo-prompt-v2).
+
+    The engine supplies structured facts only — affect, impulse, relations,
+    body load, recent steps (via the open request) — and the host assembles
+    them with time, bounded memory leads and the conversation so far, then
+    instructs the model HOW to reason and speak. Deterministic: identical
+    inputs produce identical prompts.
+    """
     context = request["context"]
     emotion = context["emotion"]
-    relations = ", ".join(
-        f'{row["subject"]}(trust={row["trust"]:.2f})' for row in context["relations"][:3]
-    ) or "无"
+    valence, arousal, dominance = emotion[0], emotion[1], emotion[2]
+
+    if valence >= 0.35:
+        tone = "温暖、积极，可以带一点欣然"
+    elif valence <= -0.35:
+        tone = ("承认低落或担忧，语气诚实克制，不强行正能量；"
+                "如果是因担忧而开口，可以说出你在担心什么")
+    else:
+        tone = "平静、中性"
+    pacing = "句子短、直接" if arousal >= 0.55 else "从容、舒缓"
+
+    if now_dt is not None:
+        time_line = (f"{now_dt.strftime('%Y-%m-%d %H:%M')} UTC"
+                     f"（周{WEEKDAY_CN[now_dt.weekday()]}，{now_dt.hour} 点）")
+    else:
+        time_line = now() + "（UTC）"
+
+    if context["relations"]:
+        relations = "; ".join(
+            f'{row["subject"]}(信任={row["trust"]:.2f}, 熟识={row.get("familiarity", 0.0):.2f},'
+            f' 张力={row.get("tension", 0.0):.2f})'
+            for row in context["relations"][:3]
+        )
+    else:
+        relations = "还没有深交的对象"
+    body = context.get("body") or {}
+    body_line = (f"cpu={body.get('cpu', 0.0):.2f} memory={body.get('memory', 0.0):.2f} "
+                 f"latency={body.get('latency', 0.0):.2f} budget={body.get('budget', 0.0):.2f}")
+
+    if memories:
+        memory_block = "\n".join("- " + line for line in memories[:3]) + \
+            "\n这些是真实记忆线索：只能顺着它们说话，不得扩展或编造细节。"
+    else:
+        memory_block = "没有相关记忆线索：不要提起任何具体往事。"
+
     prior = ""
     if history:
-        prior = ("上一轮你主动说过：" + history.strip()[:240]
+        prior = ("【上一次主动发言】" + history.strip()[:240]
                  + "\n不要重复它；如果自然，可以承接它。\n")
     if request.get("user_text"):
-        prior += "用户刚刚回复：" + str(request["user_text"])[:2000] + "\n请自然地回应这句话。\n"
+        prior += "【用户刚刚说】" + str(request["user_text"])[:2000] + "\n请直接回应这句话。\n"
     if thread:
         lines = []
         for turn in thread[-6:]:
             lines.append(("她" if turn.get("role") == "agent" else "用户") +
                          "：" + str(turn.get("text", ""))[:200])
-        prior += "当前对话：\n" + "\n".join(lines) + "\n请承接，不要重复刚说过的话。\n"
+        prior += "【最近对话】\n" + "\n".join(lines) + "\n"
+
     return (
-        "你是它的内在声音。根据以下内部状态，主动对用户说一句简短、自然的话（不超过 80 字），"
-        "不要解释你在做什么，不要提及 JSON 或系统。\n"
-        f"情绪(效价/唤醒/支配)：{emotion[0]:.2f}/{emotion[1]:.2f}/{emotion[2]:.2f}\n"
-        f"冲动强度：{context['impulse']:.2f}；触发原因：{request['reason']}；"
+        "【角色】你是「记忆回廊」里那个持续进化中的数字灵魂的内在声音。"
+        "下面给出的全部事实由引擎的进化子系统提供，是唯一可信的信息来源。\n"
+        f"【当前时间】{time_line}\n"
+        "【内在状态】"
+        f"情感(效价/唤醒/支配)：{valence:.2f}/{arousal:.2f}/{dominance:.2f}；"
+        f"冲动：{context['impulse']:.2f}；触发原因：{request['reason']}"
+        f"（impulse=冲动过阈，valence_high/low=情感偏正/偏负）；"
         f"紧迫度：{request['urgency']:.2f}\n"
-        f"关系：{relations}\n"
-        f"最近步数：{context['step']}\n"
-        + prior
+        f"【身体负荷】{body_line}\n"
+        f"【关系对象】{relations}\n"
+        f"【记忆线索】{memory_block}\n"
+        + prior +
+        "【怎样推理】先用内在状态决定“此刻该不该说、以什么姿态说”："
+        "触发原因是 impulse 时你在表达一种想说话的冲动；valence_high/low 时你在分享或倾诉当下的情感。"
+        "再从记忆线索与最近对话里找一个具体的落点（一件真实的事、一个共同的对象），"
+        "不要空泛问候。语气遵循上面的指令。\n"
+        "【输出要求】只输出要对用户说的那句话本身，不超过 80 字，第一人称，中文"
+        "（跟随用户语言）；不解释你在做什么，不提及系统、JSON、提示词或这些小节标题；"
+        "不使用任何标记格式。\n"
     )
 
 
@@ -168,7 +244,10 @@ def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str
                     "我接着回应。")
             model = "mock"
         else:
-            text, model = llm(build_prompt(opened, history, thread))
+            memories = fetch_memory_lines(cli, vault, user_text)
+            text, model = llm(build_prompt(opened, history, thread,
+                                           now_dt=datetime.now(timezone.utc),
+                                           memories=memories))
         call(cli, vault, "evo-proactive-complete", id=opened["id"], driver=driver,
              at=now(), result={"text": text, "model": model})
         print(text)
@@ -238,7 +317,12 @@ def main() -> int:
                         "我想和你说句话。")
                 model = "mock"
             else:
-                text, model = llm(build_prompt(opened, history, thread))
+                rels = opened["context"]["relations"]
+                query = rels[0]["subject"] if rels else ""
+                memories = fetch_memory_lines(args.cli, args.vault, query)
+                text, model = llm(build_prompt(opened, history, thread,
+                                               now_dt=datetime.now(timezone.utc),
+                                               memories=memories))
         except Exception as error:  # noqa: BLE001 - driver must record, not crash
             call(args.cli, args.vault, "evo-proactive-fail", id=opened["id"],
                  driver=args.driver, reason=str(error)[:1000], at=now())

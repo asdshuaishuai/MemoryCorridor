@@ -299,7 +299,10 @@ class Daemon:
             else:
                 history = driver.parent_reply(self.cli, self.vault, parent)
                 thread = driver.thread_turns(self.cli, self.vault)
-                text, model = driver.llm(driver.build_prompt(opened, history, thread))
+                memories = driver.fetch_memory_lines(self.cli, self.vault, user_text)
+                text, model = driver.llm(driver.build_prompt(
+                    opened, history, thread, now_dt=self.clock.current,
+                    memories=memories))
             driver.call(self.cli, self.vault, "evo-proactive-complete",
                         id=opened["id"], driver=self.name, at=self.clock.stamp(),
                         result={"text": text, "model": model})
@@ -354,7 +357,12 @@ class Daemon:
                 text = f"（mock 主动应答{marker}）第 {opened['context']['step']} 步，我想说句话。"
                 model = "mock"
             else:
-                text, model = driver.llm(driver.build_prompt(opened, history, thread))
+                rels = opened["context"]["relations"]
+                query = rels[0]["subject"] if rels else ""
+                memories = driver.fetch_memory_lines(self.cli, self.vault, query)
+                text, model = driver.llm(driver.build_prompt(
+                    opened, history, thread, now_dt=self.clock.current,
+                    memories=memories))
             driver.call(self.cli, self.vault, "evo-proactive-complete",
                         id=opened["id"], driver=self.name, at=self.clock.stamp(),
                         result={"text": text, "model": model})

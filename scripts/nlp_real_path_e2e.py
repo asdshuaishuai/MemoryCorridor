@@ -183,14 +183,22 @@ def main():
             assert "（本地端点主动应答）" in evo.stdout, (evo.stdout, evo.stderr)
             counts = call("evo-proactive-list")["counts"]
             assert counts["done"] == 1 and counts["delivered"] == 1, counts
-            assert any("情绪" in row["prompt"] for row in FakeOpenAI.seen), FakeOpenAI.seen[-1]
+            # The fixed prompt template (evo-prompt-v2) must carry all seven
+            # sections, the no-leads memory fallback and the output rules.
+            prompt = FakeOpenAI.seen[-1]["prompt"]
+            for marker in ("【角色】", "【当前时间】", "【内在状态】", "【身体负荷】",
+                           "【关系对象】", "【记忆线索】", "【怎样推理】", "【输出要求】"):
+                assert marker in prompt, (marker, prompt[:400])
+            assert "没有相关记忆线索" in prompt, prompt[:400]
+            assert "不超过 80 字" in prompt, prompt[:400]
 
     finally:
         server.shutdown()
         server.server_close()
 
     print("nlp/llm real-path e2e: local OpenAI-compatible server drives affect/expand, "
-          "RSI judgments + failure recording, evo proactive reply + ack passed")
+          "RSI judgments + failure recording, evo proactive reply with the fixed "
+          "evo-prompt-v2 template (seven sections) + ack passed")
     return 0
 
 
