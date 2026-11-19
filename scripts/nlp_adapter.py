@@ -25,18 +25,24 @@ import urllib.request
 
 POSITIVE = ["开心", "高兴", "喜欢", "满意", "期待", "感谢", "顺利", "成功", "温暖",
             "安心", "有趣", "惊喜", "爱", "优秀", "希望", "轻松", "快乐", "赞",
+            "兴奋", "感动", "踏实", "放心", "欣慰", "自豪", "好奇", "痛快",
             "good", "great", "happy", "love", "nice", "thanks", "excited",
-            "calm", "wonderful", "glad"]
+            "calm", "wonderful", "glad", "proud", "relieved", "curious"]
 NEGATIVE = ["难过", "生气", "焦虑", "担心", "失望", "失败", "痛苦", "孤独", "害怕",
             "烦躁", "讨厌", "糟糕", "崩溃", "压力", "烦", "差", "坏",
+            "无奈", "尴尬", "委屈", "后悔", "无聊", "疲惫", "心烦", "沉重",
             "bad", "sad", "angry", "anxious", "worried", "fail", "hate",
-            "awful", "tired", "stress", "lonely", "afraid"]
+            "awful", "tired", "stress", "lonely", "afraid", "bored",
+            "embarrassed", "regret", "exhausted"]
 INTENSIFIERS = ["非常", "特别", "太", "超", "极", "很", "really", "very", "so",
-                "extremely"]
-NEGATIONS = ["不", "没", "无", "别", "未", "not", "no", "never"]
+                "extremely", "超级", "极其", "格外", "相当", "过于"]
+NEGATIONS = ["不", "没", "无", "别", "未", "没有", "勿", "not", "no", "never",
+             "hardly", "rarely"]
 TOPIC_WORDS = ["记忆", "来源", "资料", "页面", "证据", "知识", "项目", "情感",
                "人格", "梦", "检索", "向量", "青瓷", "memory", "source",
-               "evidence", "knowledge", "search", "vector", "emotion"]
+               "evidence", "knowledge", "search", "vector", "emotion",
+               "查询", "引用", "档案", "整理", "总结", "分析", "文档", "笔记",
+               "query", "archive", "note", "summary"]
 SYNONYMS = {
     "记忆": ["回忆", "记性"], "来源": ["出处", "证据"], "青瓷": ["瓷器", "陶瓷"],
     "检索": ["搜索", "查找"], "情感": ["情绪", "感受"], "人格": ["性格", "个性"],
@@ -88,12 +94,28 @@ def _hanlp_tokens(cached, text):
     return [token for token in cached["tok"](text) if token.strip()]
 
 
-def has_near(text, index, words, width=3):
+def has_near(text, index, words, width=3, glyph_guard=False):
     # Chinese has no spaces, so a short character window works; English needs the
-    # previous whitespace-delimited word ("not happy", "very good").
+    # previous whitespace-delimited word ("not happy", "very good"). A single
+    # CHARACTER must sit immediately before the emotion word: a substring
+    # window false-positives on words that merely contain the glyph.
+    #
+    # glyph_guard (negation lookups only): a single negation glyph that is
+    # actually the TAIL of a longer known word ending here does not negate —
+    # the intensifier whose last character is also a negation glyph once
+    # scored the praise sentence zero.
     window = text[max(0, index - width):index]
-    if any(word in window for word in words):
-        return True
+    for word in words:
+        if len(word) == 1:
+            if not window.endswith(word):
+                continue
+            if glyph_guard and any(
+                    known.endswith(word) and window.endswith(known)
+                    for known in INTENSIFIERS + POSITIVE + NEGATIVE):
+                continue
+            return True
+        elif word in window:
+            return True
     parts = text[:index].split()
     return bool(parts) and parts[-1] in words
 
@@ -109,7 +131,7 @@ def lexicon_affect(text):
             if index < 0:
                 break
             weight = 1.5 if has_near(lowered, index, INTENSIFIERS) else 1.0
-            if has_near(lowered, index, NEGATIONS):
+            if has_near(lowered, index, NEGATIONS, glyph_guard=True):
                 neg += weight
             else:
                 pos += weight
@@ -121,7 +143,7 @@ def lexicon_affect(text):
             if index < 0:
                 break
             weight = 1.5 if has_near(lowered, index, INTENSIFIERS) else 1.0
-            if has_near(lowered, index, NEGATIONS):
+            if has_near(lowered, index, NEGATIONS, glyph_guard=True):
                 pos += weight
             else:
                 neg += weight

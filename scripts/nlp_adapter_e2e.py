@@ -26,27 +26,34 @@ def adapter(*args):
 
 def main():
     # 1. deterministic affect: sign, bounds, determinism.
-    positive = json.loads(adapter("affect", "--text", "今天很开心，谢谢你！").stdout)
-    negative = json.loads(adapter("affect", "--text", "今天压力很大，很难过。").stdout)
-    neutral = json.loads(adapter("affect", "--text", "今天读了一份资料。").stdout)
+    positive = json.loads(adapter("affect", "--text", "今天很开心，谢谢你！", "--provider", "lexicon").stdout)
+    negative = json.loads(adapter("affect", "--text", "今天压力很大，很难过。", "--provider", "lexicon").stdout)
+    neutral = json.loads(adapter("affect", "--text", "今天读了一份资料。", "--provider", "lexicon").stdout)
     assert positive["valence"] > 0.3, positive
     assert negative["valence"] < -0.3, negative
     assert -1.0 <= neutral["valence"] <= 1.0, neutral
     for row in (positive, negative, neutral):
         assert 0.0 <= row["arousal"] <= 1.0 and 0.0 <= row["salience"] <= 1.0, row
         assert len(row["text_sha256"]) == 64 and row["provider"] == "lexicon", row
-    assert positive == json.loads(adapter("affect", "--text", "今天很开心，谢谢你！").stdout)
+    assert positive == json.loads(adapter("affect", "--text", "今天很开心，谢谢你！", "--provider", "lexicon").stdout)
 
     # 1b. English negation/intensifier: the previous-word check, not just a
     #     character window, must flip/weight the score.
-    english_not = json.loads(adapter("affect", "--text", "I am not happy").stdout)
-    english_very = json.loads(adapter("affect", "--text", "This is very good").stdout)
-    english_not_bad = json.loads(adapter("affect", "--text", "not bad").stdout)
+    english_not = json.loads(adapter("affect", "--text", "I am not happy", "--provider", "lexicon").stdout)
+    english_very = json.loads(adapter("affect", "--text", "This is very good", "--provider", "lexicon").stdout)
+    english_not_bad = json.loads(adapter("affect", "--text", "not bad", "--provider", "lexicon").stdout)
     assert english_not["valence"] < -0.3, english_not
     assert english_very["valence"] > 0.5, english_very
     assert english_not_bad["valence"] > 0.3, english_not_bad
     for row in (english_not, english_very, english_not_bad):
         assert row["provider"] == "lexicon", row
+
+    # 1c. A single negation glyph that is actually the TAIL of a known word
+    #     (the intensifier in the praise sentence) must not negate: this pair
+    #     once scored zero because a substring window matched inside it.
+    praise = json.loads(adapter("affect", "--text", "这次的整理让我特别踏实，也非常自豪",
+                                "--provider", "lexicon").stdout)
+    assert praise["valence"] > 0.3, praise
 
     # 2. query expansion keeps the original first and adds deterministic terms.
     expanded = json.loads(adapter("expand", "--query", "青瓷的来源").stdout)
@@ -129,8 +136,9 @@ def main():
         after = call("status")
         assert after["pages"] == before["pages"] and after["sources"] == before["sources"], (before, after)
 
-    print("nlp adapter e2e: lexicon affect bounds/determinism, query expansion, daemon "
-          "message cursor, no knowledge writes passed")
+    print("nlp adapter e2e: lexicon affect bounds/determinism, negation glyph "
+          "guard, query expansion, daemon message cursor, no knowledge writes "
+          "passed")
     return 0
 
 
