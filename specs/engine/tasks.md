@@ -948,3 +948,6 @@
 
 
 - [x] **2026-11-18 续六十五：RSI 提案生命周期闭环（host-owned）**：`rsi_apply_proposal` 三补全——①应用成功写 `<stem>.applied.json` 审计标记（mode/page/order/source/at）；②`--list` 按**页面实态**枚举草稿（active→applied / stale→stale / missing→pending，标记仅审计非真值）；③stale 页复活走同一 apply 流程：源变更后 scan 产生新工单、或按 source 复用既有开放工单（单源免 `--order`），commit 重发布清 stale；源未变 sticky 拒绝并如实报 `no open order for <source>`。顺带修 explore 复用前先在 apply 内复用按源工单的语义（原实现只认 scan 新工单，重发布场景误报 ambiguous）。无引擎改动、无新 mutation。验收：`rsi_apply_e2e`（marker 写入与 mode、--list 四态、双源按源绑定、源撤销→页 stale→源变更→重应用复活且正文保持提案草稿）+ rsi_driver/dream_work 回归全过。文档：rsi-loop 三·六生命周期段。**待 CI 落账**。
+
+
+- [x] **2026-11-18 续六十六：回归比较的场景门控（续五十八语义补全）**：场景轮换后跨场景适应度差是轮换噪声而非漂移——检查点记录自身 `scenario`（records 校验可选、0..3 整数、缺失容忍 pre-rotation 检查点），`evo_scenario_gate` 纯函数门控 evolve 的回归判定：场景一致才计数，不一致既不确认也不反驳 streak（`evo_regression_decision` 纯函数未动）；无场景的 legacy 检查点门控关闭直至被已知场景替换。检查点**替换**仍为全局最优（best-ever，如实保留）。验收：`evo_wbtest` 门控 4 断言（同场景 true/异场景 false/legacy false/无检查点 false）153/153 + 1 条 mutation（gate 翻转 true，手测 CAUGHT，188→189）；`evo_e2e` 12-13 段重写——压力窗口在 gen1-3 跨场景被门控（regressed=false 如实上报）、gen4 回到检查点场景后确认回归并回滚（drift 持续跨轮转的真实语义）。文档：neuro-evolution 机制 #3、protocol evaluate 行。**待 CI 落账**。

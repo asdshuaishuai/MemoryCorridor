@@ -1159,6 +1159,19 @@ test "evo knowledge alignment rewards matching valence and ignores absent outcom
   assert_eq(none, 0.0)
 }
 
+test "evo regression gate demands the checkpoint scenario" {
+  let checkpoint : EvoCheckpoint? = Some({
+    generation: 0, genome: "3".repeat(64), fitness: 0.5, scenario: Some(2),
+  })
+  assert_true(evo_scenario_gate(checkpoint, 6))
+  assert_false(evo_scenario_gate(checkpoint, 7))
+  let legacy : EvoCheckpoint? = Some({
+    generation: 0, genome: "3".repeat(64), fitness: 0.5, scenario: None,
+  })
+  assert_false(evo_scenario_gate(legacy, 2))
+  assert_false(evo_scenario_gate(None, 2))
+}
+
 test "evo holdout split is seeded, covers the window and is not a time suffix" {
   let (train, holdout) = evo_split_indices(16, "window-hash")
   assert_eq(train.length() + holdout.length(), 16)

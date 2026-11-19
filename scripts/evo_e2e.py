@@ -379,6 +379,11 @@ def main():
                          for p in record_paths("evo/genomes")}
 
         # ---- 12-13. non-monotonic evidence: regression and rollback ---------
+        # The pressure window drops fitness below the checkpoint, but the
+        # regression comparison only counts when the evaluation scenario
+        # matches the checkpoint's (gen 0 scored under scenario 0), so the
+        # gate carries the streak through generations 1-3 and generation 4 —
+        # back under scenario 0 — is where the drift is confirmed.
         for index in range(16):
             observe_pressure(18 + index, "2026-11-12T00:09:00Z")
         pressure_eval = call("evo-evaluate", at="2026-11-12T00:10:00Z")
@@ -389,7 +394,18 @@ def main():
         assert regressed["generation"] == 1
         assert regressed["window_changed"] is True
         assert regressed["delta"] < 0, regressed["delta"]
-        assert regressed["regressed"] is True and regressed["rolled_back"] is True
+        assert regressed["regressed"] is False, regressed
+        for extra in range(3):
+            gen = 2 + extra
+            for index in range(16):
+                observe_pressure(18 + 16 * (extra + 1) + index,
+                                 "2026-11-12T00:09:30Z")
+            call("evo-evaluate", at=f"2026-11-12T00:10:{10 + extra:02d}Z")
+            regressed = call("evo-evolve",
+                             at=f"2026-11-12T00:11:{10 + extra:02d}Z")
+            assert regressed["generation"] == gen, regressed
+            assert regressed["regressed"] is (gen == 4), (gen, regressed)
+        assert regressed["rolled_back"] is True
         assert regressed["next_generation"] == 0, regressed["next_generation"]
         regression_fossils = [read_record(p.relative_to(vault).as_posix())
                               for p in record_paths("evo/fossils")]

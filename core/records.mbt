@@ -945,11 +945,22 @@ fn evo_member_shape(value : Json) -> Unit raise @base.Fault {
 fn evo_checkpoint_shape(value : Json) -> Unit raise @base.Fault {
   if value == Json::null() { return }
   let code = "evo_population_record_invalid"
-  @base.keys(value, ["generation", "genome", "fitness", "at"])
+  @base.keys(value, ["generation", "genome", "fitness", "at", "scenario"])
   ignore(evo_record_int(value, "generation", 0, 1000000000, code))
   ignore(evo_record_hash(value, "genome", code))
   ignore(evo_record_number(value, "fitness", -1.0, 1.0, code))
   ignore(evo_record_time(value, "at", code))
+  // Which scenario rotation the fitness was scored under (续五十八起).
+  // Absent in pre-rotation checkpoints: the controller then gates the
+  // regression comparison off until the checkpoint is replaced.
+  match @base.field(value, "scenario") {
+    Number(n, ..) =>
+      if n < 0.0 || n >= 4.0 || n != n.trunc() {
+        @base.fail(code + ":scenario")
+      }
+    Null => ()
+    _ => @base.fail(code + ":scenario")
+  }
 }
 
 fn evo_history_shape(value : Json) -> Unit raise @base.Fault {

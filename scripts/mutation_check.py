@@ -1339,6 +1339,12 @@ MUTATIONS = [
      '    if false {\n      @base.fail("evo_sidecar_write_conflict: " + change.path)\n    }',
      "evo sidecar refuses conflicting writes without side effects"),
 
+    ("regression comparison must require the checkpoint scenario",
+     "agent/evo.mbt",
+     "fn evo_scenario_gate(checkpoint : EvoCheckpoint?, generation : Int) -> Bool {\n  match checkpoint {\n    Some(value) => value.scenario == Some(evo_scenario(generation))",
+     "fn evo_scenario_gate(checkpoint : EvoCheckpoint?, generation : Int) -> Bool {\n  match checkpoint {\n    Some(value) => true",
+     "evo regression gate demands the checkpoint scenario"),
+
     ("sidecar commit must journal before applying files",
      "agent/evo_sidecar.mbt",
      '  (store.write)(EVO_SIDECAR_JOURNAL, journal)',

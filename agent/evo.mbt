@@ -115,6 +115,7 @@ priv struct EvoCheckpoint {
   generation : Int
   genome : String
   fitness : Double
+  scenario : Int?
 }
 
 priv struct EvoLastEval {
@@ -693,7 +694,22 @@ fn evo_checkpoint(value : Json) -> EvoCheckpoint? raise @base.Fault {
       generation: evo_json_int(value, "generation", "evo_population_record_invalid"),
       genome: @base.text(@base.field(value, "genome")),
       fitness: evo_json_number(value, "fitness", "evo_population_record_invalid"),
+      scenario: match evo_optional(value, "scenario") {
+        Some(Number(n, ..)) => Some(n.to_int())
+        _ => None
+      },
     })
+  }
+}
+
+// Regression evidence counts only when the evaluation scenario matches the
+// checkpoint's: a fitness drop across a scenario rotation is the rotation's
+// noise, not drift. A pre-rotation checkpoint (no scenario) is gated off
+// until it is replaced under a known scenario.
+fn evo_scenario_gate(checkpoint : EvoCheckpoint?, generation : Int) -> Bool {
+  match checkpoint {
+    Some(value) => value.scenario == Some(evo_scenario(generation))
+    None => false
   }
 }
 
@@ -1914,6 +1930,7 @@ fn evo_evaluate_op(
       let record : Json = {
         "generation": population.generation, "genome": best_genome,
         "fitness": best_fitness, "at": at,
+        "scenario": scenario.to_json(),
       }
       checkpoint_json = record
       active_genome = Some(best_genome)
@@ -2294,8 +2311,14 @@ fn evo_evolve_op(
   let worst = last.worst
   let checkpoint = evo_checkpoint(population.checkpoint)
   let checkpoint_fitness = match checkpoint { None => -1.0; Some(value) => value.fitness }
-  let (regressed, streak, rollback) = evo_regression_decision(
-    checkpoint_fitness, best, policy.params, population.regression_streak)
+  let (regressed, streak, rollback) = if evo_scenario_gate(checkpoint,
+    population.generation) {
+    evo_regression_decision(checkpoint_fitness, best, policy.params,
+      population.regression_streak)
+  } else {
+    // Scenario mismatch: neither confirm nor refute the streak.
+    (false, population.regression_streak, false)
+  }
   let mut delta = if population.history.is_empty() { 0.0 } else {
     best - evo_json_number(population.history[population.history.length() - 1],
       "best", "evo_population_record_invalid")
