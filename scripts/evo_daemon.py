@@ -300,7 +300,7 @@ class Daemon:
                 history = driver.parent_reply(self.cli, self.vault, parent)
                 thread = driver.thread_turns(self.cli, self.vault)
                 memories = driver.fetch_memory_lines(self.cli, self.vault, user_text)
-                text, model = driver.llm(driver.build_prompt(
+                text, model, _ = driver.curious_reply(driver.build_prompt(
                     opened, history, thread, now_dt=self.clock.current,
                     memories=memories))
             driver.call(self.cli, self.vault, "evo-proactive-complete",
@@ -360,7 +360,7 @@ class Daemon:
                 rels = opened["context"]["relations"]
                 query = rels[0]["subject"] if rels else ""
                 memories = driver.fetch_memory_lines(self.cli, self.vault, query)
-                text, model = driver.llm(driver.build_prompt(
+                text, model, _ = driver.curious_reply(driver.build_prompt(
                     opened, history, thread, now_dt=self.clock.current,
                     memories=memories))
             driver.call(self.cli, self.vault, "evo-proactive-complete",

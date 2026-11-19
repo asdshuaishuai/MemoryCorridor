@@ -54,7 +54,11 @@ class FakeOpenAI(BaseHTTPRequestHandler):
         if FakeOpenAI.invalid:
             raw = b"not-json"
         else:
-            content = FakeOpenAI.responses.get(self.path, "")
+            entry = FakeOpenAI.responses.get(self.path, "")
+            # A list is a sequential queue: the evo curiosity round consumes
+            # the fetch directive first, then the final speech.
+            content = entry.pop(0) if isinstance(entry, list) and entry else \
+                (entry[-1] if isinstance(entry, list) else entry)
             raw = json.dumps(
                 {"choices": [{"message": {"content": content}}]}).encode("utf-8")
         self.send_response(200)
@@ -62,6 +66,18 @@ class FakeOpenAI(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+
+    def do_GET(self):
+        if self.path == "/curiosity":
+            raw = "青瓷特展今日开幕：三件南宋官窑首次同台展出。".encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def log_message(self, *args):
         pass
@@ -175,22 +191,30 @@ def main():
                      at=at(10 + step))
                 if call("evo-proactive-due", at=at(1000 + step))["due"]:
                     break
-            FakeOpenAI.responses = {"/chat/completions": "（本地端点主动应答）"}
+            # Curiosity round: the model first asks to look at a network
+            # address, the host fetches it, then the model speaks with the
+            # content in view. Two chat calls, one bounded host fetch.
+            FakeOpenAI.responses = {"/chat/completions": [
+                f"FETCH: {endpoint}/curiosity",
+                "（结合网络内容的主动应答：青瓷特展今天开幕。）",
+            ]}
             evo = run(server, "evo_agent_driver.py", "--vault", str(vault),
                       "--cli", str(EXE), "--once", "--ack", "--driver", "evo-llm",
                       env_extra={"EVO_LLM_ENDPOINT": endpoint, "EVO_LLM_MODEL": "fake-model"})
             assert evo.returncode == 0, (evo.stdout, evo.stderr)
-            assert "（本地端点主动应答）" in evo.stdout, (evo.stdout, evo.stderr)
+            assert "青瓷特展今天开幕" in evo.stdout, (evo.stdout, evo.stderr)
             counts = call("evo-proactive-list")["counts"]
             assert counts["done"] == 1 and counts["delivered"] == 1, counts
-            # The fixed prompt template (evo-prompt-v2) must carry all seven
-            # sections, the no-leads memory fallback and the output rules.
-            prompt = FakeOpenAI.seen[-1]["prompt"]
+            chat_calls = [row for row in FakeOpenAI.seen
+                          if row["path"] == "/chat/completions"][-2:]
+            assert len(chat_calls) == 2, len(FakeOpenAI.seen)
             for marker in ("【角色】", "【当前时间】", "【内在状态】", "【身体负荷】",
-                           "【关系对象】", "【记忆线索】", "【怎样推理】", "【输出要求】"):
-                assert marker in prompt, (marker, prompt[:400])
-            assert "没有相关记忆线索" in prompt, prompt[:400]
-            assert "不超过 80 字" in prompt, prompt[:400]
+                           "【关系对象】", "【记忆线索】", "【自主性】",
+                           "【怎样推理】", "【输出要求】"):
+                assert marker in chat_calls[0]["prompt"], (marker, chat_calls[0]["prompt"][:400])
+            assert "没有相关记忆线索" in chat_calls[0]["prompt"]
+            assert "【网络内容】" in chat_calls[1]["prompt"], chat_calls[1]["prompt"][:400]
+            assert "青瓷特展今日开幕" in chat_calls[1]["prompt"], chat_calls[1]["prompt"][:400]
 
     finally:
         server.shutdown()
@@ -198,7 +222,8 @@ def main():
 
     print("nlp/llm real-path e2e: local OpenAI-compatible server drives affect/expand, "
           "RSI judgments + failure recording, evo proactive reply with the fixed "
-          "evo-prompt-v2 template (seven sections) + ack passed")
+          "evo-prompt-v2 template (nine sections), the FETCH curiosity round and "
+          "ack passed")
     return 0
 
 

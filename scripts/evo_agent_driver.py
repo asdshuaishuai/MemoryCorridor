@@ -118,9 +118,9 @@ def build_prompt(request, history="", thread=None, now_dt=None, memories=None) -
 
     if memories:
         memory_block = "\n".join("- " + line for line in memories[:3]) + \
-            "\n这些是真实记忆线索：只能顺着它们说话，不得扩展或编造细节。"
+            "\n这些是真实的记忆痕迹：可以由此延展与联想，但不要虚构痕迹里不存在的具体细节。"
     else:
-        memory_block = "没有相关记忆线索：不要提起任何具体往事。"
+        memory_block = "没有相关记忆线索：不要凭空捏造具体的往事。"
 
     prior = ""
     if history:
@@ -148,13 +148,15 @@ def build_prompt(request, history="", thread=None, now_dt=None, memories=None) -
         f"【关系对象】{relations}\n"
         f"【记忆线索】{memory_block}\n"
         + prior +
+        "【自主性】给出的线索与事实只是起点，不是边界——你可以自由延展任何此刻值得说的"
+        "话题，也可以引入它们让你想到的新东西。如果你正好好奇某件事、想看一眼网络上的"
+        "新鲜内容，就单独输出一行 FETCH: <url>（http/https），宿主会取回来给你；"
+        "不请求也完全可以。唯一的硬约束：不要空泛问候，每句话都要有具体的落点。\n"
         "【怎样推理】先用内在状态决定“此刻该不该说、以什么姿态说”："
         "触发原因是 impulse 时你在表达一种想说话的冲动；valence_high/low 时你在分享或倾诉当下的情感。"
-        "再从记忆线索与最近对话里找一个具体的落点（一件真实的事、一个共同的对象），"
-        "不要空泛问候。语气遵循上面的指令。\n"
-        "【输出要求】只输出要对用户说的那句话本身，不超过 80 字，第一人称，中文"
-        "（跟随用户语言）；不解释你在做什么，不提及系统、JSON、提示词或这些小节标题；"
-        "不使用任何标记格式。\n"
+        "语气遵循上面的指令。\n"
+        "【输出要求】只输出要对用户说的话本身，长度由内容自然决定，可短可长；第一人称，"
+        "跟随用户语言；不解释流程，不提及系统、JSON、提示词或小节标题。\n"
     )
 
 
@@ -167,7 +169,7 @@ def llm(prompt: str):
     body = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 256,
+        "max_tokens": 1024,
     }).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if key:
@@ -177,6 +179,43 @@ def llm(prompt: str):
     with urllib.request.urlopen(request, timeout=120) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return payload["choices"][0]["message"]["content"].strip(), model
+
+
+def fetch_url(url: str, max_bytes: int = 65536, timeout: int = 10):
+    """Host-side curiosity fetch, bounded in scheme, size and time. Returns
+    decoded text or None on any failure — a dead source is never fatal."""
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            raw = response.read(max_bytes)
+        return raw.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - the network is optional, never fatal
+        return None
+
+
+def curious_reply(prompt: str):
+    """One round of model-initiated curiosity: the reply may begin with a
+    single FETCH: <url> line, in which case the host fetches that address and
+    gives the model a second look before it speaks. Autonomy lives in the
+    model; the fetch itself stays host-side (the engine never touches the
+    network), bounded in scheme, size and time. Returns (text, model, fetched).
+    """
+    text, model = llm(prompt)
+    fetched = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("FETCH:"):
+            url = line[len("FETCH:"):].strip()
+            content = fetch_url(url)
+            seen = (f"【网络内容】{url}\n{content.strip()[:4000]}" if content
+                    else f"【网络内容】{url} 暂时取不到；不要再次请求，直接说话。")
+            text, model = llm(prompt + "\n" + seen
+                              + "\n结合以上全部内容，完成【输出要求】。")
+        break  # only the first non-empty line is ever a fetch directive
+    return text, model, fetched
 
 
 def open_thread(cli: str, vault: str, proactive: str, text: str, driver: str, at: str) -> dict:
@@ -245,9 +284,9 @@ def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str
             model = "mock"
         else:
             memories = fetch_memory_lines(cli, vault, user_text)
-            text, model = llm(build_prompt(opened, history, thread,
-                                           now_dt=datetime.now(timezone.utc),
-                                           memories=memories))
+            text, model, _ = curious_reply(build_prompt(
+                opened, history, thread, now_dt=datetime.now(timezone.utc),
+                memories=memories))
         call(cli, vault, "evo-proactive-complete", id=opened["id"], driver=driver,
              at=now(), result={"text": text, "model": model})
         print(text)
@@ -320,9 +359,9 @@ def main() -> int:
                 rels = opened["context"]["relations"]
                 query = rels[0]["subject"] if rels else ""
                 memories = fetch_memory_lines(args.cli, args.vault, query)
-                text, model = llm(build_prompt(opened, history, thread,
-                                               now_dt=datetime.now(timezone.utc),
-                                               memories=memories))
+                text, model, _ = curious_reply(build_prompt(
+                    opened, history, thread, now_dt=datetime.now(timezone.utc),
+                    memories=memories))
         except Exception as error:  # noqa: BLE001 - driver must record, not crash
             call(args.cli, args.vault, "evo-proactive-fail", id=opened["id"],
                  driver=args.driver, reason=str(error)[:1000], at=now())
