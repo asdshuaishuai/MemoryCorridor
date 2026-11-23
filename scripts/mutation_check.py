@@ -1400,6 +1400,28 @@ MUTATIONS = [
     None => true
     Some(signature) => match store.memo.files.get(e.path) {''',
      "without a change signal every verify re-reads"),
+
+    ("redundant-page grouping must key on the token sequence",
+     "agent/lint.mbt",
+     '''    let key = @base.hex_hash(@index.similar_tokens(body).join("\\u0000"))''',
+     '''    let key = page.id.to_owned()''',
+     "lint flags formatting-only near-duplicate pages (redundant_page)"),
+
+    ("context selection must apply the page cap",
+     "agent/orders.mbt",
+     '''  let bounded = if chosen.length() > limit { chosen[:limit].to_owned() } else { chosen }''',
+     '''  let bounded = chosen''',
+     "context selection is bounded and namespace-scoped"),
+
+    ("context selection must stay inside the source namespace",
+     "agent/orders.mbt",
+     '''    } else if page.sources.iter().any(s => source_namespace(s) == prefix) {
+      related.push(page)
+    }''',
+     '''    } else {
+      related.push(page)
+    }''',
+     "context selection is bounded and namespace-scoped"),
 ]
 
 

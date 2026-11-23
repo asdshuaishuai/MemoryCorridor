@@ -85,6 +85,8 @@ raw 条目的 `id` 必须与 `path` 完全相同。页面 `sources[]`、事实�
 
 工单依次进入 `pending → context-ready → analysis-done → committed`，终止也可为 `cancelled`。同一 vault 同时只允许一个非终态工单进入分析。`context` 提供研究目标、原始来源及既有页面全文/哈希，避免覆盖式重写。上下文变化会要求重新分析。分析里的 `conflicts` 在提交时变成持久化审核项。
 
+`context` 的页面正文默认按范围展开（`scope=related`，续七十二）：先取引用该来源的页面，再取与来源同一命名空间（`raw/<仓库>`）的页面，按页面 ID 稳定排序，最多 64 页；响应始终带完整 `page_hashes`（失效判定不受截断影响），并报告 `pages_total` 与 `pages_omitted`。需要整库综合时显式传 `scope=all`；未知 scope 报 `context_scope_invalid`，不会静默退化成全量。全局知识库下这是每个工单成本的闸门：响应体积不再随页面总数线性增长。
+
 `context` 还返回 `context_token` 和稳定的 `source_summary_id`。自动宿主应在 `analysis-submit`、`draft-submit`、`commit` 中回传该 token；它固定所有来源/页面/目标的登记版本与失效状态，拒绝模型调用期间的变动或被另一客户端刷新的旧上下文。分析和提交的旧式手工调用可以省略 token。已提交工单的 `commit` 重放不重新发布内容。
 
 工单记录新增 `context_version`；旧记录缺失时按空串读取，下一次 `context` 会刷新版本并要求重新分析，避免沿用没有完整元数据基线的旧分析。

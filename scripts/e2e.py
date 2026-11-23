@@ -475,7 +475,17 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-e2e-") as work:
     archived = s.call("backfill", title="查询研究记录", text="检索结论需要进一步核对。")
     backfill_order = archived["scan"]["orders"][0]
     assert s.call("backfill", title="查询研究记录", text="检索结论需要进一步核对。")["scan"]["orders"] == []
-    s.call("context", order=backfill_order)
+    # Context is scoped by default: a query source in raw/queries does not pull
+    # every page's full text from other namespaces, but page hashes stay
+    # complete and scope="all" remains available for whole-vault synthesis.
+    scoped = s.call("context", order=backfill_order)
+    assert scoped["pages_total"] >= 1, scoped
+    assert scoped["pages_omitted"] == scoped["pages_total"], scoped
+    assert all("能量" not in block["text"] for block in scoped["pages"]), scoped["pages"]
+    full = s.call("context", order=backfill_order, scope="all")
+    assert full["pages_omitted"] == 0 and len(full["pages"]) == full["pages_total"], full
+    assert any("能量" in block["text"] for block in full["pages"]), full["pages"]
+    s.call("context", order=backfill_order, scope="everything", error="context_scope_invalid")
     analysis = {"entities": [], "concepts": [], "conflicts": ["结论与既有资料存在矛盾"], "summary": "需要人工复核"}
     s.call("analysis-submit", order=backfill_order, analysis=analysis)
     # Purpose is authoritative, and a changed goal must invalidate old analysis.

@@ -236,7 +236,14 @@ pub fn dispatch_with_catalog(
       @vault.verify(store, entries)
       orders(store, entries).filter(o => o.phase != "committed" && o.phase != "cancelled").to_json()
     }
-    "context" => { @vault.verify(store, entries); context(store, entries, string("order")) }
+    "context" => {
+      @vault.verify(store, entries)
+      let scope = match optional(request, "scope") {
+        None => "related"
+        Some(value) => @base.text(value)
+      }
+      context(store, entries, string("order"), scope=scope)
+    }
     "analysis-submit" => { @vault.verify(store, entries); guard_context(store, entries, request); submit_analysis(store, entries, string("order"), arg("analysis")) }
     "draft-submit" => submit_drafts(store, entries, request)
     "commit" => { guard_context(store, entries, request); commit_pages(store, entries, string("order"), arg("pages"), string("at")) }

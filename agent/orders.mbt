@@ -141,7 +141,61 @@ pub fn scan(store : @vault.Storage, entries : Array[@core.Entry], adopt_pages? :
   { "orders": created.to_json(), "fingerprint": @vault.fingerprint(next) }
 }
 
-pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String) -> Json raise @base.Fault {
+// A global knowledge base grows past the point where one order can carry every
+// page's full text. Context is therefore scoped: the pages that cite this
+// source and the pages of its namespace, bounded by a fixed page count. The
+// full hash map stays complete so staleness detection is exact regardless of
+// what the host reads.
+pub const CONTEXT_PAGE_LIMIT : Int = 64
+
+pub fn source_namespace(source : String) -> String {
+  let parts = source.split("/").to_array()
+  if parts.length() >= 3 {
+    parts[0].to_owned() + "/" + parts[1].to_owned()
+  } else if parts.length() > 0 {
+    parts[0].to_owned()
+  } else {
+    ""
+  }
+}
+
+// Returns the selected pages and the total page count. "related" keeps citing
+// pages first, then namespace siblings, both in id order, capped at `limit`
+// (a non-positive limit means no cap); "all" keeps every page. Unknown scopes
+// are refused instead of silently degrading to "all".
+pub fn context_selection(
+  pages : Array[@core.Entry], source : String, scope : String, limit : Int,
+) -> (Array[@core.Entry], Int) raise @base.Fault {
+  if scope != "related" && scope != "all" { @base.fail("context_scope_invalid: " + scope) }
+  let sorted : Array[@core.Entry] = []
+  for page in pages { sorted.push(page) }
+  sorted.sort_by((a, b) => @base.compare(a.id, b.id))
+  let total = sorted.length()
+  if scope == "all" || limit <= 0 { return (sorted, total) }
+  let prefix = source_namespace(source)
+  let citing : Array[@core.Entry] = []
+  let related : Array[@core.Entry] = []
+  for page in sorted {
+    if page.sources.iter().any(s => s == source) {
+      citing.push(page)
+    } else if page.sources.iter().any(s => source_namespace(s) == prefix) {
+      related.push(page)
+    }
+  }
+  let chosen : Array[@core.Entry] = []
+  for page in citing { chosen.push(page) }
+  for page in related {
+    if chosen.length() >= limit { break }
+    chosen.push(page)
+  }
+  let bounded = if chosen.length() > limit { chosen[:limit].to_owned() } else { chosen }
+  (bounded, total)
+}
+
+pub fn context(
+  store : @vault.Storage, entries : Array[@core.Entry], id : String,
+  scope? : String = "related",
+) -> Json raise @base.Fault {
   let order = load_order(store, id)
   ignore(@core.find(entries, order_path(id)))
   for active in orders(store, entries) {
@@ -191,16 +245,16 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
       None => if textual { @vault.required(store, order.source).to_json() } else { Json::null() }
     }
   }
+  let all_pages = entries.filter(e => @core.is_page(e))
+  let (selected, pages_total) = context_selection(all_pages, order.source, scope, CONTEXT_PAGE_LIMIT)
   let pages : Array[Json] = []
   let hashes : Map[String, String] = Map([])
   hashes["purpose.md"] = @base.hex_hash(@vault.required(store, "purpose.md"))
-  for e in entries {
-    if @core.is_page(e) {
-      let text = @vault.required(store, e.path)
-      if @base.hex_hash(text) != e.sha256 { @base.fail("page_changed: " + e.path) }
-      hashes[e.id] = e.sha256
-      pages.push({ "entry": e.to_json(), "text": text })
-    }
+  for e in all_pages { hashes[e.id] = e.sha256 }
+  for e in selected {
+    let text = @vault.required(store, e.path)
+    if @base.hex_hash(text) != e.sha256 { @base.fail("page_changed: " + e.path) }
+    pages.push({ "entry": e.to_json(), "text": text })
   }
   let version = context_version(entries)
   let changed = order.page_hashes != hashes || order.context_version != version
@@ -231,7 +285,8 @@ pub fn context(store : @vault.Storage, entries : Array[@core.Entry], id : String
         }.to_json()
         None => Json::null()
       }
-    }, "pages": pages.to_json(),
+    }, "pages": pages.to_json(), "pages_total": pages_total.to_json(),
+    "pages_omitted": (pages_total - pages.length()).to_json(),
     "purpose": @vault.required(store, "purpose.md"),
     "output_schema": { "entities": "string[]", "concepts": "string[]", "conflicts": "string[]", "summary": "string" } }
 }

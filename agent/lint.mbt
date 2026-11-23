@@ -361,27 +361,31 @@ fn lint_redundant_pages(
 ) -> Unit {
   let pages = entries.filter(e => @core.is_page(e) && !e.stale)
   pages.sort_by((a, b) => @base.compare(a.id, b.id))
-  let token_of : Map[String, String] = Map([])
-  let body_of : Map[String, String] = Map([])
+  // A formatting-only near-duplicate is exactly an equal token sequence, so
+  // grouping by that sequence replaces the quadratic pairwise scan: the pair
+  // set it yields is identical (same eligibility gate, same element-wise
+  // comparison), and each page is tokenized once instead of once per pair.
+  // Tokens never contain NUL, so joining on it is injective.
+  let groups : Map[String, Array[@core.Entry]] = Map([])
   for page in pages {
     let body = try {
       let d = @index.document(page, @vault.required(store, page.path))
       d.title + "\n\n" + d.body
     } catch { _ => "" }
-    if body != "" {
-      token_of[page.id] = "1"
-      body_of[page.id] = body
-    }
+    if body == "" || !@index.similar_eligible(body) { continue }
+    let key = @base.hex_hash(@index.similar_tokens(body).join("\u0000"))
+    let row = groups.get(key).unwrap_or([])
+    row.push(page)
+    groups[key] = row
   }
-  for i = 0; i < pages.length(); i = i + 1 {
-    for j = 0; j < i; j = j + 1 {
-      let a = pages[j]
-      let b = pages[i]
-      if !token_of.contains(a.id) || !token_of.contains(b.id) { continue }
-      if @index.similar_eligible(body_of[a.id]) && @index.similar_eligible(body_of[b.id]) &&
-        @index.similar_merge(@index.similar_tokens(body_of[a.id]), @index.similar_tokens(body_of[b.id])) {
-        lint_add(issues, "redundant_page", b.id, b.path,
-          "active page is a formatting-only near-duplicate of " + a.id,
+  let keys = groups.keys().to_array()
+  keys.sort_by(@base.compare)
+  for key in keys {
+    let row = groups[key]
+    for i = 1; i < row.length(); i = i + 1 {
+      for j = 0; j < i; j = j + 1 {
+        lint_add(issues, "redundant_page", row[i].id, row[i].path,
+          "active page is a formatting-only near-duplicate of " + row[j].id,
           "consolidate the two pages through a commit, or differentiate their content",
           "warning")
       }
