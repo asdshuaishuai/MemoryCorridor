@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGES = ["base", "core", "decl", "vault", "index", "agent", "platform", "nativehost", "cli", "mcp", "web", "visual", "wasm", "pack", "interop", "office"]
+PACKAGES = ["base", "core", "decl", "vault", "index", "retrieval", "agent", "platform", "nativehost", "cli", "mcp", "web", "visual", "wasm", "pack", "interop", "office"]
 counts = {}
 details = {}
 
@@ -56,7 +56,8 @@ allowed = {"base": [], "core": ["base"], "decl": ["base", "core"],
            "vault": ["base", "core", "decl", "visual", "pack"], "index": ["base", "core"],
            "office": ["base", "pack"],
            "htdoc": ["base"],
-           "agent": ["base", "core", "decl", "vault", "index", "visual", "pack", "interop", "office", "htdoc"],
+           "retrieval": ["base", "core", "vault"],
+           "agent": ["base", "core", "decl", "vault", "index", "retrieval", "visual", "pack", "interop", "office", "htdoc"],
            "platform": ["base"], "visual": ["base", "core", "vendor/reader"],
            "nativehost": ["base", "agent", "platform", "vault"],
            "cli": ["base", "agent", "nativehost"], "mcp": ["base", "agent", "nativehost"],

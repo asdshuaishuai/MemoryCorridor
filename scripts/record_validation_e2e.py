@@ -769,11 +769,11 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert expected in found, (label, found, expected)
         checked += 1
 
-    # The text-index cache. `.corridor/fts.json` carries its own envelope: a
+    # The chunk-index cache. `.corridor/fts.json` carries its own envelope: a
     # sha256 over the canonical payload, a version and algorithm tag, the catalog
-    # fingerprint, and the documents plus postings. `search` silently rebuilds
-    # when the cache is unusable, so the only surface that reports *why* is
-    # `lint`, which names the branch in its detail.
+    # fingerprint, the page bindings and the chunk table plus the serialized BM25
+    # index. `search` silently rebuilds when the cache is unusable, so the only
+    # surface that reports *why* is `lint`, which names the branch in its detail.
     #
     # The envelope hash has to be recomputed after each edit, or the earlier
     # `index_corrupt_or_stale` check fires and hides the branch under test.
@@ -793,29 +793,27 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
 
     cache_cases = [
         ("a different algorithm tag",
-         lambda d: d["payload"].__setitem__("algorithm", "text-index-v2"),
+         lambda d: d["payload"].__setitem__("algorithm", "chunk-bm25-v0"),
          "index_algorithm_changed"),
         ("a different version",
-         lambda d: d["payload"].__setitem__("version", 4.0),
+         lambda d: d["payload"].__setitem__("version", 5.0),
          "index_algorithm_changed"),
         ("a fingerprint that no longer matches the catalog",
          lambda d: d["payload"].__setitem__("fingerprint", "0" * 64),
          "index_corrupt_or_stale"),
-        ("a document dropped",
-         lambda d: d["payload"]["index"].__setitem__(
-             "documents", d["payload"]["index"]["documents"][:-1]),
-         "index_document_count_mismatch"),
+        ("a chunk dropped",
+         lambda d: d["payload"].__setitem__("chunks", d["payload"]["chunks"][:-1]),
+         "index_corrupt_or_stale"),
         # A duplicate with the count kept the same: dropping one and repeating
-        # another, so the count check passes and the id check is what fires.
-        ("a document listed twice",
-         lambda d: d["payload"]["index"].__setitem__(
-             "documents",
-             d["payload"]["index"]["documents"][:-1]
-             + [d["payload"]["index"]["documents"][0]]),
-         "index_duplicate_document"),
-        ("postings that do not match the documents",
-         lambda d: d["payload"]["index"].__setitem__("postings", {}),
-         "index_postings_corrupt"),
+        # another, so the count check passes and the duplicate check is what fires.
+        ("a chunk listed twice",
+         lambda d: d["payload"].__setitem__(
+             "chunks",
+             d["payload"]["chunks"][:-1] + [d["payload"]["chunks"][0]]),
+         "index_corrupt_or_stale"),
+        ("a serialized index that no longer parses",
+         lambda d: d["payload"].__setitem__("bm25", "not-json"),
+         "index_corrupt_or_stale"),
     ]
     for label, edit, expected in cache_cases:
         found = retune_cache(edit)

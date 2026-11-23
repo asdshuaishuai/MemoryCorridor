@@ -51,51 +51,21 @@ fn ensure_catalog_compiled(store : @vault.Storage, catalog : String, fingerprint
   write_compile_receipt(store, catalog, fingerprint)
 }
 
-pub fn rebuild(store : @vault.Storage, entries : Array[@core.Entry]) -> @index.TextIndex raise @base.Fault {
+pub fn rebuild(store : @vault.Storage, entries : Array[@core.Entry]) -> @retrieval.Collection raise @base.Fault {
   let catalog = @vault.required(store, "index.mbt.md")
   ensure_catalog_compiled(store, catalog, @vault.fingerprint(entries))
   @vault.verify_full(store, entries)
   let catalog = @decl.generate_preserving(catalog, entries)
   (store.write)(".corridor/last-valid.mbt.md", catalog)
-  let documents : Array[@index.Document] = []
-  for entry in entries {
-    if @core.is_page(entry) && !entry.stale {
-      documents.push(@index.document(entry, @vault.required(store, entry.path)))
-    }
-  }
-  documents.sort_by((a,b) => @base.compare(a.id, b.id))
-  let text_index = @index.build_index(documents)
-  let payload : Json = { "version": 3, "algorithm": "text-index-v3", "fingerprint": @vault.fingerprint(entries), "index": text_index.to_json() }
-  let canonical = @base.canonical(payload)
-  let envelope : Json = { "sha256": @base.hex_hash(canonical), "payload": payload }
-  (store.write)(".corridor/fts.json", @base.canonical(envelope))
-  text_index
+  // Chunk-level BM25 over the same pages. The artifact binds every page hash it
+  // was derived from, so a stale or tampered cache is rebuilt rather than used.
+  let collection = @retrieval.build(store, entries)
+  @retrieval.save(store, entries, collection)
+  collection
 }
 
-fn cached(store : @vault.Storage, entries : Array[@core.Entry]) -> @index.TextIndex raise @base.Fault {
-  let text = @vault.required(store, ".corridor/fts.json")
-  let value = @base.parse(text)
-  let payload = @base.field(value, "payload")
-  if @base.field(payload, "version") != Json::number(3.0) || @base.field(payload, "algorithm") != "text-index-v3".to_json() { @base.fail("index_algorithm_changed") }
-  if @base.text(@base.field(value, "sha256")) != @base.hex_hash(@base.canonical(payload)) ||
-    @base.text(@base.field(payload, "fingerprint")) != @vault.fingerprint(entries) {
-    @base.fail("index_corrupt_or_stale")
-  }
-  let index_json = @base.field(payload, "index")
-  let docs = @base.array(@base.field(index_json, "documents")).map(v => @index.from_json(v))
-  let expected = entries.filter(e => @core.is_page(e) && !e.stale)
-  if docs.length() != expected.length() { @base.fail("index_document_count_mismatch") }
-  let seen : Map[String, Bool] = Map([])
-  for doc in docs {
-    if seen.contains(doc.id) { @base.fail("index_duplicate_document") }
-    seen[doc.id] = true
-    let entry = @core.find(expected, doc.id)
-    let actual = @index.document(entry, @vault.required(store, entry.path))
-    if doc.to_json() != actual.to_json() { @base.fail("index_document_corrupt: " + doc.id) }
-  }
-  let text_index = @index.build_index(docs)
-  if text_index.to_json() != index_json { @base.fail("index_postings_corrupt") }
-  text_index
+fn cached(store : @vault.Storage, entries : Array[@core.Entry]) -> @retrieval.Collection raise @base.Fault {
+  @retrieval.load(store, entries)
 }
 
 fn status_result(store : @vault.Storage, entries : Array[@core.Entry], fingerprint : String) -> Json raise @base.Fault {
@@ -290,11 +260,11 @@ pub fn dispatch_with_catalog(
       { "fingerprint": fingerprint, "cache": cache, "violations": Json::array([]) }
     }
     "lint" => raise @base.Fault("internal_lint_dispatch")
-    "rebuild" => { "documents": rebuild(store, entries).documents.length(), "fingerprint": fingerprint }
+    "rebuild" => { "documents": rebuild(store, entries).pages.length(), "fingerprint": fingerprint }
     "search" => {
       @vault.verify(store, entries)
       let mut rebuilt = false
-      let docs = try cached(store, entries) catch {
+      let collection = try cached(store, entries) catch {
         _ => { rebuilt = true; rebuild(store, entries) }
       }
       let limit = try {
@@ -308,7 +278,7 @@ pub fn dispatch_with_catalog(
       let query_vector = try arg("query_vector") catch { _ => Json::null() }
       let vector_candidates = try arg("vector_candidates") catch { _ => Json::null() }
       let provider = try arg("provider") catch { _ => Json::null() }
-      let result = hybrid_search(store, entries, docs, string("query"), limit, query_vector, vector_candidates, provider)
+      let result = hybrid_search(store, entries, collection, string("query"), limit, query_vector, vector_candidates, provider)
       match result {
         Object(fields) => {
           fields["fingerprint"] = fingerprint.to_json()
@@ -318,6 +288,42 @@ pub fn dispatch_with_catalog(
         }
         _ => raise @base.Fault("internal_search_result")
       }
+    }
+    "retrieve" => {
+      // Chunk-level retrieval with lane diagnostics. Phase 1 runs the BM25
+      // lane; the vector lane (system vectors first, algorithm fallback) joins
+      // in phase 3 and reports itself here instead of degrading silently.
+      @vault.verify(store, entries)
+      let mut rebuilt = false
+      let collection = try cached(store, entries) catch {
+        _ => { rebuilt = true; rebuild(store, entries) }
+      }
+      let limit = try {
+        match arg("limit") {
+          Number(n, ..) if n >= 1.0 && n <= 100.0 && n == n.to_int().to_double() => n.to_int()
+          _ => raise @base.Fault("invalid_limit: integer 1..100")
+        }
+      } catch {
+        @base.Fault(message) => if message.has_prefix("missing_field:") { 20 } else { raise @base.Fault(message) }
+      }
+      let prefix = try @base.text(arg("namespace")) catch { _ => "" }
+      if prefix != "" && (!prefix.has_prefix("raw/") || prefix.contains("..")) {
+        @base.fail("retrieve_namespace_invalid")
+      }
+      let rows = @retrieval.search_chunks(entries, collection, string("query"), limit, prefix=prefix)
+      let hits : Array[Json] = []
+      for row in rows {
+        match @retrieval.chunk_of(collection, row.doc_id) {
+          Some(chunk) => hits.push({
+            "chunk": row.doc_id.to_json(), "page": chunk.page.to_json(),
+            "title": @retrieval.page_title(collection, chunk.page).to_json(),
+            "score": row.score.to_json(), "text": row.text.to_json() })
+          None => ()
+        }
+      }
+      { "hits": hits.to_json(),
+        "lanes": { "text": "on", "vector": "off", "reason": "vector_lane_pending" },
+        "fingerprint": fingerprint.to_json(), "cache_rebuilt": rebuilt.to_json() }
     }
     _ => raise @base.Fault("operation_not_implemented: " + op)
   }

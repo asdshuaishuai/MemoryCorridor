@@ -132,17 +132,26 @@ fn external_candidates(entries : Array[@core.Entry], value : Json) -> (Array[@in
   (@index.validate_external_hits(active, hits, 100), space)
 }
 
+fn keyword_rows(hits : Array[@retrieval.PageHit]) -> Array[Json] {
+  let rows : Array[Json] = []
+  for hit in hits {
+    rows.push({ "id": hit.page.to_json(), "title": hit.title.to_json(),
+      "score": hit.score.to_json(), "excerpt": hit.excerpt.to_json() })
+  }
+  rows
+}
+
 pub fn hybrid_search(
-  store : @vault.Storage, entries : Array[@core.Entry], text_index : @index.TextIndex,
+  store : @vault.Storage, entries : Array[@core.Entry], collection : @retrieval.Collection,
   query : String, limit : Int, vector_value : Json, candidates_value : Json, provider_value : Json,
 ) -> Json raise @base.Fault {
-  let docs = text_index.documents
-  let keyword = @index.search_index(text_index, query, limit=100)
+  let keyword = @retrieval.search_pages(entries, collection, query, 100)
   if vector_value != Json::null() && candidates_value != Json::null() {
     @base.fail("vector_inputs_exclusive")
   }
   if vector_value == Json::null() && candidates_value == Json::null() {
-    return { "hits": @index.search_index(text_index, query, limit~).to_json(), "vector_status": "not_provided" }
+    let rows = keyword_rows(@retrieval.search_pages(entries, collection, query, limit))
+    return { "hits": rows.to_json(), "vector_status": "not_provided" }
   }
   let (space, vector_hits, status) : (@index.VectorSpace, Array[@index.VectorHit], String) = if candidates_value != Json::null() {
     let (hits, external_space) = external_candidates(entries, candidates_value)
@@ -177,18 +186,28 @@ pub fn hybrid_search(
     (query_space, @index.search_vectors(query_space, values, records, 100), if records.is_empty() { "no_matching_vectors" } else { "brute_force" })
   }
   let scores : Map[String, Double] = Map([])
-  for i = 0; i < keyword.length(); i = i + 1 { scores[keyword[i].id] = 1.0 / (61.0 + i.to_double()) }
+  let excerpts : Map[String, String] = Map([])
+  for i = 0; i < keyword.length(); i = i + 1 {
+    let page = keyword[i].page
+    scores[page] = scores.get(page).unwrap_or(0.0) + 1.0 / (61.0 + i.to_double())
+    excerpts[page] = keyword[i].excerpt
+  }
   for i = 0; i < vector_hits.length(); i = i + 1 {
     let id = vector_hits[i].id
     scores[id] = scores.get(id).unwrap_or(0.0) + 1.0 / (61.0 + i.to_double())
   }
-  let hits : Array[@index.Hit] = []
-  for doc in docs {
-    if scores.get(doc.id) is Some(score) {
-      hits.push({ id: doc.id, title: doc.title, score,
-        excerpt: @index.excerpt(doc.body, query, 360).text })
+  let rows : Array[(String, Double)] = []
+  for pair in scores.iter() { rows.push(pair) }
+  rows.sort_by((a, b) => if a.1 > b.1 { -1 } else if a.1 < b.1 { 1 } else { @base.compare(a.0, b.0) })
+  let hits : Array[Json] = []
+  for i = 0; i < rows.length() && i < limit; i = i + 1 {
+    let (id, score) = rows[i]
+    let excerpt = match excerpts.get(id) {
+      Some(value) => value
+      None => @retrieval.page_excerpt(collection, id)
     }
+    hits.push({ "id": id.to_json(), "title": @retrieval.page_title(collection, id).to_json(),
+      "score": score.to_json(), "excerpt": excerpt.to_json() })
   }
-  hits.sort_by((a,b) => if a.score > b.score { -1 } else if a.score < b.score { 1 } else { @base.compare(a.id, b.id) })
-  { "hits": hits[:Int::min(limit, hits.length())].to_owned().to_json(), "vector_status": status, "vector_space": space.to_json() }
+  { "hits": hits.to_json(), "vector_status": status, "vector_space": space.to_json() }
 }

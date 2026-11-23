@@ -14,6 +14,7 @@ PACKAGING_DIRS = {"plugins", "dist"}
 ALLOWED_EXTERNAL = {
     "moonbitlang/core/",
     "moonbitstack/moonyaml",
+    "niuniu513-ask/MoonRetrieve",
 }
 FORBIDDEN_EXTERNAL_WORDS = (
     "openai", "anthropic", "llm", "model", "embedding", "network",
@@ -31,6 +32,7 @@ LAYERS = {
     "office": 3,
     "htdoc": 3,
     "agent": 4,
+    "retrieval": 4,
     "wasm": 4,
     "wasipure": 4,
     "platform": 5,
@@ -39,9 +41,10 @@ LAYERS = {
     "mcp": 6,
     "web": 6,
 }
-SAME_LAYER_ALLOWED = {("wasm", "agent"), ("wasipure", "agent"), ("nativehost", "platform")}
+SAME_LAYER_ALLOWED = {("wasm", "agent"), ("wasipure", "agent"), ("nativehost", "platform"), ("agent", "retrieval")}
 REQUIRED_LICENSES = {
     "moonbitstack/moonyaml": ROOT / "licenses/moonyaml-Apache-2.0.txt",
+    "niuniu513-ask/MoonRetrieve": ROOT / "licenses/moonretrieve-Apache-2.0.txt",
     "memorycorridor/vendor/reader": ROOT / "vendor/reader/provenance.json",
 }
 
@@ -63,6 +66,7 @@ def main():
     package_files = sorted(
         path for path in ROOT.rglob("moon.pkg")
         if "_build" not in path.relative_to(ROOT).parts
+        and ".mooncakes" not in path.relative_to(ROOT).parts
         and not PACKAGING_DIRS.intersection(path.relative_to(ROOT).parts)
     )
     for package_file in package_files:

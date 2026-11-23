@@ -5,4 +5,5 @@ license = "MIT"
 
 import {
   "moonbitstack/moonyaml@0.1.1",
+  "niuniu513-ask/MoonRetrieve@0.6.0",
 }

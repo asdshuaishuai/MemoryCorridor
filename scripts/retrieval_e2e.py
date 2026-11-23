@@ -95,7 +95,11 @@ with tempfile.TemporaryDirectory(prefix="corridor-retrieval-") as work:
 
     query = dict(query="needle", budget=400, hops=0)
     result = call("search", **query)
-    assert [h["id"] for h in result["hits"]] == ["concepts/a", "concepts/b", "concepts/copy"]
+    # Chunked BM25 ties concepts/a and its body-duplicate concepts/copy (same
+    # bytes, same length); the id tie-break puts the duplicate second and the
+    # distinct page third. The context blocks below still keep the duplicate out
+    # of the answer set, so the reading order does not change.
+    assert [h["id"] for h in result["hits"]] == ["concepts/a", "concepts/copy", "concepts/b"]
     assert all("Needle" in h["excerpt"] for h in result["hits"])
     blocks = result["context"]["blocks"]
     assert [b["id"] for b in blocks] == ["concepts/a", "concepts/b"]

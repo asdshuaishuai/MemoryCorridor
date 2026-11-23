@@ -1413,6 +1413,44 @@ MUTATIONS = [
      '''  let bounded = chosen''',
      "context selection is bounded and namespace-scoped"),
 
+    ("chunk ids must be unique in an artifact",
+     "retrieval/retrieval.mbt",
+     '''  let seen : Map[String, Bool] = Map([])
+  for chunk in chunks {
+    if seen.contains(chunk.id) { raise @base.Fault("index_corrupt_or_stale") }
+    seen[chunk.id] = true
+  }''',
+     '''  let seen : Map[String, Bool] = Map([])
+  for chunk in chunks {
+    if false { raise @base.Fault("index_corrupt_or_stale") }
+    seen[chunk.id] = true
+  }''',
+     "a self-consistent artifact that does not match the catalog is refused"),
+
+    ("chunk artifacts must bind every page hash",
+     "retrieval/retrieval.mbt",
+     '''    if pages[i].id != expected[i].id || pages[i].sha256 != expected[i].sha256 { raise @base.Fault("index_corrupt_or_stale") }''',
+     '''    if false { raise @base.Fault("index_corrupt_or_stale") }''',
+     "a self-consistent artifact that does not match the catalog is refused"),
+
+    ("chunk ids must follow <page>#<index>",
+     "retrieval/retrieval.mbt",
+     '''    if id != page + "#" + index.to_string() { raise @base.Fault("index_corrupt_or_stale") }''',
+     '''    if false { raise @base.Fault("index_corrupt_or_stale") }''',
+     "a self-consistent artifact that does not match the catalog is refused"),
+
+    ("chunk table and BM25 document count must agree",
+     "retrieval/retrieval.mbt",
+     '''  if bm25.count() != chunks.length() { raise @base.Fault("index_corrupt_or_stale") }''',
+     '''  if false { raise @base.Fault("index_corrupt_or_stale") }''',
+     "a self-consistent artifact that does not match the catalog is refused"),
+
+    ("retrieval must honour the namespace prefix",
+     "retrieval/retrieval.mbt",
+     '''    if prefix == "" || entry.sources.iter().any(source => source.has_prefix(prefix + "/")) {''',
+     '''    if true {''',
+     "namespace filtering and best-chunk aggregation hold"),
+
     ("context selection must stay inside the source namespace",
      "agent/orders.mbt",
      '''    } else if page.sources.iter().any(s => source_namespace(s) == prefix) {
