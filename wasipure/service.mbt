@@ -21,6 +21,7 @@ fn wasipure_store() -> @vault.Storage {
     files: wasi_files, check: wasi_check,
     read_bytes: wasi_read_bytes, write_bytes: wasi_write_bytes,
     mkdirs: wasi_mkdirs,
+    stat: _ => None, memo: @vault.VerifyMemo::new(),
   }
 }
 

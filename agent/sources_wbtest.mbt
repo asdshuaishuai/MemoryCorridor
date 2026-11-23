@@ -66,7 +66,13 @@ test "read operations never claim a pending host action" {
   files["raw/a.md"] = "官窑记录：器形与釉色。\n"
   ignore(dispatch(store, { "op": "scan" }))
   // A real page, so page-history is exercised against something that exists.
-  let order = @base.array(dispatch(store, { "op": "plan" }))[0]
+  // The length is asserted before indexing so a broken catalog snapshot fails
+  // this test instead of aborting the whole package run with an out-of-bounds
+  // panic (mutation checks need the suite to reach the tests that guard the
+  // snapshot itself).
+  let planned = @base.array(dispatch(store, { "op": "plan" }))
+  assert_eq(planned.length(), 1)
+  let order = planned[0]
   let order_id = @base.text(@base.field(order, "id"))
   let context = dispatch(store, { "op": "context", "order": order_id })
   ignore(dispatch(store, { "op": "analysis-submit", "order": order_id,

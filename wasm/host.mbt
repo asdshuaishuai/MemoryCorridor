@@ -203,5 +203,6 @@ fn host_store() -> @vault.Storage {
     files: host_files, check: host_check,
     read_bytes: host_read_bytes, write_bytes: host_write_bytes,
     mkdirs: host_mkdirs,
+    stat: _ => None, memo: @vault.VerifyMemo::new(),
   }
 }

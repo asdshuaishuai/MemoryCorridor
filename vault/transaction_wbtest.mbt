@@ -11,6 +11,7 @@ fn memory() -> (Storage, Map[String, String]) {
     remove: path => { files.remove(path) },
     files: prefix => files.keys().filter(p => p.has_prefix(prefix + "/")).to_array(),
     check: path => { ignore(@decl.parse(files[path])) },
+    stat: _ => None, memo: VerifyMemo::new(),
   }
   (store, files)
 }

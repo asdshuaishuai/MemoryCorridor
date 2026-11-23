@@ -3,6 +3,7 @@
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import select
 import shutil
@@ -200,6 +201,30 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-e2e-") as work:
     assert drift_lint["errors"] >= 1 and any(v["predicate"] == "content_hash_drift" for v in drift_lint["violations"])
     s.call("search", query="能量", error="content_changed")
     (root / "wiki/concepts/能量.md").write_text(original)
+    # The in-process verification memo must not hide an edit that keeps the
+    # byte count and restores mtime: ctime and the read-bracket still move.
+    page = root / "wiki/concepts/能量.md"
+    stat_before = page.stat()
+    same_size = original[:-1] + ("x" if not original.endswith("x") else "y")
+    assert len(same_size.encode()) == len(original.encode())
+    page.write_text(same_size)
+    os.utime(page, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns))
+    s.call("verify", error="content_changed")
+    page.write_text(original)
+    s.call("verify")
+    # A page replaced by a symlink is refused outright, never read through it.
+    backup = page.with_name("能量.bak")
+    page.rename(backup)
+    page.symlink_to(root / "purpose.md")
+    s.call("verify", error="read_refused")
+    page.unlink()
+    backup.rename(page)
+    s.call("verify")
+    # A deleted page is a missing file; restoring it verifies again.
+    page.unlink()
+    s.call("verify", error="file_missing")
+    page.write_text(original)
+    s.call("verify")
     (root / "raw/符号链接.md").symlink_to(root / "raw/甲.md")
     s.call("scan", error="list_failed_or_symlink")
     (root / "raw/符号链接.md").unlink()

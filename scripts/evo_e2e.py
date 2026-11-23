@@ -71,6 +71,10 @@ def static_isolation():
         rel = path.relative_to(ROOT).as_posix()
         if "_build" in rel or ".mooncakes" in rel or rel.startswith("target/"):
             continue
+        # Packaging outputs embed copies of the module; they are not part of
+        # the engine source tree and must not be scanned as first-party code.
+        if rel.startswith(("plugins/", "dist/")):
+            continue
         text = path.read_text(encoding="utf-8")
         if rel not in allowed_rel:
             for pattern in (r"state/evo", r"evo-", r"evo_", r"\bevo\b"):
@@ -88,6 +92,10 @@ def static_isolation():
     for path in ROOT.rglob("*.mbt"):
         rel = path.relative_to(ROOT).as_posix()
         if "_build" in rel or ".mooncakes" in rel or rel.startswith("target/"):
+            continue
+        # Packaging outputs embed copies of the module; they are not part of
+        # the engine source tree and must not be scanned as first-party code.
+        if rel.startswith(("plugins/", "dist/")):
             continue
         count = path.read_text(encoding="utf-8").count("evo(store, entries, request)")
         if rel == "agent/session.mbt":

@@ -6,6 +6,10 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+# Packaging directories embed copies of the module (a bundled plugin, a release
+# archive). They are not part of the engine's package graph and must not be
+# audited as first-party packages.
+PACKAGING_DIRS = {"plugins", "dist"}
 
 ALLOWED_EXTERNAL = {
     "moonbitlang/core/",
@@ -59,6 +63,7 @@ def main():
     package_files = sorted(
         path for path in ROOT.rglob("moon.pkg")
         if "_build" not in path.relative_to(ROOT).parts
+        and not PACKAGING_DIRS.intersection(path.relative_to(ROOT).parts)
     )
     for package_file in package_files:
         package = package_file.parent.relative_to(ROOT).as_posix()

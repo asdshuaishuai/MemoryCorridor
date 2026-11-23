@@ -16,6 +16,8 @@ extern "c" fn lock_native() -> Int = "mc_lock"
 extern "c" fn unlock_native() -> Int = "mc_unlock"
 #borrow(path)
 extern "c" fn check_native(path : Bytes) -> Int = "mc_check"
+#borrow(path, buf)
+extern "c" fn signature_native(path : Bytes, buf : Bytes, cap : Int) -> Int = "mc_signature"
 
 fn cstr(value : String) -> Bytes raise @base.Fault {
   if value.contains_char('\u0000') { @base.fail("nul_in_path") }
@@ -47,6 +49,18 @@ pub fn read(path : String) -> String? raise @base.Fault {
 
 pub fn digest(path : String) -> String? raise @base.Fault {
   read_bytes(path).map(@base.sha256_hex)
+}
+
+/// Cheap change signal for the verification memo: size, mtime, ctime, inode
+/// and mode, sampled without following symlinks. None means the file is
+/// missing, unsafe, non-regular, or this adapter cannot stat (wasm faces), and
+/// the caller must read and hash the file instead.
+pub fn signature(path : String) -> String? raise @base.Fault {
+  @base.path(path)
+  let buf = Bytes::new(256)
+  let n = signature_native(cstr(path), buf, buf.length())
+  if n <= 0 { return None }
+  try Some(@utf8.decode(buf[:n])) catch { _ => None }
 }
 
 pub fn mkdirs(path : String) -> Unit raise @base.Fault {

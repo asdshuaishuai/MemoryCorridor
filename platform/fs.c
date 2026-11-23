@@ -38,6 +38,49 @@ int mc_size(const char *path) {
   if (rc < 0) return errno == ENOENT ? -1 : -2;
   return S_ISREG(s.st_mode) && s.st_size <= 16777216 ? (int)s.st_size : -2;
 }
+// Change signal for the verification memo: size, mtime, ctime, inode and mode
+// of the last component, never following symlinks. Callers re-read and re-hash
+// whenever it differs, and fall back to a full read when it cannot be produced
+// (missing, unsafe, non-regular, or an adapter without stat). Returns the
+// number of bytes written (without NUL), or -1.
+static int dot_segment(const char *path) {
+  const char *p = path;
+  while (*p) {
+    const char *next = strchr(p, '/');
+    size_t n = next ? (size_t)(next - p) : strlen(p);
+    if (n == 0 || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.')) return 1;
+    if (!next) break;
+    p = next + 1;
+  }
+  return 0;
+}
+int mc_signature(const char *path, char *buf, int cap) {
+  struct stat s; int rc;
+  // Fast path: one fstatat relative to the vault root. Intermediate components
+  // may be followed here because this never reads content: a match can only
+  // skip a read when it equals the identity recorded by a hardened read, and a
+  // mismatch (including any replaced or symlinked target) falls back to the
+  // hardened walk below.
+  if (root_fd >= 0 && path[0] != '/' && !dot_segment(path)) {
+    rc = fstatat(root_fd, path, &s, AT_SYMLINK_NOFOLLOW);
+  } else {
+    char leaf[4096]; int p = parent(path, leaf);
+    if (p < 0) return -1;
+    rc = fstatat(p, leaf, &s, AT_SYMLINK_NOFOLLOW); close(p);
+  }
+  if (rc || !S_ISREG(s.st_mode)) return -1;
+#if defined(__APPLE__)
+  long long mt = (long long)s.st_mtimespec.tv_sec, mn = (long long)s.st_mtimespec.tv_nsec;
+  long long ct = (long long)s.st_ctimespec.tv_sec, cn = (long long)s.st_ctimespec.tv_nsec;
+#else
+  long long mt = (long long)s.st_mtim.tv_sec, mn = (long long)s.st_mtim.tv_nsec;
+  long long ct = (long long)s.st_ctim.tv_sec, cn = (long long)s.st_ctim.tv_nsec;
+#endif
+  int n = snprintf(buf, (size_t)cap, "%lld:%lld:%lld:%lld:%lld:%llu:%u",
+                   (long long)s.st_size, mt, mn, ct, cn,
+                   (unsigned long long)s.st_ino, (unsigned)s.st_mode);
+  return n > 0 && n < cap ? n : -1;
+}
 int mc_read(const char *path, unsigned char *buf, int cap) {
   char leaf[4096]; int p = parent(path, leaf); if (p < 0) return -1;
   int fd = openat(p, leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK); close(p); if (fd < 0) return -1;

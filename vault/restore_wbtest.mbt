@@ -10,6 +10,7 @@ fn binary_memory() -> (Storage, Map[String, Bytes]) {
     remove: path => { data.remove(path) },
     files: prefix => data.keys().filter(p => p.has_prefix(prefix + "/")).to_array(),
     check: path => { ignore(@decl.parse(text_bytes(data[path]))) },
+    stat: _ => None, memo: VerifyMemo::new(),
   }
   (store, data)
 }

@@ -32,9 +32,7 @@ fn write_compile_receipt(store : @vault.Storage, catalog : String, fingerprint :
   (store.write)(".corridor/catalog-compile.json", @base.canonical(receipt))
 }
 
-fn ensure_catalog_compiled(store : @vault.Storage, entries : Array[@core.Entry]) -> Unit raise @base.Fault {
-  let catalog = @vault.required(store, "index.mbt.md")
-  let fingerprint = @vault.fingerprint(entries)
+fn ensure_catalog_compiled(store : @vault.Storage, catalog : String, fingerprint : String) -> Unit raise @base.Fault {
   let receipt_ok = try {
     let value = @base.parse(@vault.required(store, ".corridor/catalog-compile.json"))
     @base.keys(value, ["version", "source_sha256", "fingerprint", "compiled"])
@@ -54,9 +52,10 @@ fn ensure_catalog_compiled(store : @vault.Storage, entries : Array[@core.Entry])
 }
 
 pub fn rebuild(store : @vault.Storage, entries : Array[@core.Entry]) -> @index.TextIndex raise @base.Fault {
-  ensure_catalog_compiled(store, entries)
-  @vault.verify(store, entries)
-  let catalog = @decl.generate_preserving(@vault.required(store, "index.mbt.md"), entries)
+  let catalog = @vault.required(store, "index.mbt.md")
+  ensure_catalog_compiled(store, catalog, @vault.fingerprint(entries))
+  @vault.verify_full(store, entries)
+  let catalog = @decl.generate_preserving(catalog, entries)
   (store.write)(".corridor/last-valid.mbt.md", catalog)
   let documents : Array[@index.Document] = []
   for entry in entries {
@@ -190,12 +189,12 @@ pub fn dispatch_with_catalog(
     }
     return lint_result(store, catalog)
   }
-  let entries = match cached_catalog {
-    Some(catalog) if !recovered => @decl.parse(catalog)
-    _ => @vault.load(store)
+  let catalog_text = match cached_catalog {
+    Some(catalog) if !recovered => catalog
+    _ => @vault.required(store, "index.mbt.md")
   }
-  ensure_catalog_compiled(store, entries)
-  let fingerprint = @vault.fingerprint(entries)
+  let (entries, fingerprint) = @vault.catalog_memo(store, catalog_text)
+  ensure_catalog_compiled(store, catalog_text, fingerprint)
   match op {
     "embedding-plan" => embedding_plan(store, entries, request)
     "dream-plan" | "dream-open" | "dream-close" | "dream-list" | "dream-work-open" | "dream-work-claim" | "dream-work-complete" | "dream-work-fail" | "dream-work-list" | "dream-policy" | "dream-due" | "dream-retro" => dream(store, entries, request)
@@ -274,11 +273,11 @@ pub fn dispatch_with_catalog(
     }
     "check-index" => {
       @vault.verify(store, entries)
-      ensure_catalog_compiled(store, entries)
+      ensure_catalog_compiled(store, @vault.required(store, "index.mbt.md"), fingerprint)
       { "fingerprint": fingerprint, "compiled": true }
     }
     "verify" => {
-      @vault.verify(store, entries)
+      @vault.verify_full(store, entries)
       let cache = try { ignore(cached(store, entries)); "valid" } catch { _ => "missing_or_invalid" }
       if cache == "missing_or_invalid" { @base.fail("index_missing_or_invalid: run rebuild") }
       { "fingerprint": fingerprint, "cache": cache, "violations": Json::array([]) }

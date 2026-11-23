@@ -1350,6 +1350,56 @@ MUTATIONS = [
      '  (store.write)(EVO_SIDECAR_JOURNAL, journal)',
      '  ignore(journal)',
      "evo sidecar recovers forward from a crash at any publish point"),
+
+    ("verification memo must require a matching change signal",
+     "vault/verify.mbt",
+     '''      Some(file) =>
+        file.signature == signature && file.sha256 == e.sha256 &&''',
+     '''      Some(file) =>
+        true && file.sha256 == e.sha256 &&''',
+     "verify reuses unchanged files and re-reads on a changed signal"),
+
+    ("verification memo must require the catalog hash",
+     "vault/verify.mbt",
+     '''      Some(file) =>
+        file.signature == signature && file.sha256 == e.sha256 &&''',
+     '''      Some(file) =>
+        file.signature == signature && true &&''',
+     "a catalog hash that no longer matches the memo forces a re-read"),
+
+    ("page reuse must check every declared link",
+     "vault/verify.mbt",
+     '''        (!page || file.page_links.iter().all(id => active.get(id).unwrap_or(false)))''',
+     '''        true''',
+     "page validation is invalidated when the active page set changes"),
+
+    ("a file edited during verification must not be memoized",
+     "vault/verify.mbt",
+     '''    (Some(first), Some(second)) if first == second =>''',
+     '''    (Some(_), Some(second)) =>''',
+     "a file edited while being verified is not memoized"),
+
+    ("the explicit audit must ignore the memo",
+     "vault/verify.mbt",
+     '''  verify_rows(store, entries, false)''',
+     '''  verify_rows(store, entries, true)''',
+     "the explicit audit re-reads files the memo already trusts"),
+
+    ("catalog memo must not answer for different text",
+     "vault/verify.mbt",
+     '''    Some(cached) if cached == text => match store.memo.catalog_entries {''',
+     '''    Some(_) => match store.memo.catalog_entries {''',
+     "catalog memo answers for the exact text it was given"),
+
+    ("without a change signal nothing may be reused",
+     "vault/verify.mbt",
+     '''  match (store.stat)(e.path) {
+    None => false
+    Some(signature) => match store.memo.files.get(e.path) {''',
+     '''  match (store.stat)(e.path) {
+    None => true
+    Some(signature) => match store.memo.files.get(e.path) {''',
+     "without a change signal every verify re-reads"),
 ]
 
 

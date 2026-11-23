@@ -23,6 +23,7 @@ fn crashing(fail_after : Int) -> (@vault.Storage, @vault.Storage, Map[String, St
     remove: path => { files.remove(path) },
     files: prefix => files.keys().filter(p => p.has_prefix(prefix + "/")).to_array(),
     check: path => { ignore(@decl.parse(files[path])) },
+    stat: _ => None, memo: @vault.VerifyMemo::new(),
   }
   let broken : @vault.Storage = {
     ..store,

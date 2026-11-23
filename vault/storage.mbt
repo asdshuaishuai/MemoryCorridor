@@ -8,6 +8,10 @@ pub(all) struct Storage {
   remove : (String) -> Unit raise @base.Fault
   files : (String) -> Array[String] raise @base.Fault
   check : (String) -> Unit raise @base.Fault
+  // Cheap change signal for the in-process verification memo. None makes
+  // verify read and hash every file (the wasm faces pass exactly that).
+  stat : (String) -> String? raise @base.Fault
+  memo : VerifyMemo
 }
 
 pub fn required(store : Storage, path : String) -> String raise @base.Fault {
@@ -19,23 +23,6 @@ pub fn required(store : Storage, path : String) -> String raise @base.Fault {
 
 pub fn load(store : Storage) -> Array[@core.Entry] raise @base.Fault {
   @decl.parse(required(store, "index.mbt.md"))
-}
-
-pub fn verify(store : Storage, entries : Array[@core.Entry]) -> Unit raise @base.Fault {
-  @core.validate_entries(entries)
-  for e in entries {
-    if e.kind == "raw" && e.stale { continue }
-    if e.kind == "raw" {
-      if (store.digest)(e.path) != Some(e.sha256) { @base.fail("source_missing_or_changed: " + e.path + "; run scan") }
-      continue
-    }
-    let text = required(store, e.path)
-    if @base.hex_hash(text) != e.sha256 {
-      @base.fail("content_changed: " + e.path + "; rescan sources or submit explicit page edit")
-    }
-    if @core.is_page(e) { ignore(@core.validate_page(e, text, entries)) }
-    if e.kind == "state" || e.kind == "vector" { @core.validate_record(e, text) }
-  }
 }
 
 pub fn fingerprint(entries : Array[@core.Entry]) -> String {

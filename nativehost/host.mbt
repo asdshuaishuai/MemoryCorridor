@@ -5,10 +5,14 @@ pub(all) struct SessionState {
   root : Ref[String?]
   held : Ref[Bool]
   catalog : Ref[String?]
+  // Shared by every request this session serves: unchanged files are trusted
+  // only while their change signal and catalog hash both match.
+  memo : @vault.VerifyMemo
 }
 
 pub fn new_session() -> SessionState {
-  { root: @ref.new(None), held: @ref.new(false), catalog: @ref.new(None) }
+  { root: @ref.new(None), held: @ref.new(false), catalog: @ref.new(None),
+    memo: @vault.VerifyMemo::new() }
 }
 
 pub fn line() -> String? {
@@ -86,7 +90,7 @@ pub fn execute(session : SessionState, request : Json) -> Json raise @base.Fault
       read: @platform.read, digest: @platform.digest, write: @platform.write, remove: @platform.remove,
       files: @platform.files, check: @platform.check,
       read_bytes: @platform.read_bytes, write_bytes: @platform.write_bytes,
-      mkdirs: @platform.mkdirs,
+      mkdirs: @platform.mkdirs, stat: @platform.signature, memo: session.memo,
     }
     let cached_catalog = match session.catalog.val {
       None => None
