@@ -7,10 +7,15 @@ on:
 permissions:
   contents: read
 
+# Two jobs, not one. `scripts/verify.sh` alone (native + three WASM faces + web
+# + protocol + 213-entry mutation gate) already runs close to four hours on a
+# hosted runner; appending the release packaging to the same job pushed it past
+# the old 240-minute limit and got runs cancelled *after* the verify step had
+# already succeeded. Each job now owns its own budget.
 jobs:
-  linux:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -39,6 +44,32 @@ jobs:
       - name: Verify native, WASM, Web and protocol boundaries
         shell: bash
         run: NODE_BINARY=node ./scripts/verify.sh
+
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install MoonBit toolchain
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location https://cli.moonbitlang.com/install/unix.sh | bash -s -- "$(cat .moonbit-version)"
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Sync the MoonBit registry (dependencies are fetched on demand)
+        shell: bash
+        run: moon update
+      - name: Install WasmEdge 0.18.1 (the release bundles corridor-wedge)
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location -o /tmp/wasmedge.tar.gz \
+            https://github.com/WasmEdge/WasmEdge/releases/download/0.18.1/WasmEdge-0.18.1-manylinux_2_28_x86_64.tar.gz
+          echo "ec97ccfc172a1fbb2116e9dd00ca12d41f9f9ad3d7b1c89a63b8477703fa67c9  /tmp/wasmedge.tar.gz" | sha256sum -c -
+          sudo mkdir -p /opt/wasmedge
+          sudo tar xzf /tmp/wasmedge.tar.gz -C /opt/wasmedge
+          echo "/opt/wasmedge/bin" >> "$GITHUB_PATH"
+          echo "WASMEDGE_PREFIX=/opt/wasmedge" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/wasmedge/lib64:/opt/wasmedge/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
       - name: Build and verify the Linux native release archive
         shell: bash
         run: |
