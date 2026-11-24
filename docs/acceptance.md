@@ -60,6 +60,11 @@
 | 真实资料 | 语料为仓库自有的 PROPOSAL/LICENSE 与领域 fixture（自撰确定性文本），数据集字段如实记录；外部真实原件经 OCR/PDF 通道进入：`adapters/ocr-rs` + IRS 真实 PDF 验证记录在 `docs/ocr.md` | pass |
 | 神经进化：情感/冲动快环与非单调慢环（续三十） | `evo_e2e.py`（默认关闭与开关门禁、23 项封闭参数、init/observe 重放与冲突、同种子双金库逐字节一致、窗口完整性、真实适应度下降→回归→回滚、化石/回滚计数对账、手动回滚、记录篡改分支、`content_changed` 全局完整性、pack/unpack 后继续 observe、跨模块只读对比）+ `evo_wbtest.mbt`（rng/身份/权重 binary32/参数表/控制器钳制/冷却/适应度罚分/精英下限/锦标赛/变异幅度/交叉/回归耐心/化石原因/计数对账/schema/门禁/人工闸/篡改关闭/任意写点崩溃恢复）+ 静态单向扫描与 8 条变异 | pass(scope note：v1 无饱和度检测、独立 checkpoint/fossils op、场景轮换与批量 observe；随机留出为时间后缀 30%，均如实记录在 `docs/neuro-evolution.md`) |
 
+| 增量核对与规模（续七十一） | `@platform.signature` 变化信号 + `@vault.VerifyMemo`（同请求前后采样一致才复用、页面互链须活跃）；`e2e.py` 固定同尺寸改写并还原 mtime、符号链接替换、删除三场景；WASM 三面 `stat→None` 全量。600 页库 fingerprints 332→16 ms、search 523→44 ms、lint 3.7→0.42 s | pass |
+| context 范围与 lint 分组（续七十二） | `context scope=related|all`（默认 related，64 页上限，`pages_total`/`pages_omitted` 如实，`page_hashes` 完整）+ `agent/context_wbtest.mbt` 三测试 + e2e 断言；`lint` 冗余页按词元序列哈希 O(N) 分组 | pass(scope note：all 仍受上限约束，被省略页数如实报告) |
+| 分块检索内核与双路兜底（续七十三/七十四） | `retrieval/`（MoonRetrieve 0.6.0 分块 BM25 + 算法向量哈希特征 + 固定 k=60 RRF）；`retrieval_wbtest.mbt` 6 测试（唯一标识、存取/篡改/陈旧、命名空间、制品自洽拒绝、特征、向量路召回文本路漏掉的截断标识符）；`e2e.py` 块级 retrieve/命名空间/非法前缀；120 页 × 32 KiB 库 search 21 ms、retrieve 3 ms，600 页 retrieve 12 ms；制品 v5 主文件 + `fts.vectors.bin` 旁车，超 16 MiB 上限降级为进程内集合且 lint 报 `file_too_large` | pass(scope note：系统向量路未接入，lanes 如实报 `vector:"algo"`/`no_system_engine`；jieba 词级路因依赖与固定 core 不兼容暂缓) |
+| 工作区登记（续七十五，记忆隔离切片一） | `workspace-open`/`workspace-list` + `state/workspaces/<sha256>.json`（路径闭校验、内容寻址 id、同 at 零写重放、较新 at 仅刷新、较早 at 拒绝、`last_opened_at >= created_at`）；`workspaces_wbtest.mbt` 5 测试 + `memory_e2e.py` 工作区段与 pack 往返 + 6 条 mutation；三面工具计数 132 | pass(scope note：登记是记忆隔离的锚点；笔记按工作区存储/可见性、助理导出、梦境 RSI 接工作区尚未交付，不写成已完成) |
+
 ## P2 互操作
 
 | 验收门 | 实现与证据 | 判定 |

@@ -54,6 +54,8 @@ pub fn tools() -> Array[Tool] {
     { name: "overview-cancel", description: "取消尚未应用的综述建议工单；记录与冻结上下文保留用于审计", fields: ["id", "at"] },
     { name: "evidence-submit", description: "提交绑定页面版本、raw 来源和 UTF-8 正文区间的事实证据", fields: ["page", "page_hash", "items"] },    { name: "evidence-replace", description: "用 exact raw 锚点原子替换旧证据记录并保留 superseded 审计历史", fields: ["page", "page_hash", "previous", "items"] },
     { name: "evidence-list", description: "列出页面证据记录及其当前有效性", fields: ["page"] },
+    { name: "workspace-open", description: "登记工作区：接收宿主已规范化的绝对路径，按内容寻址生成稳定工作区 ID 并写入 state/workspaces/；同一时间戳幂等重放，较新的 at 只刷新 last_opened_at，较早的 at 拒绝；记忆按工作区隔离的锚点", fields: ["path", "at"] },
+    { name: "workspace-list", description: "列出已登记工作区（路径、创建与最近打开时间），按路径稳定排序；只读", fields: [] },
     { name: "memory-submit", description: "记录终身记忆笔记（偏好/决定/约束/事实/目标）及其适用条件与 raw 来源；同 key 同内容幂等重放，同 key 新内容自动 supersede", fields: ["kind", "scope", "text", "conditions", "sources", "at", "key"] },
     { name: "memory-supersede", description: "用新正文、条件或来源替换指定记忆笔记，旧记录标记 superseded 并保留审计历史", fields: ["id", "text", "conditions", "sources", "at", "key"] },
     { name: "memory-archive", description: "归档记忆笔记，移出默认检索与预取范围；仍可列出和恢复", fields: ["id", "at"] },

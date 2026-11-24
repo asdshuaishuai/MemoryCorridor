@@ -6,7 +6,7 @@ pub fn state_directories() -> Array[String] {
   ["state/orders", "state/events", "state/reviews", "state/research",
    "state/suggestions", "state/overview", "state/evidence", "state/memory",
    "state/impacts", "state/providers", "state/provider-jobs", "state/extractions",
-   "state/dreams", "state/dream-work", "state/evo"]
+   "state/dreams", "state/dream-work", "state/workspaces", "state/evo"]
 }
 
 // Sidecar text is host-supplied (OCR, PDF text) and could be arbitrarily long.
@@ -156,6 +156,42 @@ fn memory_nullable_time(value : Json, field : String) -> Unit raise @base.Fault 
     String(text) => memory_time(text)
     _ => @base.fail("memory_" + field + "_invalid")
   }
+}
+
+// A workspace is the identity memory scopes to: the canonical absolute project
+// path the host opened. The id is content addressed, so the same path always
+// maps to the same directory before the record exists; the writer and the
+// validator derive it from this one recipe.
+pub fn workspace_id(path : String) -> String {
+  @base.hex_hash("workspace-v1\n" + path)
+}
+
+// The engine normalizes nothing on its own: the host passes a canonical
+// absolute path, and anything still carrying `.`/`..` segments, a trailing
+// slash or a newline is refused rather than guessed at.
+pub fn validate_workspace_path(path : String) -> Unit raise @base.Fault {
+  if path.is_empty() || path.length() > 4096 || path.contains("\r") || path.contains("\n") {
+    @base.fail("workspace_path_invalid")
+  }
+  if !path.has_prefix("/") || path.has_prefix("//") || path.has_suffix("/") {
+    @base.fail("workspace_path_invalid")
+  }
+  for segment in path.split("/") {
+    let value = segment.to_owned()
+    if value == "." || value == ".." { @base.fail("workspace_path_invalid") }
+  }
+}
+
+fn workspace_record(value : Json, id : String) -> Unit raise @base.Fault {
+  if @base.field(value, "version") != Json::number(1.0) { @base.fail("workspace_version_unsupported") }
+  let path = @base.text(@base.field(value, "path"))
+  validate_workspace_path(path)
+  if id != workspace_id(path) { @base.fail("workspace_record_identity_invalid") }
+  let created = @base.text(@base.field(value, "created_at"))
+  let opened = @base.text(@base.field(value, "last_opened_at"))
+  memory_time(created)
+  memory_time(opened)
+  if opened < created { @base.fail("workspace_time_inverted") }
 }
 
 fn memory_nullable_hash(value : Json, field : String, id : String) -> String? raise @base.Fault {
@@ -1396,6 +1432,13 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       if seen.contains(key) { @base.fail("evidence_duplicate_claim") }
       seen[key] = true
     }
+  } else if entry.path.has_prefix("state/workspaces/") {
+    @base.keys(value, ["version", "id", "path", "created_at", "last_opened_at"])
+    let id = string("id")
+    if !valid_hash(id) || entry.path != "state/workspaces/" + id + ".json" {
+      @base.fail("workspace_record_identity_invalid")
+    }
+    workspace_record(value, id)
   } else if entry.path.has_prefix("state/memory/") {
     @base.keys(value, ["version", "id", "kind", "scope", "text", "conditions", "sources",
       "source_hashes", "status", "key", "created_at", "updated_at", "archived_at",

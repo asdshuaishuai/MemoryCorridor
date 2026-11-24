@@ -1480,6 +1480,49 @@ MUTATIONS = [
       related.push(page)
     }''',
      "context selection is bounded and namespace-scoped"),
+
+    ("workspace ids must derive from the canonical path",
+     "core/records.mbt",
+     '''  @base.hex_hash("workspace-v1\\n" + path)''',
+     '''  @base.hex_hash("workspace-v1\\n")''',
+     "workspace paths must be canonical absolute paths"),
+
+    ("a same-timestamp workspace open must replay, not rewrite",
+     "agent/workspaces.mbt",
+     '''      if at == opened { return workspace_row_response(value, true) }''',
+     '''      if false { return workspace_row_response(value, true) }''',
+     "workspace id is content addressed and open replays byte-identically"),
+
+    ("a workspace open may not rewind last_opened_at",
+     "agent/workspaces.mbt",
+     '''      if at < opened { @base.fail("workspace_time_order: " + path) }''',
+     '''      if false { @base.fail("workspace_time_order: " + path) }''',
+     "a newer open refreshes only last_opened_at and an older one is refused"),
+
+    ("workspace paths must stay absolute and slash-clean",
+     "core/records.mbt",
+     '''  if !path.has_prefix("/") || path.has_prefix("//") || path.has_suffix("/") {
+    @base.fail("workspace_path_invalid")
+  }''',
+     '''  if false {
+    @base.fail("workspace_path_invalid")
+  }''',
+     "workspace paths must be canonical absolute paths"),
+
+    ("workspace list must be ordered by path",
+     "agent/workspaces.mbt",
+     '''  keyed.sort_by((a, b) => {
+    let cmp = @base.compare(a.0, b.0)
+    if cmp != 0 { cmp } else { @base.compare(a.1, b.1) }
+  })''',
+     '''  keyed.sort_by((a, b) => @base.compare(a.1, b.1))''',
+     "workspace list is sorted by path and counts records"),
+
+    ("workspace records must bind id, path and time order",
+     "core/records.mbt",
+     '''  if id != workspace_id(path) { @base.fail("workspace_record_identity_invalid") }''',
+     '''  if false { @base.fail("workspace_record_identity_invalid") }''',
+     "workspace records reject a drifted id, path or time order"),
 ]
 
 

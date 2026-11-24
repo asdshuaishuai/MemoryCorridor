@@ -188,6 +188,8 @@ pub fn dispatch_with_catalog(
     "extraction-submit" => extraction_submit(store, entries, request)
     "evidence-replace" => evidence_replace(store, entries, request)
     "evidence-list" => evidence_list(store, entries, request)
+    "workspace-open" => workspace_open(store, entries, request)
+    "workspace-list" => workspace_list(store, entries)
     "memory-submit" => memory_submit(store, entries, request)
     "memory-supersede" => memory_supersede(store, entries, request)
     "memory-archive" => memory_archive(store, entries, request)

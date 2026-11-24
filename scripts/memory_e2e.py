@@ -58,6 +58,28 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     root = Path(temp)
     call(root, "init", purpose="研究陶瓷器形与釉色")
 
+    # Workspace registration is the anchor memory scoping will use. The id is
+    # content addressed from the canonical path; registration replays without
+    # writing and never rewinds last_opened_at.
+    workspace_path = "/Users/kelthas/work/陶瓷"
+    workspace = call(root, "workspace-open", path=workspace_path, at="2026-10-19T09:00:00Z")
+    assert workspace["replayed"] is False
+    assert workspace["id"] == call(root, "workspace-open", path=workspace_path,
+                                   at="2026-10-19T09:00:00Z")["id"]
+    fingerprint = call(root, "status")["fingerprint"]
+    assert call(root, "workspace-open", path=workspace_path,
+                at="2026-10-19T09:00:00Z")["replayed"] is True
+    assert call(root, "status")["fingerprint"] == fingerprint
+    later = call(root, "workspace-open", path=workspace_path, at="2026-10-19T10:00:00Z")
+    assert later["created_at"] == "2026-10-19T09:00:00Z"
+    assert later["last_opened_at"] == "2026-10-19T10:00:00Z"
+    call(root, "workspace-open", path=workspace_path, at="2026-10-18T09:00:00Z",
+         error="workspace_time_order")
+    call(root, "workspace-open", path="relative/dir", at="2026-10-19T09:00:00Z",
+         error="workspace_path_invalid")
+    listed = call(root, "workspace-list")
+    assert listed["count"] == 1 and listed["workspaces"][0]["path"] == workspace_path
+
     # A preference note bound to a raw source, with an applicability condition.
     first = call(root, "memory-submit", kind="preference", scope="workspace",
                  text="优先安排陶瓷窑口对比的参观时间",
@@ -628,6 +650,8 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     assert call(target, "unpack", file="imports/memory.mcpack")["vault_fingerprint"] == \
         call(root, "status")["fingerprint"]
     assert {row["id"] for row in call(target, "memory-list")["notes"]} == set(notes(root))
+    # Workspace registration is durable state too: pack/unpack must carry it.
+    assert call(target, "workspace-list") == call(root, "workspace-list")
     call(target, "rebuild")
     call(target, "verify")
 
