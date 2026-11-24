@@ -9,16 +9,18 @@
 
 fn crashing(fail_after : Int) -> (@vault.Storage, @vault.Storage, Map[String, String]) {
   let files : Map[String, String] = Map([])
+  let blobs : Map[String, Bytes] = Map([])
   let writes : Map[String, Int] = Map([])
   writes["count"] = 0
   let store : @vault.Storage = {
     read: path => files.get(path),
-    read_bytes: path => files.get(path).map(text => @utf8.encode(text)),
+    read_bytes: path => match blobs.get(path) {
+      Some(bytes) => Some(bytes)
+      None => files.get(path).map(text => @utf8.encode(text))
+    },
     digest: path => files.get(path).map(@base.hex_hash),
     write: (path, text) => { files[path] = text },
-    write_bytes: (path, bytes) => { files[path] = try @utf8.decode(bytes) catch {
-      _ => raise @base.Fault("invalid_utf8_fixture")
-    } },
+    write_bytes: (path, bytes) => try { files[path] = @utf8.decode(bytes) } catch { _ => blobs[path] = bytes },
     mkdirs: _ => (),
     remove: path => { files.remove(path) },
     files: prefix => files.keys().filter(p => p.has_prefix(prefix + "/")).to_array(),

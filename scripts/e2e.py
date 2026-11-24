@@ -492,6 +492,19 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-e2e-") as work:
     purpose = root / "purpose.md"
     purpose.write_text(purpose.read_text() + "\n新的研究目标。\n")
     s.call("refresh")
+    # Chunk-level retrieve: the same kernel returns per-block hits and reports
+    # which lanes ran. The vector lane is the algorithmic fallback until the
+    # system-embedding adapter lands.
+    retrieved = s.call("retrieve", query="叶绿素", limit=3)
+    assert retrieved["lanes"] == {"text": "on", "vector": "algo", "reason": "no_system_engine"}, retrieved
+    assert retrieved["hits"] and all("#" in hit["chunk"] for hit in retrieved["hits"]), retrieved
+    assert all(hit["page"] and hit["text"] for hit in retrieved["hits"]), retrieved
+    assert retrieved["hits"][0]["page"] == "concepts/共享", retrieved
+    assert retrieved["hits"][0]["text_source"] == "chunk", retrieved
+    scoped_retrieval = s.call("retrieve", query="叶绿素", namespace="raw/queries")
+    assert scoped_retrieval["hits"] == [], scoped_retrieval
+    s.call("retrieve", query="叶绿素", namespace="../etc", error="retrieve_namespace_invalid")
+    check("chunk-level retrieve reports lanes and honours namespaces")
     s.call("commit", order=backfill_order, pages=[], at="2026-10-16", error="purpose_conflict")
     context = s.call("context", order=backfill_order)
     assert context["order"]["phase"] == "context-ready" and context["order"]["analysis"] is None

@@ -772,8 +772,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # The chunk-index cache. `.corridor/fts.json` carries its own envelope: a
     # sha256 over the canonical payload, a version and algorithm tag, the catalog
     # fingerprint, the page bindings and the chunk table plus the serialized BM25
-    # index. `search` silently rebuilds when the cache is unusable, so the only
-    # surface that reports *why* is `lint`, which names the branch in its detail.
+    # index; the chunk vectors live in the `.corridor/fts.vectors.bin` sidecar
+    # that the envelope binds by hash. `search` silently rebuilds when the cache
+    # is unusable, so the only surface that reports *why* is `lint`, which names
+    # the branch in its detail.
     #
     # The envelope hash has to be recomputed after each edit, or the earlier
     # `index_corrupt_or_stale` check fires and hides the branch under test.
@@ -796,7 +798,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
          lambda d: d["payload"].__setitem__("algorithm", "chunk-bm25-v0"),
          "index_algorithm_changed"),
         ("a different version",
-         lambda d: d["payload"].__setitem__("version", 5.0),
+         lambda d: d["payload"].__setitem__("version", 99.0),
          "index_algorithm_changed"),
         ("a fingerprint that no longer matches the catalog",
          lambda d: d["payload"].__setitem__("fingerprint", "0" * 64),
@@ -822,6 +824,25 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         assert [row["detail"] for row in call(root, "lint")["violations"]
                 if row["predicate"] == "cache_invalid"] == [], label
         checked += 1
+
+    # A sidecar whose bytes no longer match the envelope, and one that is gone.
+    # Both are cache misses the next query rebuilds, never a hard failure.
+    vectors = root / ".corridor/fts.vectors.bin"
+    original_vectors = vectors.read_bytes()
+    assert original_vectors, "rebuild must write the vector sidecar"
+    vectors.write_bytes(original_vectors + b"\0\0\0\0")
+    found = [row["detail"] for row in call(root, "lint")["violations"]
+             if row["predicate"] == "cache_invalid"]
+    assert "index_corrupt_or_stale" in found, found
+    checked += 1
+    vectors.unlink()
+    found = [row["detail"] for row in call(root, "lint")["violations"]
+             if row["predicate"] == "cache_invalid"]
+    assert "index_corrupt_or_stale" in found, found
+    checked += 1
+    vectors.write_bytes(original_vectors)
+    assert [row["detail"] for row in call(root, "lint")["violations"]
+            if row["predicate"] == "cache_invalid"] == []
 
     # The page lifecycle events. `archive-page` then `restore-page` produces both
     # kinds, and `forget` a third; each field is checked on its own.

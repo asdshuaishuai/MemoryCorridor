@@ -1427,6 +1427,26 @@ MUTATIONS = [
   }''',
      "a self-consistent artifact that does not match the catalog is refused"),
 
+    ("the vector lane must contribute to fusion",
+     "retrieval/retrieval.mbt",
+     '''  let vector_limit = Int::min(vector_rows.length(), 100)''',
+     '''  let vector_limit = 0''',
+     "the vector lane recovers a chunk the text lane misses"),
+
+    ("a vector blob must match the chunk table size",
+     "retrieval/retrieval.mbt",
+     '''  if bytes.length() != count * dimensions * 4 { raise @base.Fault("index_corrupt_or_stale") }''',
+     '''  if false { raise @base.Fault("index_corrupt_or_stale") }''',
+     "a self-consistent artifact that does not match the catalog is refused"),
+
+    ("a vector sidecar must match the envelope hash",
+     "retrieval/retrieval.mbt",
+     '''  if @base.sha256_hex(blob) != @base.text(@base.field(payload, "vectors_sha256")) {
+    raise @base.Fault("index_corrupt_or_stale")
+  }''',
+     '''  if false { raise @base.Fault("index_corrupt_or_stale") }''',
+     "a self-consistent artifact that does not match the catalog is refused"),
+
     ("chunk artifacts must bind every page hash",
      "retrieval/retrieval.mbt",
      '''    if pages[i].id != expected[i].id || pages[i].sha256 != expected[i].sha256 { raise @base.Fault("index_corrupt_or_stale") }''',

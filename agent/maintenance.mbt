@@ -53,7 +53,7 @@ fn maintenance(store : @vault.Storage, entries : Array[@core.Entry], request : J
   }
   match op {
     "fingerprints" => { "vault": @vault.fingerprint(entries),
-      "index_inputs": @base.hex_hash("chunk-bm25-v1\n" + @vault.fingerprint(entries)), "algorithm": "sha256" }
+      "index_inputs": @base.hex_hash("chunk-hybrid-v1\n" + @vault.fingerprint(entries)), "algorithm": "sha256" }
     "read-log" => {
       let events = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/events/"))
       events.sort_by((a,b) => @base.compare(a.id, b.id))

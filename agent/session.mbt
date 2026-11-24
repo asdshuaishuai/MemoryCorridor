@@ -60,7 +60,18 @@ pub fn rebuild(store : @vault.Storage, entries : Array[@core.Entry]) -> @retriev
   // Chunk-level BM25 over the same pages. The artifact binds every page hash it
   // was derived from, so a stale or tampered cache is rebuilt rather than used.
   let collection = @retrieval.build(store, entries)
-  @retrieval.save(store, entries, collection)
+  // The chunk index is a cache. A vault whose postings exceed the platform
+  // per-file cap must still answer queries, so that specific write failure
+  // degrades to an in-process collection instead of failing every request.
+  try {
+    @retrieval.save(store, entries, collection)
+  } catch {
+    @base.Fault(message) => if message.has_prefix("file_too_large") {
+      @retrieval.remember(store, entries, collection)
+    } else {
+      raise @base.Fault(message)
+    }
+  }
   collection
 }
 
@@ -310,19 +321,23 @@ pub fn dispatch_with_catalog(
       if prefix != "" && (!prefix.has_prefix("raw/") || prefix.contains("..")) {
         @base.fail("retrieve_namespace_invalid")
       }
-      let rows = @retrieval.search_chunks(entries, collection, string("query"), limit, prefix=prefix)
+      let (rows, lanes) = @retrieval.search_hybrid(entries, collection, string("query"), limit, prefix=prefix)
       let hits : Array[Json] = []
       for row in rows {
-        match @retrieval.chunk_of(collection, row.doc_id) {
-          Some(chunk) => hits.push({
-            "chunk": row.doc_id.to_json(), "page": chunk.page.to_json(),
-            "title": @retrieval.page_title(collection, chunk.page).to_json(),
-            "score": row.score.to_json(), "text": row.text.to_json() })
-          None => ()
+        let (text, text_source) = if row.text != "" {
+          (row.text, "chunk")
+        } else {
+          (@retrieval.page_excerpt(collection, row.page), "page")
         }
+        hits.push({
+          "chunk": row.id.to_json(), "page": row.page.to_json(),
+          "title": @retrieval.page_title(collection, row.page).to_json(),
+          "score": row.score.to_json(), "text": text.to_json(),
+          "text_source": text_source.to_json(),
+          "lanes": { "text_rank": row.text_rank.to_json(), "vector_rank": row.vector_rank.to_json() } })
       }
       { "hits": hits.to_json(),
-        "lanes": { "text": "on", "vector": "off", "reason": "vector_lane_pending" },
+        "lanes": { "text": lanes.text, "vector": lanes.vector, "reason": lanes.reason },
         "fingerprint": fingerprint.to_json(), "cache_rebuilt": rebuilt.to_json() }
     }
     _ => raise @base.Fault("operation_not_implemented: " + op)
