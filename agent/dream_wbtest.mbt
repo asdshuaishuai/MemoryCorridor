@@ -75,17 +75,17 @@ test "dream tools are advertised with the closed schema surface" {
   assert_true(!close_required.contains("note"))
 }
 test "dream epoch parses canonical timestamps and rejects noise" {
-  match dream_epoch("1970-01-01T00:00:00Z") {
+  match @base.utc_epoch("1970-01-01T00:00:00Z") {
     Some(value) => assert_eq(value, 0)
     None => @base.fail("epoch must parse 1970-01-01T00:00:00Z")
   }
-  match dream_epoch("2026-11-12T00:00:00Z") {
+  match @base.utc_epoch("2026-11-12T00:00:00Z") {
     Some(value) => assert_true(value > 1793000000)
     None => @base.fail("epoch must parse a modern timestamp")
   }
   let bads : Array[String] = ["2026-11-12T00:00:00", "not-a-time", "2026-13-01T00:00:00Z",
     "2026-11-12T24:00:00Z", "2026-11-12 00:00:00Z"]
-  for bad in bads { assert_true(dream_epoch(bad) == None) }
+  for bad in bads { assert_true(@base.utc_epoch(bad) == None) }
 }
 
 test "dream policy fields stay inside their documented bounds" {

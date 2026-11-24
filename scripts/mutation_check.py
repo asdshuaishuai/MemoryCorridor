@@ -1523,6 +1523,58 @@ MUTATIONS = [
      '''  if id != workspace_id(path) { @base.fail("workspace_record_identity_invalid") }''',
      '''  if false { @base.fail("workspace_record_identity_invalid") }''',
      "workspace records reject a drifted id, path or time order"),
+
+    ("proactive speech must wait for a long idle window",
+     "agent/evo.mbt",
+     '''    due: evo_proactive_ready(pending, cooldown_ok, reason) && idle_ok,''',
+     '''    due: evo_proactive_ready(pending, cooldown_ok, reason),''',
+     "proactive due requires both impulse and a long idle window"),
+
+    ("activity reports may not rewind the idle window",
+     "agent/evo.mbt",
+     '''      if !newer { (None, last) } else {''',
+     '''      if false { (None, last) } else {''',
+     "proactive due requires both impulse and a long idle window"),
+
+    ("a missing activity stamp must block proactive speech",
+     "agent/evo.mbt",
+     '''  match seconds {
+    Some(value) => value >= EVO_PROACTIVE_IDLE_SECONDS
+    None => false
+  }''',
+     '''  match seconds {
+    Some(value) => value >= EVO_PROACTIVE_IDLE_SECONDS
+    None => true
+  }''',
+     "proactive idle gate needs a provable long idle gap"),
+
+    ("proactive reason must not fall back to valence",
+     "agent/evo.mbt",
+     '''  if fired_since || impulse >= EVO_PROACTIVE_MIN_IMPULSE { "impulse" } else { "" }''',
+     '''  if true { "impulse" } else { "" }''',
+     "evo proactive reason requires impulse, never valence alone"),
+
+    ("a user turn must reset the proactive idle window",
+     "agent/evo.mbt",
+     '''  if role == "user" {
+    let (change, _) = evo_activity_change(store, at)''',
+     '''  if false {
+    let (change, _) = evo_activity_change(store, at)''',
+     "a user turn resets the proactive idle window in the same commit"),
+
+    ("a follow-up reply must count as activity",
+     "agent/evo.mbt",
+     '''  let (activity, _) = evo_activity_change(store, at)
+  match activity {
+    Some(change) => changes.push(change)
+    None => ()
+  }''',
+     '''  let (activity, _) = evo_activity_change(store, at)
+  match activity {
+    Some(_change) => ()
+    None => ()
+  }''',
+     "evo followup e2e", "evo_followup_e2e.py"),
 ]
 
 

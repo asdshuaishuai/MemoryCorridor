@@ -42,3 +42,46 @@ pub fn estimate_tokens(text : String) -> Int {
   }
   count
 }
+
+
+// Strict ISO-8601 UTC (YYYY-MM-DDTHH:MM:SSZ) to Unix seconds. Calendar math is
+// the days-from-civil algorithm; anything not exactly 20 well-formed characters
+// returns None so callers can decide whether "no time" means "no arithmetic".
+fn utc_two(value : String, pos : Int) -> Int? {
+  if pos + 1 >= value.length() { return None }
+  let high = value[pos].to_int()
+  let low = value[pos + 1].to_int()
+  if high < 48 || high > 57 || low < 48 || low > 57 { return None }
+  Some((high - 48) * 10 + (low - 48))
+}
+
+pub fn utc_epoch(value : String) -> Int? {
+  if value.length() != 20 { return None }
+  if value[4].to_int() != 45 || value[7].to_int() != 45 || value[10].to_int() != 84 ||
+    value[13].to_int() != 58 || value[16].to_int() != 58 || value[19].to_int() != 90 {
+    return None
+  }
+  let year = match (utc_two(value, 0), utc_two(value, 2)) {
+    (Some(a), Some(b)) => Some(a * 100 + b)
+    _ => None
+  }
+  let month = utc_two(value, 5)
+  let day = utc_two(value, 8)
+  let hour = utc_two(value, 11)
+  let minute = utc_two(value, 14)
+  let second = utc_two(value, 17)
+  match (year, month, day, hour, minute, second) {
+    (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) => {
+      if mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59 { return None }
+      let yy = if mo <= 2 { y - 1 } else { y }
+      let era = if yy >= 0 { yy / 400 } else { (yy - 399) / 400 }
+      let yoe = yy - era * 400
+      let mp = if mo > 2 { mo - 3 } else { mo + 9 }
+      let doy = (153 * mp + 2) / 5 + d - 1
+      let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+      let days = era * 146097 + doe - 719468
+      Some(days * 86400 + h * 3600 + mi * 60 + s)
+    }
+    _ => None
+  }
+}

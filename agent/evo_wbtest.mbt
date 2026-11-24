@@ -1115,19 +1115,38 @@ test "evo saturation re-arms after a patience of non-improving generations" {
   }
 }
 
-test "evo proactive reason follows impulse, valence and its own history" {
-  assert_eq(evo_proactive_reason(0.55, 0.0, false), "impulse")
-  assert_eq(evo_proactive_reason(0.54, 0.70, false), "valence_high")
-  assert_eq(evo_proactive_reason(0.0, -0.50, false), "valence_low")
-  assert_eq(evo_proactive_reason(0.0, 0.0, false), "")
-  assert_eq(evo_proactive_reason(0.0, 0.0, true), "impulse")
+test "evo proactive reason requires impulse, never valence alone" {
+  assert_eq(evo_proactive_reason(0.55, false), "impulse")
+  assert_eq(evo_proactive_reason(0.54, false), "")
+  assert_eq(evo_proactive_reason(0.0, false), "")
+  // A threshold crossing after the last request is still an impulse.
+  assert_eq(evo_proactive_reason(0.0, true), "impulse")
 }
 
-test "evo proactive gate needs no pending, cooldown and a reason" {
-  assert_true(evo_proactive_ready(0, true, "valence_high"))
-  assert_false(evo_proactive_ready(1, true, "valence_high"))
-  assert_false(evo_proactive_ready(0, false, "valence_high"))
+test "evo proactive gate needs no pending, cooldown and an impulse" {
+  assert_true(evo_proactive_ready(0, true, "impulse"))
+  assert_false(evo_proactive_ready(1, true, "impulse"))
+  assert_false(evo_proactive_ready(0, false, "impulse"))
   assert_false(evo_proactive_ready(0, true, ""))
+}
+
+// The user's rule: emotional impulse alone is not enough; the agent subject
+// must have been idle for a long time, and a missing stamp proves nothing.
+test "proactive idle gate needs a provable long idle gap" {
+  assert_false(evo_proactive_idle_ok(evo_proactive_idle_seconds(None, "2026-11-12T02:30:00Z")))
+  assert_eq(evo_proactive_idle_seconds(Some("2026-11-12T02:00:00Z"),
+    "2026-11-12T02:29:59Z"), Some(1799))
+  assert_false(evo_proactive_idle_ok(evo_proactive_idle_seconds(
+    Some("2026-11-12T02:00:00Z"), "2026-11-12T02:29:59Z")))
+  assert_eq(evo_proactive_idle_seconds(Some("2026-11-12T02:00:00Z"),
+    "2026-11-12T02:30:00Z"), Some(1800))
+  assert_true(evo_proactive_idle_ok(evo_proactive_idle_seconds(
+    Some("2026-11-12T02:00:00Z"), "2026-11-12T02:30:00Z")))
+  // A malformed stamp is not evidence of idleness.
+  assert_false(evo_proactive_idle_ok(evo_proactive_idle_seconds(
+    Some("not-a-time"), "2026-11-12T03:00:00Z")))
+  assert_false(evo_proactive_idle_ok(evo_proactive_idle_seconds(
+    Some("2026-11-12T02:00:00Z"), "bad")))
 }
 
 test "evo expression maps affect to labels, posture and face tokens" {
@@ -1265,4 +1284,88 @@ test "evo scenario drift is observable on the same window" {
   }
   assert_eq(moved, 8)
   assert_eq(baseline[4], 0.5)
+}
+
+// ---- proactive idle gate (user rule) --------------------------------------
+
+fn evo_proactive_gate_store() -> (@vault.Storage, Map[String, String]) raise @base.Fault {
+  let (store, _, files) = crashing(1 << 20)
+  ignore(initialize(store, "主动发言门控"))
+  ignore(dispatch(store, { "op": "evo-policy", "enabled": true.to_json(),
+    "at": "2026-11-12T02:00:00Z" }))
+  ignore(dispatch(store, { "op": "evo-init", "seed": 7, "at": "2026-11-12T02:00:01Z" }))
+  (store, files)
+}
+
+fn evo_proactive_raise_impulse(store : @vault.Storage) -> Unit raise @base.Fault {
+  // The observe clock is pinned inside the idle window on purpose: self
+  // monitoring must not count as agent activity.
+  for i in 0..<16 {
+    let response = dispatch(store, { "op": "evo-observe", "step": i + 1,
+      "kind": "social", "salience": 1.0, "valence": 1.0,
+      "body": { "cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1 },
+      "subject": "user", "at": "2026-11-12T02:01:00Z" })
+    if evo_test_number_field(response, "impulse") >= EVO_PROACTIVE_MIN_IMPULSE { return }
+  }
+  @base.fail("evo_proactive_impulse_fixture")
+}
+
+fn evo_idle_field(due : Json, name : String) -> Json raise @base.Fault {
+  @base.field(@base.field(due, "idle"), name)
+}
+
+test "proactive due requires both impulse and a long idle window" {
+  let (store, files) = evo_proactive_gate_store()
+  evo_proactive_raise_impulse(store)
+  // 14m59s after init: the impulse is there, the idle window is not.
+  let early = dispatch(store, { "op": "evo-proactive-due", "at": "2026-11-12T02:15:00Z" })
+  assert_eq(@base.boolean(@base.field(early, "due")), false)
+  assert_eq(@base.field(early, "reason"), "impulse".to_json())
+  assert_eq(@base.boolean(evo_idle_field(early, "ok")), false)
+  assert_eq(evo_idle_field(early, "seconds_since_activity"), Json::number(899.0))
+  assert_eq(evo_idle_field(early, "required_seconds"), Json::number(1800.0))
+  assert_eq(evo_idle_field(early, "last_activity_at"), "2026-11-12T02:00:01Z".to_json())
+  // 31 minutes after init both gates hold.
+  let late = dispatch(store, { "op": "evo-proactive-due", "at": "2026-11-12T02:31:01Z" })
+  assert_eq(@base.boolean(@base.field(late, "due")), true)
+  // Reporting activity resets the window; an older report cannot rewind it and
+  // must leave the state bytes untouched.
+  let reported = dispatch(store, { "op": "evo-activity", "at": "2026-11-12T02:30:00Z" })
+  assert_eq(@base.boolean(@base.field(reported, "replayed")), false)
+  let state_before = files["evo/state.json"]
+  let stale = dispatch(store, { "op": "evo-activity", "at": "2026-11-12T02:10:00Z" })
+  assert_eq(@base.boolean(@base.field(stale, "replayed")), true)
+  assert_eq(@base.field(stale, "last_activity_at"), "2026-11-12T02:30:00Z".to_json())
+  assert_eq(files["evo/state.json"], state_before)
+  let after = dispatch(store, { "op": "evo-proactive-due", "at": "2026-11-12T02:31:01Z" })
+  assert_eq(@base.boolean(@base.field(after, "due")), false)
+  assert_eq(evo_idle_field(after, "seconds_since_activity"), Json::number(61.0))
+  // 30 minutes after the report both gates hold again.
+  let again = dispatch(store, { "op": "evo-proactive-due", "at": "2026-11-12T03:01:01Z" })
+  assert_eq(@base.boolean(@base.field(again, "due")), true)
+}
+
+test "a user turn resets the proactive idle window in the same commit" {
+  let (store, files) = evo_proactive_gate_store()
+  evo_proactive_raise_impulse(store)
+  let opened = dispatch(store, { "op": "evo-proactive-open", "driver": "driver-a",
+    "lease_until": "2026-11-12T03:00:00Z", "at": "2026-11-12T02:31:01Z" })
+  let id = @base.text(@base.field(opened, "id"))
+  ignore(dispatch(store, { "op": "evo-proactive-complete", "id": id, "driver": "driver-a",
+    "at": "2026-11-12T02:32:00Z", "result": { "text": "主动问候", "model": "mock" } }))
+  ignore(dispatch(store, { "op": "evo-proactive-ack", "id": id,
+    "at": "2026-11-12T02:33:00Z" }))
+  let thread = dispatch(store, { "op": "evo-thread-open", "proactive": id,
+    "text": "主动问候", "driver": "driver-a", "at": "2026-11-12T02:34:00Z" })
+  let thread_id = @base.text(@base.field(thread, "id"))
+  ignore(dispatch(store, { "op": "evo-thread-append", "id": thread_id, "role": "user",
+    "text": "谢谢", "at": "2026-11-12T02:35:00Z" }))
+  let state = @base.parse(files["evo/state.json"])
+  assert_eq(@base.field(state, "last_activity_at"), "2026-11-12T02:35:00Z".to_json())
+  // One minute later the system is busy again, 30 minutes later it is idle.
+  let busy = dispatch(store, { "op": "evo-proactive-due", "at": "2026-11-12T02:36:00Z" })
+  assert_eq(@base.boolean(@base.field(busy, "due")), false)
+  assert_eq(evo_idle_field(busy, "seconds_since_activity"), Json::number(60.0))
+  // The idle window in this store is covered by the due-gate test above; here
+  // the point is that the user turn itself reset it in the same commit.
 }

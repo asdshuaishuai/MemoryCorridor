@@ -60,7 +60,7 @@ def main():
             call("evo-observe", step=step, kind="social", salience=1.0, valence=1.0,
                  subject="user", body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                  at=at(10 + step))
-            candidate = call("evo-expression", at=at(1000 + step))
+            candidate = call("evo-expression", at=at(1900 + step))
             if candidate["will_initiate"]:
                 due = candidate
                 break
@@ -70,12 +70,12 @@ def main():
         # contract is the token vocabulary, not one fixed mood.
         assert due["emotion_label"] in ("excited", "content", "alert"), due
         assert due["expression"] in ("bright", "soft_smile", "focused"), due
-        assert due["reason"] in ("impulse", "valence_high", "valence_low"), due
+        assert due["reason"] == "impulse", due
 
         # 3. deterministic and read-only: the same state returns the same frame
         #    and never touches the catalog.
         before = (vault / "index.mbt.md").read_bytes()
-        again = call("evo-expression", at=at(1000 + step))
+        again = call("evo-expression", at=at(1900 + step))
         assert again == due, (due, again)
         assert (vault / "index.mbt.md").read_bytes() == before
 

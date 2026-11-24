@@ -189,7 +189,7 @@ def main():
                 call("evo-observe", step=step, kind="social", salience=1.0, valence=1.0,
                      subject="user", body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                      at=at(10 + step))
-                if call("evo-proactive-due", at=at(1000 + step))["due"]:
+                if call("evo-proactive-due", at=at(1900 + step))["due"]:
                     break
             # Curiosity round: the model first asks to look at a network
             # address, the host fetches it, then the model speaks with the

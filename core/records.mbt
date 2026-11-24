@@ -879,7 +879,8 @@ fn evo_state_record(value : Json) -> Unit raise @base.Fault {
   let code = "evo_state_record_invalid"
   @base.keys(value, ["version", "steps", "window", "window_sha256", "emotion",
     "impulse", "body", "relations", "active_genome", "last_observe",
-    "last_fire_step", "guard_hits", "impulses", "blowups", "created_at", "updated_at"])
+    "last_fire_step", "last_activity_at", "guard_hits", "impulses", "blowups",
+    "created_at", "updated_at"])
   match @base.field(value, "version") {
     Number(n, ..) if n == 1.0 => ()
     _ => raise @base.Fault(code + ":version")
@@ -920,6 +921,14 @@ fn evo_state_record(value : Json) -> Unit raise @base.Fault {
   }
   evo_last_observe_shape(@base.field(value, "last_observe"))
   evo_optional_int(value, "last_fire_step", 1, 2147483647, code)
+  // Older sidecar states predate the field; a present value must be a strict
+  // timestamp, and null is the explicit "never recorded" form.
+  match optional_record_field(value, "last_activity_at") {
+    None => ()
+    Some(Null) => ()
+    Some(String(_)) => ignore(evo_record_time(value, "last_activity_at", code))
+    Some(_) => raise @base.Fault(code + ":last_activity_at")
+  }
   for field in ["guard_hits", "impulses", "blowups"] {
     ignore(evo_record_int(value, field, 0, 1000000000, code))
   }

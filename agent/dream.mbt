@@ -947,50 +947,7 @@ pub fn dream_policy_op(store : @vault.Storage, entries : Array[@core.Entry], req
     "fingerprint": @vault.fingerprint(next) }
 }
 
-fn dream_digit(value : String, pos : Int) -> Int? {
-  if pos >= value.length() { return None }
-  let c = value[pos].to_int()
-  if c >= 48 && c <= 57 { Some(c - 48) } else { None }
-}
 
-fn dream_two(value : String, pos : Int) -> Int? {
-  match (dream_digit(value, pos), dream_digit(value, pos + 1)) {
-    (Some(a), Some(b)) => Some(a * 10 + b)
-    _ => None
-  }
-}
-
-// Strict YYYY-MM-DDTHH:MM:SSZ; anything else means "no cooldown arithmetic".
-fn dream_epoch(value : String) -> Int? {
-  if value.length() != 20 { return None }
-  if value[4].to_int() != 45 || value[7].to_int() != 45 || value[10].to_int() != 84 ||
-    value[13].to_int() != 58 || value[16].to_int() != 58 || value[19].to_int() != 90 {
-    return None
-  }
-  let year = match (dream_two(value, 0), dream_two(value, 2)) {
-    (Some(a), Some(b)) => Some(a * 100 + b)
-    _ => None
-  }
-  let month = dream_two(value, 5)
-  let day = dream_two(value, 8)
-  let hour = dream_two(value, 11)
-  let minute = dream_two(value, 14)
-  let second = dream_two(value, 17)
-  match (year, month, day, hour, minute, second) {
-    (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) => {
-      if mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59 { return None }
-      let yy = if mo <= 2 { y - 1 } else { y }
-      let era = if yy >= 0 { yy / 400 } else { (yy - 399) / 400 }
-      let yoe = yy - era * 400
-      let mp = if mo > 2 { mo - 3 } else { mo + 9 }
-      let doy = (153 * mp + 2) / 5 + d - 1
-      let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-      let days = era * 146097 + doe - 719468
-      Some(days * 86400 + h * 3600 + mi * 60 + s)
-    }
-    _ => None
-  }
-}
 
 pub fn dream_due_op(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @base.keys(request, ["op", "vault", "request_id", "at"])
@@ -1025,8 +982,8 @@ pub fn dream_due_op(store : @vault.Storage, entries : Array[@core.Entry], reques
   let opportunities = dream_opportunities(store, entries, None).length()
   let open_ok = open_rounds < max_open
   let opp_ok = opportunities >= min_opp
-  let at_epoch = dream_epoch(at)
-  let last_epoch = if last_closed == "" { None } else { dream_epoch(last_closed) }
+  let at_epoch = @base.utc_epoch(at)
+  let last_epoch = if last_closed == "" { None } else { @base.utc_epoch(last_closed) }
   let cooldown_ok = match (at_epoch, last_epoch) {
     (Some(current), Some(last)) => current >= last + due_after
     _ => true

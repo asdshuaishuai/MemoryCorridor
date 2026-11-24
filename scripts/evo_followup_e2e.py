@@ -48,7 +48,7 @@ def main():
             call("evo-observe", step=step, kind="social", salience=1.0, valence=1.0,
                  subject="user", body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                  at=at(10 + step))
-            if call("evo-proactive-due", at=at(1000 + step))["due"]:
+            if call("evo-proactive-due", at=at(1900 + step))["due"]:
                 due = True
                 break
         assert due, "affect never reached the gate"
@@ -64,7 +64,7 @@ def main():
         run = subprocess.run([sys.executable, str(DRIVER), "--vault", str(vault),
                               "--cli", str(EXE), "--mock", "--ack", "--once",
                               "--driver", "driver-f1", "--followup-parent", parent["id"],
-                              "--user-text", "你为什么这么说？"],
+                              "--user-text", "你为什么这么说？", "--now", at(3050)],
                              capture_output=True, text=True, timeout=120)
         assert run.returncode == 0, (run.stdout, run.stderr)
         assert "mock 跟进·第1轮" in run.stdout, run.stdout
@@ -73,6 +73,11 @@ def main():
         assert len(chain) == 1 and chain[0]["turn"] == 1, chain
         assert chain[0]["user_text"] == "你为什么这么说？", chain
         assert chain[0]["status"] == "done" and chain[0]["delivered_at"], chain
+        # The user's reply is activity: the idle window restarts at the
+        # follow-up's timestamp, not at the last observation.
+        due = call("evo-proactive-due", at=at(3100))
+        assert due["idle"]["last_activity_at"] == at(3050), due
+        assert due["idle"]["seconds_since_activity"] == 50, due
 
         # 2. depth limit: continue the chain to turn 8, then the 9th is refused.
         current = chain[0]["id"]
@@ -81,7 +86,8 @@ def main():
                                   "--cli", str(EXE), "--mock", "--ack", "--once",
                                   "--driver", f"driver-f{turn}",
                                   "--followup-parent", current,
-                                  "--user-text", f"第{turn}轮问题"],
+                                  "--user-text", f"第{turn}轮问题",
+                                  "--now", at(3050 + turn * 10)],
                                  capture_output=True, text=True, timeout=120)
             assert run.returncode == 0, (run.stdout, run.stderr)
             row = next(r for r in call("evo-proactive-list")["proactive"]

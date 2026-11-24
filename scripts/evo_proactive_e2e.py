@@ -60,7 +60,7 @@ def main():
 
         def observe_until_due(limit=160):
             for _ in range(limit):
-                due = call("evo-proactive-due", at=at(1000 + step))
+                due = call("evo-proactive-due", at=at(1900 + step))
                 if due["due"]:
                     return due
                 observe(1)
@@ -139,8 +139,10 @@ def main():
         # 4b. a restarted driver releases its own expired claim instead of
         #     wedging the single in-flight slot.
         observe_until_due()
+        # The claim must be expired when the driver sweeps it; the open itself
+        # still has to sit inside the idle window (a 1970 timestamp has none).
         stale = call("evo-proactive-open", driver="driver-stale",
-                     lease_until="1970-01-01T00:00:01Z", at="1970-01-01T00:00:00Z")
+                     lease_until=at(2001), at=at(2000))
         run = subprocess.run([sys.executable, str(DRIVER), "--vault", str(vault),
                               "--cli", str(EXE), "--once", "--mock", "--driver", "driver-stale"],
                              capture_output=True, text=True, timeout=120)

@@ -49,7 +49,7 @@ def main():
             call("evo-observe", step=step, kind="social", salience=1.0, valence=1.0,
                  subject="user", body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                  at=at(10 + step))
-            if call("evo-proactive-due", at=at(1000 + step))["due"]:
+            if call("evo-proactive-due", at=at(1900 + step))["due"]:
                 due = True
                 break
         assert due, "affect never reached the gate"
@@ -133,7 +133,7 @@ def main():
             call("evo-observe", step=step, kind="social", salience=1.0, valence=1.0,
                  subject="user", body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                  at=at(10 + step))
-            if call("evo-proactive-due", at=at(1000 + step))["due"]:
+            if call("evo-proactive-due", at=at(1900 + step))["due"]:
                 break
         messages = vault / "messages.txt"
         messages.write_text("", encoding="utf-8")

@@ -89,6 +89,7 @@ pub fn tools() -> Array[Tool] {
     { name: "evo-rollback", description: "手动回滚到最佳检查点：广谱种群不复活，被丢弃成员按适应度入化石，回滚次数与事件对账", fields: ["at"] },
     { name: "evo-checkpoint", description: "只读：返回最佳检查点、代际历史、回归/回滚/饱和计数与 no_improve_streak", fields: [] },
     { name: "evo-fossils", description: "只读：列出灭绝/回滚化石（基因组、原因、代际、适应度），供经验审计", fields: [] },
+    { name: "evo-activity", description: "宿主上报 agent 主体活动：单调记录 last_activity_at（较旧或相同时间戳零写重放）；主动发言要求情感冲动 + 距最近活动至少 30 分钟空闲，自监控的 observe 不重置空闲计时", fields: ["at"] },
     { name: "evo-proactive-due", description: "只读：情感/冲动是否该主动发起一次 LLM 调用（reason/urgency/context/cooldown/pending/expired），供宿主驱动轮询", fields: ["at"] },
     { name: "evo-proactive-open", description: "按到期状态创建或接管过期主动请求（driver + 租约）；未过期 pending 背压、未到期拒绝", fields: ["driver", "lease_until", "at"] },
     { name: "evo-proactive-complete", description: "驱动回写 LLM 主动应答（text+model）；仅持有者且租约内，重放幂等", fields: ["id", "driver", "at", "result"] },

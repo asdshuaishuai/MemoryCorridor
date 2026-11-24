@@ -71,6 +71,10 @@ priv struct EvoState {
   active_genome : String?
   last_observe : Json
   last_fire_step : Int?
+  // The last time the agent subject was observably busy (a user turn, a host
+  // report, or initialization). The proactive gate requires a long idle gap
+  // after this stamp; self-monitoring observations never move it.
+  last_activity_at : String?
   guard_hits : Int
   impulses : Int
   blowups : Int
@@ -581,6 +585,12 @@ fn evo_state_from_json(record : Json) -> EvoState raise @base.Fault {
       Number(n, ..) => Some(n.to_int())
       _ => raise @base.Fault(code + ":last_fire_step")
     },
+    last_activity_at: match optional(record, "last_activity_at") {
+      None => None
+      Some(Null) => None
+      Some(String(value)) => Some(value)
+      _ => raise @base.Fault(code + ":last_activity_at")
+    },
     guard_hits: evo_json_int(record, "guard_hits", code),
     impulses: evo_json_int(record, "impulses", code),
     blowups: evo_json_int(record, "blowups", code),
@@ -601,6 +611,10 @@ fn evo_state_json(state : EvoState, updated_at : String) -> Json {
     },
     "last_observe": state.last_observe,
     "last_fire_step": match state.last_fire_step {
+      None => Json::null()
+      Some(value) => value.to_json()
+    },
+    "last_activity_at": match state.last_activity_at {
       None => Json::null()
       Some(value) => value.to_json()
     },
@@ -1478,6 +1492,7 @@ fn evo_init_op(
     "relations": empty_relations.map(evo_relation_json).to_json(),
     "active_genome": members[0].genome,
     "last_observe": Json::null(), "last_fire_step": Json::null(),
+    "last_activity_at": at.to_json(),
     "guard_hits": 0, "impulses": 0, "blowups": 0,
     "created_at": at, "updated_at": at,
   }
@@ -3003,8 +3018,10 @@ fn evo_fossils_op(
 // never calls a model and no other engine module reads these records.
 const EVO_PROACTIVE_COOLDOWN_STEPS : Int = 8
 const EVO_PROACTIVE_MIN_IMPULSE : Double = 0.55
-const EVO_PROACTIVE_HIGH_VALENCE : Double = 0.70
-const EVO_PROACTIVE_LOW_VALENCE : Double = -0.50
+// Proactive speech needs both an emotional impulse and a long idle gap since
+// the agent subject was last busy. Thirty minutes is the product floor; the due
+// response reports the exact requirement and the measured gap.
+const EVO_PROACTIVE_IDLE_SECONDS : Int = 1800
 
 priv struct EvoProactiveDue {
   due : Bool
@@ -3014,6 +3031,9 @@ priv struct EvoProactiveDue {
   pending : Int
   expired : Int
   next_in_steps : Int
+  idle_ok : Bool
+  idle_seconds : Int?
+  last_activity_at : String?
 }
 
 fn evo_proactive_rows(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[Json] raise @base.Fault {
@@ -3025,27 +3045,91 @@ fn evo_proactive_rows(store : @vault.Storage, entries : Array[@core.Entry]) -> A
   rows
 }
 
+// The activity stamp is monotonic: a report older than the recorded one never
+// rewinds the idle gate. `None` means the vault cannot prove idleness, so the
+// gate fails closed until the host reports activity once.
+fn evo_activity_change(
+  store : @vault.Storage, at : String,
+) -> (@vault.Change?, String?) raise @base.Fault {
+  match (store.read)("evo/state.json") {
+    None => raise @base.Fault("evo_not_initialized")
+    Some(text) => {
+      let state = evo_state_from_json(@base.parse(text))
+      let last = state.last_activity_at
+      let newer = match last {
+        Some(existing) => @base.compare(at, existing) > 0
+        None => true
+      }
+      if !newer { (None, last) } else {
+        let content = @base.canonical(evo_state_json({ ..state, last_activity_at: Some(at) }, at))
+        (Some({ path: "evo/state.json", before: Some(text), after: Some(content) }), Some(at))
+      }
+    }
+  }
+}
+
+pub fn evo_activity_op(
+  store : @vault.Storage, entries : Array[@core.Entry], request : Json,
+) -> Json raise @base.Fault {
+  @base.keys(request, ["op", "vault", "request_id", "at"])
+  @vault.verify(store, entries)
+  evo_pause_if_pending(store, entries)
+  let at = evo_at_text(request)
+  let (change, current) = evo_activity_change(store, at)
+  match change {
+    Some(value) => evo_sidecar_commit(store, [value])
+    None => ()
+  }
+  {
+    "reported": true.to_json(),
+    "replayed": change is None,
+    "last_activity_at": match current {
+      None => Json::null()
+      Some(value) => value.to_json()
+    },
+    "fingerprint": @vault.fingerprint(entries),
+  }
+}
+
 fn evo_proactive_id(step : Int, genome : String, window_sha256 : String) -> String {
   @base.hex_hash("evo-proactive-v1\n" + step.to_string() + "\n" + genome + "\n" + window_sha256)
 }
 
 // Pure gates, kept separate so the "when may it speak" contract is testable
-// without a vault: fired_since means the last impulse trigger lies after the
-// most recent proactive request.
-fn evo_proactive_reason(impulse : Double, valence : Double, fired_since : Bool) -> String {
-  if fired_since || impulse >= EVO_PROACTIVE_MIN_IMPULSE {
-    "impulse"
-  } else if valence >= EVO_PROACTIVE_HIGH_VALENCE {
-    "valence_high"
-  } else if valence <= EVO_PROACTIVE_LOW_VALENCE {
-    "valence_low"
-  } else {
-    ""
-  }
+// without a vault. Valence alone never authorizes a proactive turn: the
+// subsystem must actually want to speak. `fired_since` means the impulse
+// network crossed its threshold after the most recent proactive request, i.e.
+// an unexpressed impulse exists even when the scalar has since decayed.
+fn evo_proactive_reason(impulse : Double, fired_since : Bool) -> String {
+  if fired_since || impulse >= EVO_PROACTIVE_MIN_IMPULSE { "impulse" } else { "" }
 }
 
 fn evo_proactive_ready(pending : Int, cooldown_ok : Bool, reason : String) -> Bool {
   pending == 0 && cooldown_ok && reason != ""
+}
+
+// Seconds since the last observable agent activity. `None` means the vault has
+// no activity stamp (a pre-field state record); the gate fails closed then,
+// because it cannot prove the system has been idle.
+fn evo_proactive_idle_seconds(last_activity : String?, at : String) -> Int? {
+  let now = match @base.utc_epoch(at) {
+    Some(value) => value
+    None => return None
+  }
+  match last_activity {
+    Some(value) => match @base.utc_epoch(value) {
+      Some(last) => Some(Int::max(0, now - last))
+      None => None
+    }
+    None => None
+  }
+}
+
+fn evo_proactive_idle_ok(seconds : Int?) -> Bool {
+  match seconds {
+    Some(value) => value >= EVO_PROACTIVE_IDLE_SECONDS
+    None => false
+  }
 }
 
 // An expired claim no longer blocks the outbox: it is the takeover candidate.
@@ -3095,12 +3179,14 @@ fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry],
     if step > last_step { last_step = step }
   }
   let steps = state.steps
+  let valence = if state.emotion.length() > 0 { state.emotion[0] } else { 0.0 }
   let fired_since = match state.last_fire_step {
     Some(fire) => fire > last_step
     None => false
   }
-  let valence = if state.emotion.length() > 0 { state.emotion[0] } else { 0.0 }
-  let reason = evo_proactive_reason(state.impulse, valence, fired_since)
+  let reason = evo_proactive_reason(state.impulse, fired_since)
+  let idle_seconds = evo_proactive_idle_seconds(state.last_activity_at, at)
+  let idle_ok = evo_proactive_idle_ok(idle_seconds)
   let abs_valence = if valence < 0.0 { -valence } else { valence }
   let urgency = evo_clamp(if state.impulse > abs_valence { state.impulse } else { abs_valence }, 0.0, 1.0)
   let context : Json = {
@@ -3111,13 +3197,16 @@ fn evo_proactive_due_state(store : @vault.Storage, entries : Array[@core.Entry],
   }
   let cooldown_ok = steps - last_step >= EVO_PROACTIVE_COOLDOWN_STEPS
   {
-    due: evo_proactive_ready(pending, cooldown_ok, reason),
+    due: evo_proactive_ready(pending, cooldown_ok, reason) && idle_ok,
     reason,
     urgency,
     context,
     pending,
     expired,
     next_in_steps: if cooldown_ok { 0 } else { EVO_PROACTIVE_COOLDOWN_STEPS - (steps - last_step) },
+    idle_ok,
+    idle_seconds,
+    last_activity_at: state.last_activity_at,
   }
 }
 
@@ -3183,6 +3272,18 @@ pub fn evo_proactive_due_op(store : @vault.Storage, entries : Array[@core.Entry]
     "expired": due.expired,
     "next_in_steps": due.next_in_steps,
     "cooldown_steps": EVO_PROACTIVE_COOLDOWN_STEPS,
+    "idle": {
+      "ok": due.idle_ok.to_json(),
+      "seconds_since_activity": match due.idle_seconds {
+        None => Json::null()
+        Some(value) => value.to_json()
+      },
+      "required_seconds": EVO_PROACTIVE_IDLE_SECONDS.to_json(),
+      "last_activity_at": match due.last_activity_at {
+        None => Json::null()
+        Some(value) => value.to_json()
+      },
+    },
     "fingerprint": @vault.fingerprint(entries),
   }
 }
@@ -3575,6 +3676,12 @@ pub fn evo_proactive_followup_op(store : @vault.Storage, entries : Array[@core.E
     { path, before: (store.read)(path), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
+  // The user answered the previous proactive message: that is activity.
+  let (activity, _) = evo_activity_change(store, at)
+  match activity {
+    Some(change) => changes.push(change)
+    None => ()
+  }
   evo_sidecar_commit(store, changes)
   {
     "id": id, "parent": parent_id, "turn": turn, "reason": "followup",
@@ -3714,6 +3821,16 @@ pub fn evo_thread_append_op(store : @vault.Storage, entries : Array[@core.Entry]
     { path, before: Some(row_text), after: Some(content) },
     { path: event_path, before: None, after: Some(event_content) },
   ]
+  // A user turn is observable agent activity: it resets the proactive idle
+  // window in the same transaction. Agent turns do not (the subsystem is
+  // speaking, not the subject being busy).
+  if role == "user" {
+    let (change, _) = evo_activity_change(store, at)
+    match change {
+      Some(value) => changes.push(value)
+      None => ()
+    }
+  }
   evo_sidecar_commit(store, changes)
   { "id": id, "role": role, "turns": turns.length() + 1, "replayed": false,
     "fingerprint": @vault.fingerprint(entries) }
@@ -3805,6 +3922,7 @@ pub fn evo(
     "evo-rollback" => evo_rollback_op(store, entries, request)
     "evo-checkpoint" => evo_checkpoint_op(store, entries)
     "evo-fossils" => evo_fossils_op(store, entries)
+    "evo-activity" => evo_activity_op(store, entries, request)
     "evo-proactive-due" => evo_proactive_due_op(store, entries, request)
     "evo-proactive-open" => evo_proactive_open_op(store, entries, request)
     "evo-proactive-complete" => evo_proactive_complete_op(store, entries, request)

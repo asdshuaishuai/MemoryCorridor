@@ -111,7 +111,8 @@ class Clock:
 class Daemon:
     def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit,
                  clock, reflect_every, consolidate_every, quiet_start, quiet_end,
-                 message_file=None, affect_provider="lexicon", thread=True):
+                 message_file=None, affect_provider="lexicon", thread=True,
+                 activity_file=None):
         self.cli = cli
         self.vault = vault
         self.name = name
@@ -128,6 +129,7 @@ class Daemon:
         self.message_file = message_file
         self.affect_provider = affect_provider
         self.thread = thread
+        self.activity_file = activity_file
         self.state = load_state(vault)
         self.sensed_texts = []
 
@@ -421,6 +423,49 @@ class Daemon:
         return {"step": step, "retention_rate": retro["retention_rate"],
                 "rounds": retro["rounds"], "work": retro["work"]}
 
+    def report_activity(self):
+        """Report the main agent's presence to the engine.
+
+        The host owns the signal (a file the agent touches while it works, or
+        an explicit UTC stamp inside it). Reporting is monotonic and idempotent:
+        the engine ignores older stamps, so a stale file cannot rewind the idle
+        window. Without this, self-monitoring observations would look like
+        activity and proactive speech could interrupt a busy agent.
+        """
+        if not self.activity_file:
+            return None
+        path = Path(self.activity_file)
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        stamp = None
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            text = ""
+        if len(text) == 20 and text.endswith("Z"):
+            try:
+                datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
+                stamp = text
+            except ValueError:
+                stamp = None
+        if stamp is None:
+            stamp = datetime.fromtimestamp(stat.st_mtime, timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+        if stamp == self.state.get("last_activity_report"):
+            return stamp
+        try:
+            driver.call(self.cli, self.vault, "evo-activity", at=stamp)
+        except RuntimeError as error:
+            # A paused human gate blocks engine writes by design; the idle
+            # window simply does not advance until it clears.
+            if "evo_disabled" in str(error) or "evo_paused_human_gate" in str(error):
+                return None
+            raise
+        self.state["last_activity_report"] = stamp
+        return stamp
+
     def tick(self):
         at = self.clock.stamp()
         try:
@@ -431,6 +476,7 @@ class Daemon:
             raise
         if not status.get("initialized"):
             return {"stopped": "evo_not_initialized", "at": at}
+        activity = self.report_activity()
         driver.sweep_stale(self.cli, self.vault, self.name, stamp=at)
         # Speak from the state the soul already has, then absorb the new
         # perception. A fresh negative observation must not swallow a gate that
@@ -496,7 +542,8 @@ class Daemon:
         self.state["last_tick"] = at
         save_state(self.vault, self.state)
         self.clock.advance()
-        return {"at": at, "cycle": self.state["cycles"], "messages": messages,
+        return {"at": at, "cycle": self.state["cycles"], "activity": activity,
+                "messages": messages,
                 "reply": reply_row,
                 "sense": sense, "speech": speech, "reflection": reflection,
                 "expression": expression, "rsi": rsi}
@@ -529,6 +576,9 @@ def main() -> int:
                         help="quiet-hours end hour (0..23)")
     parser.add_argument("--message-file", default=None,
                         help="host-owned newline-delimited user messages to sense")
+    parser.add_argument("--activity-file", default=None,
+                        help="host-owned presence file: an explicit UTC stamp inside it (or its mtime) "
+                             "is reported as agent activity; while it moves, proactive speech stays closed")
     parser.add_argument("--no-thread", action="store_true",
                         help="do not open a conversation thread after delivery")
     parser.add_argument("--affect-provider", default="auto",
@@ -550,7 +600,7 @@ def main() -> int:
                     args.reflect_every, args.consolidate_every,
                     args.quiet_start, args.quiet_end,
                     args.message_file, args.affect_provider,
-                    not args.no_thread)
+                    not args.no_thread, args.activity_file)
     target = args.ticks or (1 if args.once else 0)
     try:
         while True:

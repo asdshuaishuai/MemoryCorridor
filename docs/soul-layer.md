@@ -24,7 +24,10 @@
 5. **主动性闭环**：outbox 的 peek/claim/complete/ack，至少一次投递，不重复、不丢话；
    驱动把最近一条已投递回复带入下一轮 prompt（承接，不重复）；用户回复后可开
    同链跟进（≤8 轮，仍受投递/在飞/深度门禁）；**用户轮次经 `evo-thread-*` 进入引擎**，
-   驱动/daemon 以线程为上下文开口。主动发言使用**固定提示词模板**（`evo-prompt-v3`，续七十起以「这是你心中涌现出来的想法」开场——prompt 的九段不是指令，而是灵魂自己心中浮现的东西），
+   驱动/daemon 以线程为上下文开口。**主动发言必须同时满足情感冲动与主体空闲**：
+   冲动值达阈值（或上次触发跨过最近请求），且距最近一次 agent 主体活动 ≥30 分钟；
+   `evo-observe` 这类子系统自监控不算活动，用户轮次/跟进回复与 `evo-activity` 才算。
+   主 agent 活动期间（presence 文件持续更新）情感系统不主动触发。主动发言使用**固定提示词模板**（`evo-prompt-v3`，续七十起以「这是你心中涌现出来的想法」开场——prompt 的九段不是指令，而是灵魂自己心中浮现的东西），
    `evo_agent_driver.build_prompt`：角色边界、当前时间、内在状态（情感三维/冲动/触发
    原因/紧迫度）、身体负荷、关系对象、记忆痕迹（`memory-prefetch` 有界 3 条——线索是
    **起点不是边界**，只禁止虚构痕迹里不存在的细节细节，不限制延展联想）、最近对话、
@@ -95,6 +98,7 @@
 | `--reflect-every`（默认 600s） | 反思：`dream-retro` 跨轮账本 → 一条 `reflection` 观察 | evo 观察 |
 | `--consolidate-every`（默认 1800s） | 凝练：`dream-due` 到期时跑一圈 RSI driver | `state/dreams/`、`state/dream-work/` |
 | `--quiet-start/--quiet-end`（默认 22–7） | 安静时段只累计 deferred 意图，不开请求；早上再开口 | daemon state |
+| `--activity-file` | 主 agent 的 presence 文件：文件内显式 UTC 戳（缺省 mtime）经 `evo-activity` 上报；文件持续更新时空闲门关闭，不主动发声 | evo `last_activity_at` |
 | 轮次关闭后 | 桥把 `outcome.delta` 回灌为观察（游标去重） | evo 观察 |
 
 用户消息由宿主侧 `scripts/nlp_adapter.py` 转成 affect（lexicon 或 LLM provider），

@@ -34,12 +34,35 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CLI = ROOT / "_build/native/debug/build/cli/cli.exe"
 
 
+# A fixed clock makes host-side flows reproducible in tests: when set, every
+# `now()` advances the simulated timeline by one second so lease and event
+# ordering stay monotonic without touching the wall clock.
+_CLOCK_BASE = None
+_CLOCK_TICKS = 0
+
+
+def set_clock(value: str) -> None:
+    global _CLOCK_BASE, _CLOCK_TICKS
+    _CLOCK_BASE = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    _CLOCK_TICKS = 0
+
+
+def _clock_now():
+    if _CLOCK_BASE is None:
+        return datetime.now(timezone.utc)
+    global _CLOCK_TICKS
+    value = _CLOCK_BASE + timedelta(seconds=_CLOCK_TICKS)
+    _CLOCK_TICKS += 1
+    return value
+
+
 def now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _clock_now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def iso_in(seconds: int) -> str:
-    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    base = _CLOCK_BASE + timedelta(seconds=_CLOCK_TICKS) if _CLOCK_BASE else datetime.now(timezone.utc)
+    return (base + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def call(cli: str, vault: str, op: str, **fields):
@@ -324,7 +347,13 @@ def main() -> int:
                         help="the user's reply for --followup-parent")
     parser.add_argument("--no-thread", action="store_true",
                         help="do not open a conversation thread after delivery")
+    parser.add_argument("--now", default=None,
+                        help="fixed UTC start time (YYYY-MM-DDTHH:MM:SSZ) for deterministic tests")
     args = parser.parse_args()
+    if args.now:
+        if len(args.now) != 20:
+            parser.error("--now must be YYYY-MM-DDTHH:MM:SSZ")
+        set_clock(args.now)
     args.thread = not args.no_thread
     if args.followup_parent:
         if not args.user_text:

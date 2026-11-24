@@ -38,13 +38,15 @@ def main():
             assert response["ok"], response
             return response["result"]
 
-        def daemon():
+        def daemon(activity_file=None):
             # Simulated clock: keep this e2e independent of wall-clock quiet hours.
-            run = subprocess.run([sys.executable, str(DAEMON), "--vault", str(vault),
-                                  "--cli", str(EXE), "--once", "--mock", "--with-rsi",
-                                  "--driver", "daemon-a", "--now", "2026-11-13T10:00:00Z",
-                                  "--tick-seconds", "60"],
-                                 capture_output=True, text=True, timeout=300)
+            command = [sys.executable, str(DAEMON), "--vault", str(vault),
+                       "--cli", str(EXE), "--once", "--mock", "--with-rsi",
+                       "--driver", "daemon-a", "--now", "2026-11-13T10:00:00Z",
+                       "--tick-seconds", "60"]
+            if activity_file is not None:
+                command += ["--activity-file", str(activity_file)]
+            run = subprocess.run(command, capture_output=True, text=True, timeout=300)
             assert run.returncode == 0, (run.stdout, run.stderr)
             return json.loads(run.stdout.strip().splitlines()[-1]), run
 
@@ -81,7 +83,7 @@ def main():
             call("evo-observe", step=step, kind="social", salience=1.0, valence=1.0,
                  subject="user", body={"cpu": 0.1, "memory": 0.1, "latency": 0.1, "budget": 0.1},
                  at=at(10 + step))
-            if call("evo-proactive-due", at=at(1000 + step))["due"]:
+            if call("evo-proactive-due", at=at(1900 + step))["due"]:
                 due = True
                 break
         assert due, "affect never reached the proactive gate"
@@ -107,6 +109,25 @@ def main():
         # immediate second tick is a no-op for both.
         assert second["reflection"] is None and second["rsi"] is None, second
         assert any(item["source"].get("round") for item in second["sense"]["observed"]), second
+
+        # The main agent's presence file is the idle signal: a stamp one minute
+        # before this tick reports activity, so the engine's idle gate stays
+        # closed and the soul does not interrupt a busy subject. An older stamp
+        # cannot rewind the window.
+        presence = vault / "agent-activity"
+        presence.write_text("2026-11-13T09:59:00Z", encoding="utf-8")
+        third, _ = daemon(presence)
+        assert third["activity"] == "2026-11-13T09:59:00Z", third
+        assert third["speech"] is None, third
+        due = call("evo-proactive-due", at="2026-11-13T10:00:00Z")
+        assert due["idle"]["last_activity_at"] == "2026-11-13T09:59:00Z", due
+        assert due["idle"]["seconds_since_activity"] == 60, due
+        assert due["due"] is False, due
+        presence.write_text("2026-11-13T09:58:00Z", encoding="utf-8")
+        fourth, _ = daemon(presence)
+        assert fourth["activity"] == "2026-11-13T09:58:00Z", fourth
+        stale_due = call("evo-proactive-due", at="2026-11-13T10:00:00Z")
+        assert stale_due["idle"]["last_activity_at"] == "2026-11-13T09:59:00Z", stale_due
 
         # The soul switch is authoritative: disabling evo stops the daemon.
         call("evo-policy", enabled=False, at=at(5000))

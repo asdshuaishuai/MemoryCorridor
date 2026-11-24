@@ -243,8 +243,12 @@ v1.1 已覆盖（续三十二，证据见 `evo_wbtest` 的 `evo_no_improve_step`
 
 v1.2 已覆盖（续三十三，证据见 `scripts/evo_proactive_e2e.py` 与 `evo_wbtest`）：
 
-- 主动式闸门：情感/冲动达到阈值或上次触发跨过最近请求时才 `due`；冷却 8 个观察步、
-  1 条 pending/claimed 背压；关闭 evo 后五个主动式 op 全部 `evo_disabled`。
+- 主动式闸门：**情感冲动 + agent 主体长时间空闲**两条同时成立才 `due`。冲动为
+  冲动值 ≥0.55，或冲动网络在上一次主动请求之后跨越过阈值（尚未表达的冲动）；效价
+  单独不构成理由。空闲要求距最近一次可观察的主体活动（初始化、`evo-activity`、
+  用户线程轮次、用户跟进回复）≥1800 秒；`evo-observe` 是子系统自监控，不重置窗口；
+  没有活动戳的旧状态失败关闭。另有冷却 8 个观察步、1 条 pending/claimed 背压；
+  关闭 evo 后六个主动式 op（含 `evo-activity`）全部 `evo_disabled`。
 - 归属与恢复：`evo-proactive-open` 原子认领（driver+lease），仅持有者可在租约内
   complete/fail；同载荷重放零写；失败原因进入记录与事件。
 - 宿主驱动：`scripts/evo_agent_driver.py` 轮询 due → open → 调 LLM（测试用 mock，
