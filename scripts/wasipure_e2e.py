@@ -283,6 +283,7 @@ def main():
                at="2026-10-31T09:00:00Z", key="photosynthesis-preference")
         assert s.call("memory-list", workspace=ws)["notes"][0]["valid"] is True
         assert isinstance(s.call("inbox", workspace=ws)["items"], list)
+        assert s.call("memory-export", workspace=ws)["notes"] == 1
         check("memory layer and inbox through the pure-WASI dispatch")
 
         # External drift refusal and restore.
@@ -410,7 +411,7 @@ def main():
         assert mcp_lines[0]["result"]["protocolVersion"] == "2024-11-05"
         assert mcp_lines[1]["error"]["data"]["error_code"] == "initialization_required"
         # 通知静默：第三行必须是 id=3 的 tools/list 回复
-        assert mcp_lines[2]["id"] == 3 and len(mcp_lines[2]["result"]["tools"]) == 133
+        assert mcp_lines[2]["id"] == 3 and len(mcp_lines[2]["result"]["tools"]) == 134
         init_reply = mcp_lines[3]
         assert init_reply["result"]["isError"] is True
         fault = init_reply["result"]["structuredContent"]["result"]["error"]

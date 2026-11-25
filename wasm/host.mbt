@@ -78,7 +78,13 @@ fn path_ptr_of(text : String) -> (Bytes, Int) raise @base.Fault {
 // same object the GC keeps alive across the call.
 fn host_call_buffer(path : String, refused : String, call : (Int, Int, Int, Int) -> Int) -> Bytes? raise @base.Fault {
   let (encoded, path_ptr) = path_ptr_of(path)
-  let mut cap = 1048576
+  // Start in the small-object heap. Result buffers are GC-owned linear memory
+  // handed to the host; a 1 MiB allocation made after a long request was
+  // observed to receive the host write at an address the engine then read as
+  // zeros. The retry protocol already reports the exact size, so starting at
+  // 64 KiB costs one extra round trip for larger files and keeps this buffer
+  // out of the large-object path.
+  let mut cap = 65536
   for _ in 0..<24 {
     let res = Bytes::new(cap)
     let res_ptr = bytes2ptr(res)

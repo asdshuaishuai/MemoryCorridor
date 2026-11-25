@@ -198,6 +198,7 @@ pub fn dispatch_with_catalog(
     "memory-archive" => memory_archive(store, entries, request)
     "memory-restore" => memory_restore(store, entries, request)
     "memory-list" => memory_list(store, entries, request)
+    "memory-export" => memory_export(store, entries, request)
     "memory-read" => memory_read(store, entries, request)
     "memory-pin" => memory_protect(store, entries, request)
     "memory-use" => memory_use(store, entries, request)

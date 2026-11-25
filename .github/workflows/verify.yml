@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 # Two jobs, not one. `scripts/verify.sh` alone (native + three WASM faces + web
-# + protocol + 225-entry mutation gate) already runs close to four hours on a
+# + protocol + 230-entry mutation gate) already runs close to four hours on a
 # hosted runner; appending the release packaging to the same job pushed it past
 # the old 240-minute limit and got runs cancelled *after* the verify step had
 # already succeeded. Each job now owns its own budget.

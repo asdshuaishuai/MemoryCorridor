@@ -167,6 +167,8 @@ def main():
             assert isinstance(inbox["items"], list)
             prefetch = s.call("memory-prefetch", workspace=ws, query="光合作用 实验", limit=5)
             assert prefetch["candidates"] >= 1 and prefetch["notes"][0]["conflicted"] is False
+            exported = s.call("memory-export", workspace=ws)
+            assert exported["notes"] == 1 and exported["session_notes"] == 0
             check("memory layer and inbox answer through the wasm dispatch")
 
             # External drift must be refused by the engine hashing host reads.
@@ -211,7 +213,7 @@ def main():
                 mcp_send({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
                 tools = mcp_read()
                 assert tools["id"] == 3
-                assert len(tools["result"]["tools"]) == 133
+                assert len(tools["result"]["tools"]) == 134
                 # 进度令牌：tools/call 产生 started/completed 通知行 + 回复行
                 mcp_send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                     "name": "corridor_status", "arguments": {"vault": str(root)},

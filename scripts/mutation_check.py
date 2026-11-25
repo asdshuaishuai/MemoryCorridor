@@ -1577,6 +1577,38 @@ MUTATIONS = [
      '''  @base.hex_hash("memory-conflict-v2\\n" + note.kind + "\\n" + @base.canonical(conditions.to_json()))''',
      "conflicts stay inside a workspace and a visibility scope"),
 
+    ("the assistant export must skip session notes",
+     "agent/memory_export.mbt",
+     '''      if note.status != "active" || note.scope != "project" { continue }''',
+     '''      if note.status != "active" { continue }''',
+     "export publishes active project notes and never session notes"),
+
+    ("the assistant export must skip archived notes",
+     "agent/memory_export.mbt",
+     '''      if note.status != "active" || note.scope != "project" { continue }''',
+     '''      if note.scope != "project" { continue }''',
+     "export is idempotent and removes stale files"),
+
+    ("wasm read buffers must stay in the small-object heap",
+     "wasm/host.mbt",
+     '''  let mut cap = 65536''',
+     '''  let mut cap = 1048576''',
+     "wasm service e2e: boundary scenarios passed",
+     "wasm_service_e2e.py"),
+
+    ("the assistant export must remove stale files",
+     "agent/memory_export.mbt",
+     '''      (store.remove)(path)
+      removed += 1''',
+     '''      removed += 1''',
+     "export is idempotent and removes stale files"),
+
+    ("an unchanged export must not rewrite files",
+     "agent/memory_export.mbt",
+     '''      Some(old) => if old == content { unchanged += 1 } else {''',
+     '''      Some(_old) => if false { unchanged += 1 } else {''',
+     "export is idempotent and removes stale files"),
+
     ("proactive speech must wait for a long idle window",
      "agent/evo.mbt",
      '''    due: evo_proactive_ready(pending, cooldown_ok, reason) && idle_ok,''',

@@ -658,6 +658,18 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     call(target, "rebuild")
     call(target, "verify")
 
+    # The assistant export is derived and rebuildable: it lists the workspace in
+    # projects.json, writes active project notes as Markdown, and a second run
+    # touches nothing.
+    exported = call(root, "memory-export", workspace=ws)
+    assert exported["notes"] >= 1 and exported["session_notes"] == 0, exported
+    assert (root / "index/projects.json").is_file()
+    exported_files = sorted((root / "index/memory" / ws).glob("*.md"))
+    assert len(exported_files) == exported["notes"], exported
+    assert exported["notes"] and "conditions" in exported_files[0].read_text(encoding="utf-8")
+    again = call(root, "memory-export", workspace=ws)
+    assert again["written"] == 0 and again["removed"] == 0, again
+
     # Every aggregator reached from dispatch must notice an external edit, not
     # silently serve the tampered bytes. `graph_unchecked` trusts its caller, so
     # this is what keeps that trust honest.

@@ -61,6 +61,7 @@ pub fn tools() -> Array[Tool] {
     { name: "memory-archive", description: "归档记忆笔记，移出默认检索与预取范围；仍可列出和恢复", fields: ["workspace", "session", "id", "at"] },
     { name: "memory-restore", description: "恢复已归档记忆笔记为 active", fields: ["workspace", "session", "id", "at"] },
     { name: "memory-list", description: "列出记忆笔记、适用条件、supersede 链和来源失效状态", fields: ["workspace", "session"] },
+    { name: "memory-export", description: "把已登记工作区的 active 项目级记忆导出为 index/projects.json 与 index/memory/<工作区>/<id>.md，供全局助理只读浏览；会话级笔记只计数不导出；派生物可整目录删除后重建，workspace 可选（默认全部）", fields: ["workspace"] },
     { name: "memory-read", description: "按 id 读取单条记忆笔记及其适用条件、冲突与来源失效状态", fields: ["workspace", "session", "id"] },
     { name: "memory-pin", description: "设置或清除记忆笔记的 pinned 标记（仅 active 笔记，已归档/已替代的拒绝）；pinned 笔记拒绝 memory-archive，避免自动整理丢掉重要判断", fields: ["workspace", "session", "id", "pinned", "at"] },
     { name: "memory-use", description: "登记本次前台用到过的记忆笔记，写入 last_used_at；供宿主判断哪些笔记长期未用而可归档。prefetch 本身只读，不自动记录使用", fields: ["workspace", "session", "ids", "at"] },
