@@ -112,7 +112,7 @@ class Daemon:
     def __init__(self, cli, vault, name, mock, ack, with_rsi, expression, limit,
                  clock, reflect_every, consolidate_every, quiet_start, quiet_end,
                  message_file=None, affect_provider="lexicon", thread=True,
-                 activity_file=None):
+                 activity_file=None, workspace=None):
         self.cli = cli
         self.vault = vault
         self.name = name
@@ -130,6 +130,7 @@ class Daemon:
         self.affect_provider = affect_provider
         self.thread = thread
         self.activity_file = activity_file
+        self.workspace = workspace
         self.state = load_state(vault)
         self.sensed_texts = []
 
@@ -301,7 +302,8 @@ class Daemon:
             else:
                 history = driver.parent_reply(self.cli, self.vault, parent)
                 thread = driver.thread_turns(self.cli, self.vault)
-                memories = driver.fetch_memory_lines(self.cli, self.vault, user_text)
+                memories = driver.fetch_memory_lines(self.cli, self.vault, user_text,
+                                                     self.workspace)
                 text, model, _ = driver.curious_reply(driver.build_prompt(
                     opened, history, thread, now_dt=self.clock.current,
                     memories=memories))
@@ -361,7 +363,8 @@ class Daemon:
             else:
                 rels = opened["context"]["relations"]
                 query = rels[0]["subject"] if rels else ""
-                memories = driver.fetch_memory_lines(self.cli, self.vault, query)
+                memories = driver.fetch_memory_lines(self.cli, self.vault, query,
+                                                     self.workspace)
                 text, model, _ = driver.curious_reply(driver.build_prompt(
                     opened, history, thread, now_dt=self.clock.current,
                     memories=memories))
@@ -552,6 +555,8 @@ class Daemon:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Minimal digital-soul daemon for evo")
     parser.add_argument("--vault", required=True)
+    parser.add_argument("--workspace", default=None,
+                        help="registered workspace id for memory leads")
     parser.add_argument("--cli", default=str(driver.DEFAULT_CLI))
     parser.add_argument("--driver", default="evo-daemon")
     parser.add_argument("--interval", type=float, default=60.0)
@@ -600,7 +605,7 @@ def main() -> int:
                     args.reflect_every, args.consolidate_every,
                     args.quiet_start, args.quiet_end,
                     args.message_file, args.affect_provider,
-                    not args.no_thread, args.activity_file)
+                    not args.no_thread, args.activity_file, args.workspace)
     target = args.ticks or (1 if args.once else 0)
     try:
         while True:

@@ -183,6 +183,13 @@ def main():
             call("init", purpose="真实路径主动应答")
             call("evo-policy", enabled=True, at="2026-11-17T00:00:00Z")
             call("evo-init", seed=7, at="2026-11-17T00:00:01Z")
+            # Memory leads are workspace-scoped: register one and seed a note
+            # that matches the relation subject the proactive prompt queries.
+            ws = call("workspace-open", path="/test/evo-prompt",
+                      at="2026-11-17T00:00:02Z")["id"]
+            call("memory-submit", workspace=ws, kind="preference", scope="project",
+                 text="user 喜欢青瓷特展", conditions=[], sources=[],
+                 at="2026-11-17T00:00:03Z", key="prompt-lead")
             step = 0
             for _ in range(160):
                 step += 1
@@ -200,6 +207,7 @@ def main():
             ]}
             evo = run(server, "evo_agent_driver.py", "--vault", str(vault),
                       "--cli", str(EXE), "--once", "--ack", "--driver", "evo-llm",
+                      "--workspace", ws,
                       env_extra={"EVO_LLM_ENDPOINT": endpoint, "EVO_LLM_MODEL": "fake-model"})
             assert evo.returncode == 0, (evo.stdout, evo.stderr)
             assert "青瓷特展今天开幕" in evo.stdout, (evo.stdout, evo.stderr)
@@ -212,7 +220,8 @@ def main():
                            "【内在状态】", "【身体负荷】", "【关系对象】", "【记忆线索】",
                            "【自主性】", "【怎样推理】", "【输出要求】"):
                 assert marker in chat_calls[0]["prompt"], (marker, chat_calls[0]["prompt"][:400])
-            assert "没有相关记忆线索" in chat_calls[0]["prompt"]
+            assert "user 喜欢青瓷特展" in chat_calls[0]["prompt"]
+            assert "没有相关记忆线索" not in chat_calls[0]["prompt"]
             assert "【网络内容】" in chat_calls[1]["prompt"], chat_calls[1]["prompt"][:400]
             assert "青瓷特展今日开幕" in chat_calls[1]["prompt"], chat_calls[1]["prompt"][:400]
 

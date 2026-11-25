@@ -79,16 +79,20 @@ PROMPT_TEMPLATE_VERSION = "evo-prompt-v3"
 WEEKDAY_CN = "一二三四五六日"
 
 
-def fetch_memory_lines(cli: str, vault: str, query: str, limit: int = 3) -> list:
+def fetch_memory_lines(cli: str, vault: str, query: str, workspace: str | None = None,
+                       limit: int = 3) -> list:
     """Bounded memory leads for the prompt: top BM25 note texts, truncated.
 
-    Any engine fault (empty vault, no notes yet) degrades to no leads — the
-    prompt section then tells the model not to invent memories.
+    Memory is workspace-scoped: without a workspace the engine refuses the
+    query, so the driver skips it and the prompt says there are no leads. Any
+    engine fault (empty workspace, no notes yet) degrades the same way — the
+    prompt then tells the model not to invent memories.
     """
-    if not query:
+    if not query or not workspace:
         return []
     try:
-        rows = call(cli, vault, "memory-prefetch", query=query[:64], limit=limit)["notes"]
+        rows = call(cli, vault, "memory-prefetch", workspace=workspace,
+                    query=query[:64], limit=limit)["notes"]
     except RuntimeError:
         return []
     lines = []
@@ -299,7 +303,7 @@ def sweep_stale(cli: str, vault: str, driver: str, stamp: str = None) -> None:
 
 
 def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str,
-                  mock: bool, ack: bool) -> int:
+                  mock: bool, ack: bool, workspace: str | None = None) -> int:
     opened = call(cli, vault, "evo-proactive-followup", id=parent, user_text=user_text,
                   driver=driver, lease_until=iso_in(300), at=now())
     history = parent_reply(cli, vault, parent)
@@ -310,7 +314,7 @@ def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str
                     "我接着回应。")
             model = "mock"
         else:
-            memories = fetch_memory_lines(cli, vault, user_text)
+            memories = fetch_memory_lines(cli, vault, user_text, workspace)
             text, model, _ = curious_reply(build_prompt(
                 opened, history, thread, now_dt=datetime.now(timezone.utc),
                 memories=memories))
@@ -333,6 +337,8 @@ def followup_once(cli: str, vault: str, driver: str, parent: str, user_text: str
 def main() -> int:
     parser = argparse.ArgumentParser(description="Proactive agent driver for the evo subsystem")
     parser.add_argument("--vault", required=True)
+    parser.add_argument("--workspace", default=None,
+                        help="registered workspace id; without it the prompt carries no memory leads")
     parser.add_argument("--cli", default=str(DEFAULT_CLI))
     parser.add_argument("--driver", default="evo-agent-driver")
     parser.add_argument("--interval", type=float, default=15.0)
@@ -391,7 +397,7 @@ def main() -> int:
             else:
                 rels = opened["context"]["relations"]
                 query = rels[0]["subject"] if rels else ""
-                memories = fetch_memory_lines(args.cli, args.vault, query)
+                memories = fetch_memory_lines(args.cli, args.vault, query, args.workspace)
                 text, model, _ = curious_reply(build_prompt(
                     opened, history, thread, now_dt=datetime.now(timezone.utc),
                     memories=memories))
