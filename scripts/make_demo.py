@@ -29,6 +29,8 @@ def call(op, **fields):
 
 
 call("init", purpose="理解 MemoryCorridor 的编译式知识设计、检索接口和来源维护约束。")
+WORKSPACE = call("workspace-open", path="/demo/project",
+                 at="2026-10-01T00:00:00Z")["id"]
 shutil.copyfile(REPO / "PROPOSAL.md", root / "raw/项目方案.md")
 shutil.copyfile(REPO / "LICENSE", root / "raw/LICENSE.txt")
 call("scan")
@@ -71,12 +73,12 @@ for kind, text, conditions, key in [
     ("decision", "演示 vault 只使用仓库内真实资料，不引入外部样例数据",
      ["构建演示或测试资料时"], "demo-sources"),
 ]:
-    call("memory-submit", kind=kind, scope="workspace", text=text,
+    call("memory-submit", kind=kind, scope="project", workspace=WORKSPACE, text=text,
          conditions=conditions, sources=[], at="2026-11-03T10:00:00Z", key=key)
 
 # One note bound to a registered source, so `valid` / `source_hashes` and the
 # drift detection are visible rather than always empty.
-call("memory-submit", kind="fact", scope="workspace",
+call("memory-submit", kind="fact", scope="project", workspace=WORKSPACE,
      text="方案文档给出分期边界；引用其中结论前先回原文核对",
      conditions=["引用方案文档结论时"], sources=["raw/项目方案.md"],
      at="2026-11-03T10:05:00Z", key="proposal-fact")
@@ -90,11 +92,11 @@ call("research-topic", topic="MoonBit 文学化目录的编译期校验边界",
 # Two competing judgments under the same conditions: A5's Autodream keeps both
 # sides and marks the group for human confirmation instead of picking a winner.
 # Without this pair `memory-conflicts` is always empty in the demo.
-call("memory-submit", kind="fact", scope="workspace",
+call("memory-submit", kind="fact", scope="project", workspace=WORKSPACE,
      text="官窑断代的首要依据是胎质致密度",
      conditions=["判断官窑断代依据时"], sources=[], at="2026-11-03T10:25:00Z",
      key="dating-a")
-call("memory-submit", kind="fact", scope="workspace",
+call("memory-submit", kind="fact", scope="project", workspace=WORKSPACE,
      text="官窑断代的首要依据是釉层厚度与开片形态",
      conditions=["判断官窑断代依据时"], sources=[], at="2026-11-03T10:26:00Z",
      key="dating-b")
@@ -103,11 +105,11 @@ call("memory-submit", kind="fact", scope="workspace",
 # same tokens in different bytes. `memory-candidates` proposes merging it into
 # the keeper, which is the other half of Autodream consolidation.
 reworded = "官窑记录的器形与釉色特征可以据此核对，包括胎质、釉层厚度与开片形态，便于断代参考"
-call("memory-submit", kind="fact", scope="workspace",
+call("memory-submit", kind="fact", scope="project", workspace=WORKSPACE,
      text=reworded.replace("，", "；"),
      conditions=["核对釉色时"], sources=[], at="2026-11-03T10:27:00Z",
      key="reworded-a")
-call("memory-submit", kind="fact", scope="workspace",
+call("memory-submit", kind="fact", scope="project", workspace=WORKSPACE,
      text=reworded.replace("，", "、"),
      conditions=["撰写展陈说明时"], sources=[], at="2026-11-03T10:28:00Z",
      key="reworded-b")

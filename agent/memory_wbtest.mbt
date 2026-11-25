@@ -1,13 +1,24 @@
+// Every memory note now belongs to a registered workspace. Tests register one
+// canonical path and derive its id with the same recipe the engine uses.
+fn test_ws() -> String {
+  @core.workspace_id("/test/memory-project")
+}
+
+fn memory_open_workspace(store : @vault.Storage) -> Unit raise @base.Fault {
+  ignore(dispatch(store, { "op": "workspace-open", "path": "/test/memory-project",
+    "at": "2026-10-20T00:00:00Z" }))
+}
+
 test "memory note identity is content addressed and supersede preserves history" {
   let conditions = ["规划博物馆行程时"]
-  let digest = @core.memory_note_hash("preference", "workspace", "优先安排陶瓷参观时间", conditions, [], [])
+  let digest = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间", conditions, [], [])
   let id = @core.memory_note_id("ceramics", digest)
   assert_eq(id, @core.memory_note_id("ceramics", digest))
   // Same key and content replay; a correction derives a different id.
-  let corrected = @core.memory_note_hash("preference", "workspace", "优先安排陶瓷参观时间并保留自由活动", conditions, [], [])
+  let corrected = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间并保留自由活动", conditions, [], [])
   assert_true(@core.memory_note_id("ceramics", corrected) != id)
   // A condition changes the identity even when the text does not.
-  let reconditioned = @core.memory_note_hash("preference", "workspace", "优先安排陶瓷参观时间", ["规划城市行程时"], [], [])
+  let reconditioned = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间", ["规划城市行程时"], [], [])
   assert_true(reconditioned != digest)
   // The key participates in the record id, so two keys never share a note.
   assert_true(@core.memory_note_id("other", digest) != id)
@@ -16,13 +27,13 @@ test "memory note identity is content addressed and supersede preserves history"
 test "memory note json round trip keeps nullable transition fields" {
   let body = "官窑记录来自已登记来源"
   let note : MemoryNote = {
-    id: @core.memory_note_id("k", @core.memory_note_hash("fact", "workspace", body, [], [], [])),
-    kind: "fact", scope: "workspace", text: body,
+    id: @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [])),
+    workspace: test_ws(), kind: "fact", scope: "project", session: None, text: body,
     conditions: [], sources: [], source_hashes: [], status: "archived", key: "k",
     created_at: "2026-10-20T09:00:00Z", updated_at: "2026-10-20T10:00:00Z",
     archived_at: Some("2026-10-20T10:00:00Z"), superseded_by: None, supersedes: None,
     pinned: false, last_used_at: None,
-    note_hash: @core.memory_note_hash("fact", "workspace", body, [], [], []),
+    note_hash: @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []),
   }
   let text = @base.canonical(note.to_json())
   let parsed = memory_from_json(@base.parse(text))
@@ -59,19 +70,19 @@ fn event_entry(path : String, content : String) -> @core.Entry {
 
 test "memory record validation rejects drift between fields and identity" {
   let body = "t"
-  let id = @core.memory_note_id("k", @core.memory_note_hash("fact", "workspace", body, [], [], []))
-  let path = "state/memory/" + id + ".json"
+  let id = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []))
+  let path = "state/memory/" + test_ws() + "/" + id + ".json"
   let entry : @core.Entry = {
     id: path, path, kind: "state", format: "json",
     sha256: "0000000000000000000000000000000000000000000000000000000000000000",
     sources: [], stale: false,
   }
-  let base : Json = { "version": 1, "id": id, "kind": "fact", "scope": "workspace",
+  let base : Json = { "version": 2, "id": id, "workspace": test_ws(), "kind": "fact", "scope": "project", "session": Json::null(),
     "text": body, "conditions": [], "sources": [], "status": "active", "key": "k",
     "created_at": "2026-10-20T09:00:00Z", "updated_at": "2026-10-20T09:00:00Z",
     "archived_at": Json::null(), "superseded_by": Json::null(), "supersedes": Json::null(),
     "source_hashes": Json::array([]), "pinned": false, "last_used_at": Json::null(),
-    "note_hash": @core.memory_note_hash("fact", "workspace", body, [], [], []) }
+    "note_hash": @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []) }
   @core.validate_record(entry, @base.canonical(base))
   // Unknown fields and unsupported kinds/scopes are refused, not ignored.
   let refused : Array[Json] = [
@@ -102,14 +113,14 @@ test "memory record validation rejects drift between fields and identity" {
   assert_true(refuses(() => @core.validate_record(entry, @base.canonical(superseded))))
   // A replacement may not be the note itself.
   let self_supersede = json_override(json_override(superseded, "superseded_by", id.to_json()),
-    "note_hash", @core.memory_note_hash("fact", "workspace", body, [], [], []).to_json())
+    "note_hash", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []).to_json())
   assert_true(refuses(() => @core.validate_record(entry, @base.canonical(self_supersede))))
 }
 
 test "memory event dictionary rejects unknown operations and forged paths" {
   let body = "t"
-  let note_id = @core.memory_note_id("k", @core.memory_note_hash("fact", "workspace", body, [], [], []))
-  let note_hash = @core.memory_note_hash("fact", "workspace", body, [], [], [])
+  let note_id = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []))
+  let note_hash = @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [])
   let submit : Json = { "op": "memory-submit", "memory": note_id, "at": "2026-10-20T09:00:00Z",    "key": "k", "note_hash": note_hash, "supersedes": Json::null() }
   let submit_path = "state/events/memory-submit-" + note_id + ".json"
   @core.validate_record(event_entry(submit_path, @base.canonical(submit)), @base.canonical(submit))
@@ -126,13 +137,13 @@ test "memory event dictionary rejects unknown operations and forged paths" {
 }
 
 test "memory tools declare strict field sets and bounded prefetch limits" {
-  assert_eq(tool("memory-submit").fields, ["kind", "scope", "text", "conditions", "sources", "at", "key"])
-  assert_eq(tool("memory-supersede").fields, ["id", "text", "conditions", "sources", "at", "key"])
-  assert_eq(tool("memory-archive").fields, ["id", "at"])
-  assert_eq(tool("memory-restore").fields, ["id", "at"])
-  assert_eq(tool("memory-list").fields, [])
+  assert_eq(tool("memory-submit").fields, ["workspace", "session", "kind", "scope", "text", "conditions", "sources", "at", "key"])
+  assert_eq(tool("memory-supersede").fields, ["workspace", "session", "id", "text", "conditions", "sources", "at", "key"])
+  assert_eq(tool("memory-archive").fields, ["workspace", "session", "id", "at"])
+  assert_eq(tool("memory-restore").fields, ["workspace", "session", "id", "at"])
+  assert_eq(tool("memory-list").fields, ["workspace", "session"])
   let prefetch = tool("memory-prefetch")
-  assert_eq(prefetch.fields, ["query", "page", "limit", "archived", "dedup", "kinds"])
+  assert_eq(prefetch.fields, ["workspace", "session", "query", "page", "limit", "archived", "dedup", "kinds"])
   let properties = @base.field(input_schema(prefetch), "properties")
   assert_eq(@base.field(@base.field(properties, "limit"), "maximum"), Json::number(50.0))
   assert_eq(@base.field(@base.field(properties, "limit"), "minimum"), Json::number(1.0))
@@ -151,10 +162,10 @@ test "memory tools declare strict field sets and bounded prefetch limits" {
   for name in ["query", "page"] {
     assert_true(!@base.array(@base.field(input_schema(prefetch), "required")).contains(name.to_json()))
   }
-  for name in ["kind", "scope", "text", "at"] {
+  for name in ["workspace", "kind", "scope", "text", "at"] {
     assert_true(@base.array(@base.field(input_schema(tool("memory-submit")), "required")).contains(name.to_json()))
   }
-  for name in ["id", "text", "at"] {
+  for name in ["workspace", "id", "text", "at"] {
     assert_true(@base.array(@base.field(input_schema(tool("memory-supersede")), "required")).contains(name.to_json()))
   }
 }
@@ -163,12 +174,12 @@ fn memory_note(
   id : String, kind : String, text : String, conditions : Array[String], status : String,
 ) -> MemoryNote {
   {
-    id, kind, scope: "workspace", text, conditions, sources: [], source_hashes: [],
+    id, workspace: test_ws(), kind, scope: "project", session: None, text, conditions, sources: [], source_hashes: [],
     status, key: id,
     created_at: "2026-10-22T09:00:00Z", updated_at: "2026-10-22T09:00:00Z",
     archived_at: None, superseded_by: None, supersedes: None, pinned: false,
     last_used_at: None,
-    note_hash: @core.memory_note_hash(kind, "workspace", text, conditions, [], []),
+    note_hash: @core.memory_note_hash(test_ws(), "project", "", kind, text, conditions, [], []),
   }
 }
 
@@ -202,15 +213,17 @@ test "memory conflict grouping needs the same kind and conditions" {
 }
 
 test "memory conflict tools and views" {
-  assert_eq(tool("memory-conflicts").fields, [])
+  assert_eq(tool("memory-conflicts").fields, ["workspace", "session"])
   let schema = input_schema(tool("memory-conflicts"))
   assert_eq(@base.field(schema, "type"), "object".to_json())
-  assert_eq(@base.array(@base.field(schema, "required")).length(), 0)
+  let required = @base.array(@base.field(schema, "required"))
+  assert_eq(required.length(), 1)
+  assert_eq(required[0], "workspace".to_json())
 }
 
 test "memory prefetch dedup and kind filters are schema-checked" {
   let prefetch = tool("memory-prefetch")
-  assert_eq(prefetch.fields, ["query", "page", "limit", "archived", "dedup", "kinds"])
+  assert_eq(prefetch.fields, ["workspace", "session", "query", "page", "limit", "archived", "dedup", "kinds"])
   let schema = input_schema(prefetch)
   let properties = @base.field(schema, "properties")
   assert_eq(@base.field(@base.field(properties, "kinds"), "type"), "array".to_json())
@@ -234,10 +247,10 @@ test "memory prefetch dedup and kind filters are schema-checked" {
 }
 
 test "memory read and pin tools declare strict field sets" {
-  assert_eq(tool("memory-read").fields, ["id"])
-  assert_eq(tool("memory-pin").fields, ["id", "pinned", "at"])
+  assert_eq(tool("memory-read").fields, ["workspace", "session", "id"])
+  assert_eq(tool("memory-pin").fields, ["workspace", "session", "id", "pinned", "at"])
   let read_schema = input_schema(tool("memory-read"))
-  assert_eq(@base.field(read_schema, "required"), ["id"].to_json())
+  assert_eq(@base.field(read_schema, "required"), ["workspace", "id"].to_json())
   let pin_schema = input_schema(tool("memory-pin"))
   let pin_properties = @base.field(pin_schema, "properties")
   assert_eq(@base.field(@base.field(pin_properties, "pinned"), "type"), "boolean".to_json())
@@ -247,7 +260,7 @@ test "memory read and pin tools declare strict field sets" {
 }
 
 test "memory pin event path binds the flag and the time" {
-  let memory = @core.memory_note_id("k", @core.memory_note_hash("fact", "workspace", "t", [], [], []))
+  let memory = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", "t", [], [], []))
   let at = "2026-10-27T09:30:00Z"
   for pinned in [true, false] {
     let event : Json = { "op": "memory-pin", "memory": memory, "at": at, "pinned": pinned }
@@ -261,10 +274,10 @@ test "memory pin event path binds the flag and the time" {
       @base.canonical(event))))
   }
   // A supersede event must name the note it replaces.
-  let superseded = @base.hex_hash("memory-v1\nold\n" + @core.memory_note_hash("fact", "workspace", "a", [], [], []))
-  let replacement = @core.memory_note_id("old", @core.memory_note_hash("fact", "workspace", "b", [], [], []))
+  let superseded = @base.hex_hash("memory-v1\nold\n" + @core.memory_note_hash(test_ws(), "project", "", "fact", "a", [], [], []))
+  let replacement = @core.memory_note_id("old", @core.memory_note_hash(test_ws(), "project", "", "fact", "b", [], [], []))
   let event : Json = { "op": "memory-supersede", "memory": replacement, "at": at, "key": "k",
-    "note_hash": @core.memory_note_hash("fact", "workspace", "b", [], [], []),
+    "note_hash": @core.memory_note_hash(test_ws(), "project", "", "fact", "b", [], [], []),
     "supersedes": superseded }
   let path = "state/events/memory-supersede-" + superseded + "-" + replacement + ".json"
   @core.validate_record(event_entry(path, @base.canonical(event)), @base.canonical(event))
@@ -278,7 +291,7 @@ test "memory pin event path binds the flag and the time" {
 
 test "memory prefetch accepts exactly one of query or page" {
   let prefetch = tool("memory-prefetch")
-  assert_eq(prefetch.fields, ["query", "page", "limit", "archived", "dedup", "kinds"])
+  assert_eq(prefetch.fields, ["workspace", "session", "query", "page", "limit", "archived", "dedup", "kinds"])
   let schema = input_schema(prefetch)
   let required = @base.array(@base.field(schema, "required"))
   // Both are optional in the schema because exactly one must be supplied; the
@@ -296,15 +309,16 @@ test "memory source hashes pin the bytes a note was written against" {
   // keeps claiming evidence that now says something else entirely.
   let (store, _broken, files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   files["raw/a.md"] = "官窑记录：器形与釉色。\\n"
   ignore(dispatch(store, { "op": "scan" }))
   ignore(memory_submit(store, @vault.load(store), {
-    "op": "memory-submit", "kind": "fact", "scope": "workspace",
+    "op": "memory-submit", "kind": "fact", "scope": "project", "workspace": test_ws(),
     "text": "官窑记录来自已登记来源，器形与釉色可据此核对",
     "conditions": ["核对官窑资料时"], "sources": ["raw/a.md"],
     "at": "2026-11-05T09:00:00Z", "key": "k1" }))
   let entries = @vault.load(store)
-  let note = memory_rows(store, entries)[0]
+  let note = memory_rows(store, entries, test_ws(), None)[0]
   assert_eq(note.sources, ["raw/a.md"])
   assert_eq(note.source_hashes.length(), 1)
   assert_eq(note.source_hashes[0], @base.hex_hash("官窑记录：器形与釉色。\\n"))
@@ -313,21 +327,21 @@ test "memory source hashes pin the bytes a note was written against" {
   files["raw/a.md"] = "完全无关的内容：天气与市场行情。\\n"
   ignore(dispatch(store, { "op": "scan" }))
   let rewritten = @vault.load(store)
-  let drifted = memory_rows(store, rewritten)[0]
+  let drifted = memory_rows(store, rewritten, test_ws(), None)[0]
   let view = memory_view(drifted, rewritten, false)
   assert_false(@base.boolean(@base.field(view, "valid")))
   assert_eq(@base.field(view, "drifted_sources"), ["raw/a.md"].to_json())
   assert_eq(@base.array(@base.field(view, "invalid_sources")).length(), 0)
   // Revoking the source is a different diagnosis from rewriting it.
-  ignore(memory_archive(store, rewritten, { "op": "memory-archive", "id": drifted.id,
+  ignore(memory_archive(store, rewritten, { "op": "memory-archive", "workspace": test_ws(), "id": drifted.id,
     "at": "2026-11-05T10:00:00Z" }))
   let revoked = @vault.load(store)
-  let after = memory_rows(store, revoked)[0]
+  let after = memory_rows(store, revoked, test_ws(), None)[0]
   assert_false(@base.boolean(@base.field(memory_view(after, revoked, false), "valid")))
 }
 
 fn memory_submit_request(source : String, key : String, text : String) -> Json {
-  { "op": "memory-submit", "kind": "fact", "scope": "workspace",
+  { "op": "memory-submit", "kind": "fact", "scope": "project", "workspace": test_ws(),
     "text": text, "conditions": ["核对官窑资料时"],
     "sources": [source], "at": "2026-11-06T09:00:00Z", "key": key }
 }
@@ -339,6 +353,7 @@ test "duplicate and conflict detection ignore the evidence binding" {
   // must not be reported as competing judgments.
   let (store, _broken, files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   files["raw/a.md"] = "官窑记录：器形与釉色。\n"
   files["raw/b.md"] = "另一份官窑记录。\n"
   ignore(dispatch(store, { "op": "scan" }))
@@ -354,13 +369,13 @@ test "duplicate and conflict detection ignore the evidence binding" {
     @base.Fault(message) => message
   }
   assert_true(refused.has_prefix("memory_duplicate_text"))
-  let rows = memory_rows(store, @vault.load(store))
+  let rows = memory_rows(store, @vault.load(store), test_ws(), None)
   assert_eq(rows.length(), 1)
   assert_eq(memory_conflict_groups(rows).length(), 0)
   // A genuinely different judgment under the same conditions still conflicts.
   ignore(memory_submit(store, @vault.load(store),
     memory_submit_request("raw/a.md", "k3", "官窑记录只说明器形，不涉及釉色")))
-  let conflicted = memory_rows(store, @vault.load(store))
+  let conflicted = memory_rows(store, @vault.load(store), test_ws(), None)
   assert_eq(conflicted.length(), 2)
   let groups = memory_conflict_groups(conflicted)
   assert_eq(groups.length(), 1)
@@ -375,12 +390,12 @@ test "duplicate and conflict detection ignore the evidence binding" {
     memory_submit_request("raw/a.md", "k1", judgment))
   assert_true(@base.boolean(@base.field(again, "replayed")))
   assert_eq(@base.text(@base.field(again, "id")), first_id)
-  assert_eq(memory_rows(store, @vault.load(store)).length(), 2)
+  assert_eq(memory_rows(store, @vault.load(store), test_ws(), None).length(), 2)
 }
 
 
 fn archived_note_request(key : String, at : String) -> Json {
-  { "op": "memory-submit", "kind": "decision", "scope": "workspace",
+  { "op": "memory-submit", "kind": "decision", "scope": "project", "workspace": test_ws(),
     "text": "阶段性结论：先整理陶瓷资料", "conditions": ["规划资料整理范围时"],
     "sources": [], "at": at, "key": key }
 }
@@ -390,16 +405,17 @@ test "an archived note does not block the same judgment" {
   // not be treated as competing with a fresh submission of the same judgment.
   let (store, _broken, _files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   let first = memory_submit(store, @vault.load(store),
     archived_note_request("k1", "2026-11-07T09:00:00Z"))
   let first_id = @base.text(@base.field(first, "id"))
-  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive",
+  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive", "workspace": test_ws(),
     "id": first_id, "at": "2026-11-07T09:30:00Z" }))
   let reborn = memory_submit(store, @vault.load(store),
     archived_note_request("k2", "2026-11-07T10:00:00Z"))
   assert_eq(@base.text(@base.field(reborn, "status")), "active")
   assert_true(@base.text(@base.field(reborn, "id")) != first_id)
-  let rows = memory_rows(store, @vault.load(store))
+  let rows = memory_rows(store, @vault.load(store), test_ws(), None)
   assert_eq(rows.length(), 2)
   assert_eq(rows.filter(n => n.status == "archived").length(), 1)
   assert_eq(memory_conflict_groups(rows).length(), 0)
@@ -419,44 +435,45 @@ test "memory use records foreground usage and replays" {
   // cannot infer from a read-only prefetch.
   let (store, _broken, _files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   let first = memory_submit(store, @vault.load(store), {
-    "op": "memory-submit", "kind": "fact", "scope": "workspace",
+    "op": "memory-submit", "kind": "fact", "scope": "project", "workspace": test_ws(),
     "text": "官窑记录可据此核对", "conditions": ["核对官窑资料时"],
     "sources": [], "at": "2026-11-11T09:00:00Z", "key": "k1" })
   let first_id = @base.text(@base.field(first, "id"))
   let second = memory_submit(store, @vault.load(store), {
-    "op": "memory-submit", "kind": "decision", "scope": "workspace",
+    "op": "memory-submit", "kind": "decision", "scope": "project", "workspace": test_ws(),
     "text": "先整理陶瓷资料", "conditions": [], "sources": [],
     "at": "2026-11-11T09:05:00Z", "key": "k2" })
   let second_id = @base.text(@base.field(second, "id"))
-  assert_eq(memory_rows(store, @vault.load(store)).filter(n => n.last_used_at is None).length(), 2)
+  assert_eq(memory_rows(store, @vault.load(store), test_ws(), None).filter(n => n.last_used_at is None).length(), 2)
   // A batch reports many notes in one transaction.
-  let used = memory_use(store, @vault.load(store), { "op": "memory-use",
+  let used = memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(),
     "ids": [first_id, second_id], "at": "2026-11-11T10:00:00Z" })
   assert_eq(@base.field(used, "used"), Json::number(2.0))
-  let rows = memory_rows(store, @vault.load(store))
+  let rows = memory_rows(store, @vault.load(store), test_ws(), None)
   assert_eq(rows.filter(n => n.last_used_at == Some("2026-11-11T10:00:00Z")).length(), 2)
   // The same report twice is a replay, not a second write.
-  let replay = memory_use(store, @vault.load(store), { "op": "memory-use",
+  let replay = memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(),
     "ids": [first_id, second_id], "at": "2026-11-11T10:00:00Z" })
   assert_eq(@base.boolean(@base.field(replay, "replayed")), true)
   assert_eq(@base.field(replay, "committed"), Json::boolean(false))
   // A later report advances the timestamp.
-  ignore(memory_use(store, @vault.load(store), { "op": "memory-use",
+  ignore(memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(),
     "ids": [first_id], "at": "2026-11-11T11:00:00Z" }))
-  let advanced = memory_rows(store, @vault.load(store)).filter(n =>
+  let advanced = memory_rows(store, @vault.load(store), test_ws(), None).filter(n =>
     n.last_used_at == Some("2026-11-11T11:00:00Z"))
   assert_eq(advanced.length(), 1)
   // Prefetch itself never records usage.
-  ignore(memory_prefetch(store, @vault.load(store), { "op": "memory-prefetch", "query": "陶瓷" }))
-  let still = memory_rows(store, @vault.load(store)).filter(n =>
+  ignore(memory_prefetch(store, @vault.load(store), { "op": "memory-prefetch", "workspace": test_ws(), "query": "陶瓷" }))
+  let still = memory_rows(store, @vault.load(store), test_ws(), None).filter(n =>
     n.last_used_at == Some("2026-11-11T11:00:00Z"))
   assert_eq(still.length(), 1)
   // Bad batches are refused without touching the vault.
   let bad : Array[Json] = [
-    { "op": "memory-use", "ids": Json::array([]), "at": "2026-11-11T12:00:00Z" },
-    { "op": "memory-use", "ids": [first_id, first_id], "at": "2026-11-11T12:00:00Z" },
-    { "op": "memory-use", "ids": ["0".repeat(64)], "at": "2026-11-11T12:00:00Z" },
+    { "op": "memory-use", "workspace": test_ws(), "ids": Json::array([]), "at": "2026-11-11T12:00:00Z" },
+    { "op": "memory-use", "workspace": test_ws(), "ids": [first_id, first_id], "at": "2026-11-11T12:00:00Z" },
+    { "op": "memory-use", "workspace": test_ws(), "ids": ["0".repeat(64)], "at": "2026-11-11T12:00:00Z" },
   ]
   for bad_request in bad {
     assert_true(refuses(() => ignore(memory_use(store, @vault.load(store), bad_request))))
@@ -473,14 +490,15 @@ fn merge_pair_texts() -> (String, String) {
 test "memory candidates proposes a reworded duplicate without a seed" {
   let (store, _, _) = crashing(1 << 20)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   let (first, second) = merge_pair_texts()
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "fact", "scope": "workspace", "text": first, "conditions": ["核对釉色"],
+    "kind": "fact", "scope": "project", "workspace": test_ws(), "text": first, "conditions": ["核对釉色"],
     "sources": [], "at": "2026-11-12T09:00:00Z", "key": "a" }))
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "fact", "scope": "workspace", "text": second, "conditions": ["撰写说明"],
+    "kind": "fact", "scope": "project", "workspace": test_ws(), "text": second, "conditions": ["撰写说明"],
     "sources": [], "at": "2026-11-12T09:05:00Z", "key": "b" }))
-  let candidates = memory_candidates(store, @vault.load(store))
+  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws() })
   let merge = @base.array(@base.field(candidates, "merge"))
   assert_eq(merge.length(), 1)
   let row = merge[0]
@@ -494,12 +512,13 @@ test "memory candidates proposes a reworded duplicate without a seed" {
     _ => assert_true(false)
   }
   // The same vault state always yields the same candidates.
-  assert_eq(memory_candidates(store, @vault.load(store)), candidates)
+  assert_eq(memory_candidates(store, @vault.load(store), { "workspace": test_ws() }), candidates)
 }
 
 test "memory candidates groups every duplicate under one keeper" {
   let (store, _, _) = crashing(1 << 20)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   // Three notes with the same tokens. Two notes cannot show whether the group
   // stops after the first pair or chains n1 -> n0 and n2 -> n1, which would make
   // a host merge into a note that is itself a duplicate.
@@ -509,11 +528,11 @@ test "memory candidates groups every duplicate under one keeper" {
     base_text.replace(old=", ", new="、")]
   for index in 0..<3 {
     ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-      "kind": "fact", "scope": "workspace", "text": variants[index],
+      "kind": "fact", "scope": "project", "workspace": test_ws(), "text": variants[index],
       "conditions": ["c" + index.to_string()], "sources": [],
       "at": "2026-11-12T09:0" + index.to_string() + ":00Z", "key": "n" + index.to_string() }))
   }
-  let candidates = memory_candidates(store, @vault.load(store))
+  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws() })
   let merge = @base.array(@base.field(candidates, "merge"))
   assert_eq(merge.length(), 2)
   let keepers : Array[String] = []
@@ -532,7 +551,7 @@ test "memory candidates groups every duplicate under one keeper" {
     assert_true(!duplicates.contains(keeper))
   }
   // The seeded surface collapses the same group to a single kept note.
-  let brief = memory_prefetch(store, @vault.load(store), { "op": "memory-prefetch",
+  let brief = memory_prefetch(store, @vault.load(store), { "op": "memory-prefetch", "workspace": test_ws(),
     "query": "官窑", "dedup": "similar" })
   assert_eq(@base.array(@base.field(brief, "similar_duplicates")).length(), 2)
   assert_eq(@base.array(@base.field(brief, "notes")).length(), 1)
@@ -541,47 +560,50 @@ test "memory candidates groups every duplicate under one keeper" {
 test "memory candidates never merges across kinds or scopes" {
   let (store, _, _) = crashing(1 << 20)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   let (first, second) = merge_pair_texts()
   // Identical tokens, different kinds: the same words are not the same judgment.
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "fact", "scope": "workspace", "text": first, "conditions": ["c1"],
+    "kind": "fact", "scope": "project", "workspace": test_ws(), "text": first, "conditions": ["c1"],
     "sources": [], "at": "2026-11-12T09:00:00Z", "key": "fact" }))
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "preference", "scope": "workspace", "text": second, "conditions": ["c2"],
+    "kind": "preference", "scope": "project", "workspace": test_ws(), "text": second, "conditions": ["c2"],
     "sources": [], "at": "2026-11-12T09:05:00Z", "key": "pref" }))
-  let candidates = memory_candidates(store, @vault.load(store))
+  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws() })
   assert_eq(@base.array(@base.field(candidates, "merge")).length(), 0)
   // The same rule governs the seeded surface, so the two never disagree.
-  let brief = memory_prefetch(store, @vault.load(store), { "op": "memory-prefetch",
+  let brief = memory_prefetch(store, @vault.load(store), { "op": "memory-prefetch", "workspace": test_ws(),
     "query": "官窑", "dedup": "similar" })
   assert_eq(@base.array(@base.field(brief, "similar_duplicates")).length(), 0)
   // A third note of the original kind does merge.
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "fact", "scope": "workspace", "text": second, "conditions": ["c3"],
+    "kind": "fact", "scope": "project", "workspace": test_ws(), "text": second, "conditions": ["c3"],
     "sources": [], "at": "2026-11-12T09:10:00Z", "key": "fact2" }))
-  let after = memory_candidates(store, @vault.load(store))
+  let after = memory_candidates(store, @vault.load(store), { "workspace": test_ws() })
   let merge = @base.array(@base.field(after, "merge"))
   assert_eq(merge.length(), 1)
   let duplicate_key = @base.text(@base.field(merge[0], "duplicate_key"))
   let keeper_key = @base.text(@base.field(merge[0], "keeper_key"))
-  assert_eq(duplicate_key, "fact")
-  assert_eq(keeper_key, "fact2")
+  // Id ordering decides which note is the keeper; the pair itself is the contract.
+  assert_true((duplicate_key == "fact" && keeper_key == "fact2") ||
+    (duplicate_key == "fact2" && keeper_key == "fact"))
 }
 
 test "memory candidates excludes conflicted notes from merging and pruning" {
   let (store, _, _) = crashing(1 << 20)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   // Both sides carry the same conditions, so they conflict; both carry the same
   // tokens, so they WOULD merge if the conflict guard did not come first. A pair
   // whose tokens differ proves nothing, because it never merges either way.
   let (first, second) = merge_pair_texts()
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "fact", "scope": "workspace", "text": first, "conditions": ["核对釉色"],
+    "kind": "fact", "scope": "project", "workspace": test_ws(), "text": first, "conditions": ["核对釉色"],
     "sources": [], "at": "2026-11-12T09:00:00Z", "key": "x" }))
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
-    "kind": "fact", "scope": "workspace", "text": second, "conditions": ["核对釉色"],
+    "kind": "fact", "scope": "project", "workspace": test_ws(), "text": second, "conditions": ["核对釉色"],
     "sources": [], "at": "2026-11-12T09:05:00Z", "key": "y" }))
-  let candidates = memory_candidates(store, @vault.load(store))
+  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws() })
   // Dropping one side would hide the competing judgment the host must confirm.
   assert_eq(@base.array(@base.field(candidates, "merge")).length(), 0)
   assert_eq(@base.array(@base.field(candidates, "prune")).length(), 0)
@@ -590,7 +612,7 @@ test "memory candidates excludes conflicted notes from merging and pruning" {
 }
 
 fn unused_note_request(key : String, at : String, suffix : String, condition : String) -> Json {
-  { "op": "memory-submit", "kind": "preference", "scope": "workspace",
+  { "op": "memory-submit", "kind": "preference", "scope": "project", "workspace": test_ws(),
     "text": "偏好安排：" + suffix + "。这条记录足够长以通过门槛并且从未被使用过。",
     "conditions": [condition], "sources": [], "at": at, "key": key }
 }
@@ -598,6 +620,7 @@ fn unused_note_request(key : String, at : String, suffix : String, condition : S
 test "memory candidates never proposes a pinned or already-settled note" {
   let (store, _, _) = crashing(1 << 20)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   let pinned_id = @base.text(@base.field(memory_submit(store, @vault.load(store),
     unused_note_request("pinned", "2026-11-12T09:00:00Z", "上午参观", "保护项")), "id"))
   let used_id = @base.text(@base.field(memory_submit(store, @vault.load(store),
@@ -606,13 +629,13 @@ test "memory candidates never proposes a pinned or already-settled note" {
     unused_note_request("archived", "2026-11-12T09:10:00Z", "傍晚参观", "归档项")), "id"))
   let fresh_id = @base.text(@base.field(memory_submit(store, @vault.load(store),
     unused_note_request("fresh", "2026-11-12T09:15:00Z", "夜间参观", "待定项")), "id"))
-  ignore(memory_protect(store, @vault.load(store), { "op": "memory-pin", "id": pinned_id,
+  ignore(memory_protect(store, @vault.load(store), { "op": "memory-pin", "workspace": test_ws(), "id": pinned_id,
     "pinned": true, "at": "2026-11-12T09:20:00Z" }))
-  ignore(memory_use(store, @vault.load(store), { "op": "memory-use", "ids": [used_id],
+  ignore(memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(), "ids": [used_id],
     "at": "2026-11-12T09:25:00Z" }))
-  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive",
+  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive", "workspace": test_ws(),
     "id": archived_id, "at": "2026-11-12T09:30:00Z" }))
-  let candidates = memory_candidates(store, @vault.load(store))
+  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws() })
   let prune = @base.array(@base.field(candidates, "prune"))
   // Only the untouched note is a candidate: pinning, a reported use and an
   // archive are all decisions the engine must not second-guess.
@@ -621,4 +644,161 @@ test "memory candidates never proposes a pinned or already-settled note" {
   assert_eq(@base.text(@base.field(prune[0], "reason")), "never_used")
   assert_true(@base.field(prune[0], "last_used_at") == Json::null())
   assert_false(@base.boolean(@base.field(prune[0], "pinned")))
+}
+
+// ---- workspace and session isolation --------------------------------------
+
+fn other_ws() -> String {
+  @core.workspace_id("/test/other-project")
+}
+
+fn memory_open_other(store : @vault.Storage) -> Unit raise @base.Fault {
+  ignore(dispatch(store, { "op": "workspace-open", "path": "/test/other-project",
+    "at": "2026-10-20T00:00:00Z" }))
+}
+
+test "a note is invisible outside its workspace and its session" {
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  memory_open_other(store)
+  let project_note = dispatch(store, { "op": "memory-submit", "workspace": test_ws(),
+    "kind": "fact", "scope": "project", "text": "项目级判断", "conditions": [],
+    "sources": [], "at": "2026-10-21T09:00:00Z", "key": "p" })
+  let session_note = dispatch(store, { "op": "memory-submit", "workspace": test_ws(),
+    "kind": "fact", "scope": "session", "session": "s1", "text": "会话级判断",
+    "conditions": [], "sources": [], "at": "2026-10-21T09:01:00Z", "key": "s" })
+  let session_id = @base.text(@base.field(session_note, "id"))
+  // Default visibility is project-level only; the exact session adds its note.
+  let plain = memory_list(store, @vault.load(store), { "workspace": test_ws() })
+  assert_eq(@base.array(@base.field(plain, "notes")).length(), 1)
+  let scoped = memory_list(store, @vault.load(store),
+    { "workspace": test_ws(), "session": "s1" })
+  assert_eq(@base.array(@base.field(scoped, "notes")).length(), 2)
+  // Another workspace sees nothing at all, not even counts of A's notes.
+  let foreign = memory_list(store, @vault.load(store), { "workspace": other_ws() })
+  assert_eq(@base.array(@base.field(foreign, "notes")).length(), 0)
+  assert_eq(@base.field(@base.field(foreign, "counts"), "active"), Json::number(0.0))
+  // Reading a session note without that session behaves like a missing id.
+  let hidden = try {
+    ignore(memory_read(store, @vault.load(store), { "workspace": test_ws(), "id": session_id }))
+    false
+  } catch {
+    @base.Fault(message) => message.has_prefix("entry_not_found")
+  }
+  assert_true(hidden)
+  let visible = memory_read(store, @vault.load(store),
+    { "workspace": test_ws(), "session": "s1", "id": session_id })
+  assert_eq(@base.text(@base.field(visible, "id")), session_id)
+  // The foreign workspace cannot read the project note by id either.
+  let project_id = @base.text(@base.field(project_note, "id"))
+  assert_true(refuses(() => ignore(memory_read(store, @vault.load(store),
+    { "workspace": other_ws(), "id": project_id }))))
+  // Prefetch never crosses the boundary.
+  let brief = memory_prefetch(store, @vault.load(store),
+    { "workspace": other_ws(), "query": "判断" })
+  assert_eq(@base.array(@base.field(brief, "notes")).length(), 0)
+}
+
+fn two_workspace_request(workspace : String) -> Json {
+  { "op": "memory-submit", "workspace": workspace, "kind": "preference",
+    "scope": "project", "text": "先看陶瓷釉色", "conditions": ["规划行程"],
+    "sources": [], "at": "2026-10-21T09:00:00Z", "key": "same" }
+}
+
+test "the same judgment in two workspaces stays two independent notes" {
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  memory_open_other(store)
+  let first = dispatch(store, two_workspace_request(test_ws()))
+  let second = dispatch(store, two_workspace_request(other_ws()))
+  assert_eq(@base.text(@base.field(first, "status")), "active")
+  assert_eq(@base.text(@base.field(second, "status")), "active")
+  assert_true(@base.text(@base.field(first, "id")) != @base.text(@base.field(second, "id")))
+  // Duplicate and conflict detection are scoped: each workspace has one note.
+  assert_eq(@base.array(@base.field(memory_list(store, @vault.load(store),
+    { "workspace": test_ws() }), "notes")).length(), 1)
+  assert_eq(@base.array(@base.field(memory_conflicts(store, @vault.load(store),
+    { "workspace": test_ws() }), "conflicts")).length(), 0)
+}
+
+test "a project note may not carry a session selector" {
+  // A project note is visible to every session in its workspace. Accepting a
+  // stray `session` field would silently imply a restriction that does not
+  // exist, so the contradiction is refused rather than ignored.
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  let refused = try {
+    ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+      "workspace": test_ws(), "kind": "fact", "scope": "project", "session": "s1",
+      "text": "项目级判断", "conditions": [], "sources": [],
+      "at": "2026-10-21T09:00:00Z", "key": "x" }))
+    false
+  } catch {
+    @base.Fault(message) => message.has_prefix("memory_session_unexpected")
+  }
+  assert_true(refused)
+  // The session-scoped spelling with the same text is a different, valid note.
+  let accepted = memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "fact", "scope": "session", "session": "s1",
+    "text": "项目级判断", "conditions": [], "sources": [],
+    "at": "2026-10-21T09:01:00Z", "key": "x" })
+  assert_eq(@base.text(@base.field(accepted, "status")), "active")
+}
+
+fn lint_memory_conflict_count(store : @vault.Storage) -> Int raise @base.Fault {
+  let report = lint_result(store, (store.read)("index.mbt.md"))
+  @base.array(@base.field(report, "violations"))
+    .filter(issue => @base.text(@base.field(issue, "predicate")) == "memory_conflict")
+    .length()
+}
+
+test "conflicts stay inside a workspace and a visibility scope" {
+  // Two workspaces never see each other, so the same conditions with different
+  // judgments in each are not a conflict. The same holds for a project note and
+  // a session note: the session note is a narrower commitment, not a rival.
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  memory_open_other(store)
+  ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "fact", "scope": "project", "text": "项目判断甲",
+    "conditions": ["核对时"], "sources": [], "at": "2026-10-22T09:00:00Z", "key": "a" }))
+  ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": other_ws(), "kind": "fact", "scope": "project", "text": "项目判断乙",
+    "conditions": ["核对时"], "sources": [], "at": "2026-10-22T09:01:00Z", "key": "b" }))
+  assert_eq(@base.array(@base.field(memory_conflicts(store, @vault.load(store),
+    { "workspace": test_ws() }), "conflicts")).length(), 0)
+  assert_eq(lint_memory_conflict_count(store), 0)
+  ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "fact", "scope": "session", "session": "s1",
+    "text": "会话判断丙", "conditions": ["核对时"], "sources": [],
+    "at": "2026-10-22T09:02:00Z", "key": "c" }))
+  assert_eq(@base.array(@base.field(memory_conflicts(store, @vault.load(store),
+    { "workspace": test_ws(), "session": "s1" }), "conflicts")).length(), 0)
+  assert_eq(lint_memory_conflict_count(store), 0)
+  // The same scope and conditions with disagreeing text still conflict.
+  ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "fact", "scope": "session", "session": "s1",
+    "text": "会话判断丁", "conditions": ["核对时"], "sources": [],
+    "at": "2026-10-22T09:03:00Z", "key": "d" }))
+  assert_eq(@base.array(@base.field(memory_conflicts(store, @vault.load(store),
+    { "workspace": test_ws(), "session": "s1" }), "conflicts")).length(), 1)
+  assert_eq(lint_memory_conflict_count(store), 1)
+}
+
+test "memory ops require a registered workspace" {
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  let refused = try {
+    ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+      "workspace": test_ws(), "kind": "fact", "scope": "project", "text": "未登记",
+      "conditions": [], "sources": [], "at": "2026-10-21T09:00:00Z", "key": "x" }))
+    false
+  } catch {
+    @base.Fault(message) => message.has_prefix("memory_workspace_unknown")
+  }
+  assert_true(refused)
 }

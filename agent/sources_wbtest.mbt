@@ -63,6 +63,7 @@ test "read operations never claim a pending host action" {
   // inspecting the dictionary, so a read that grows the field fails here.
   let (store, _broken, files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
   files["raw/a.md"] = "官窑记录：器形与釉色。\n"
   ignore(dispatch(store, { "op": "scan" }))
   // A real page, so page-history is exercised against something that exists.
@@ -86,7 +87,7 @@ test "read operations never claim a pending host action" {
   ignore(dispatch(store, { "op": "research-topic", "topic": "陶瓷", "queries": ["陶瓷"],
     "at": "2026-11-10T09:00:00Z" }))
   ignore(memory_submit(store, @vault.load(store), {
-    "op": "memory-submit", "kind": "fact", "scope": "workspace",
+    "op": "memory-submit", "kind": "fact", "scope": "project", "workspace": test_ws(),
     "text": "官窑记录可据此核对", "conditions": ["核对官窑资料时"],
     "sources": ["raw/a.md"], "at": "2026-11-10T09:05:00Z", "key": "k1" }))
   // A write operation that records host work keeps the field.
@@ -100,11 +101,11 @@ test "read operations never claim a pending host action" {
     dispatch(store, { "op": "read-log" }),
     dispatch(store, { "op": "read-source", "id": "raw/a.md" }),
     dispatch(store, { "op": "read-source", "id": "raw/a.md", "start": 0, "end": 6 }),
-    dispatch(store, { "op": "memory-read", "id": @base.text(@base.field(
-      memory_rows(store, @vault.load(store))[0].to_json(), "id")) }),
-    dispatch(store, { "op": "memory-list" }),
-    dispatch(store, { "op": "memory-conflicts" }),
-    dispatch(store, { "op": "memory-prefetch", "query": "陶瓷" }),
+    dispatch(store, { "op": "memory-read", "workspace": test_ws(), "id": @base.text(@base.field(
+      memory_rows(store, @vault.load(store), test_ws(), None)[0].to_json(), "id")) }),
+    dispatch(store, { "op": "memory-list", "workspace": test_ws() }),
+    dispatch(store, { "op": "memory-conflicts", "workspace": test_ws() }),
+    dispatch(store, { "op": "memory-prefetch", "workspace": test_ws(), "query": "陶瓷" }),
     dispatch(store, { "op": "impact-list" }),
     dispatch(store, { "op": "inbox" }),
     dispatch(store, { "op": "topics" }),

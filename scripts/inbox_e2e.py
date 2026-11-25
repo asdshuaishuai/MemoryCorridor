@@ -21,8 +21,12 @@ def call(root, op, error=None, **fields):
     return value
 
 
+WS = None
+
+
 def inbox(root):
-    return call(root, "inbox")["items"]
+    extra = {"workspace": WS} if WS else {}
+    return call(root, "inbox", **extra)["items"]
 
 
 def kinds(root):
@@ -55,6 +59,8 @@ def synthesis_text(sources, body):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-inbox-") as temp:
     root = Path(temp)
     call(root, "init", purpose="研究陶瓷器形与釉色")
+    WS = call(root, "workspace-open", path="/test/inbox-project",
+              at="2026-10-23T00:00:00Z")["id"]
 
     # A fresh vault has nothing worth proposing.
     assert inbox(root) == []
@@ -99,10 +105,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-inbox-") as temp:
     assert by_kind["overview-suggestion"]["drift"] == ["page-drift"]
 
     # Competing memory judgments are confirmation debt and belong here too.
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=WS,
          text="行程优先看陶瓷窑口", conditions=["规划博物馆行程时"], sources=[],
          at="2026-10-23T11:15:00Z", key="trip-ceramics")
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=WS,
          text="行程优先看青铜器", conditions=["规划博物馆行程时"], sources=[],
          at="2026-10-23T11:20:00Z", key="trip-bronze")
     conflicts = [row for row in inbox(root) if row["kind"] == "memory-conflict"]
@@ -110,14 +116,14 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-inbox-") as temp:
     assert conflicts[0]["reason"] == "conditions-overlap"
     assert conflicts[0]["next"].startswith("memory-supersede")
     assert conflicts[0]["subject"].count("state/memory/") == 2
-    loser = [r for r in call(root, "memory-list")["notes"]
+    loser = [r for r in call(root, "memory-list", workspace=WS)["notes"]
              if r["key"] == "trip-bronze" and r["status"] == "active"][0]
-    call(root, "memory-archive", id=loser["id"], at="2026-10-23T11:45:00Z")
+    call(root, "memory-archive", workspace=WS, id=loser["id"], at="2026-10-23T11:45:00Z")
     assert [row for row in inbox(root) if row["kind"] == "memory-conflict"] == []
 
     # A memory note whose bound source is revoked keeps its history but can no
     # longer be checked, so it is confirmation debt too.
-    call(root, "memory-submit", kind="fact", scope="workspace",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
          text="官窑记录来自已登记的来源，可作为参观时的核对依据",
          conditions=["核对官窑资料时"], sources=["raw/ceramics.md"],
          at="2026-10-23T11:25:00Z", key="ceramics-evidence")
@@ -128,11 +134,11 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-inbox-") as temp:
     assert stale[0]["reason"] == "source-revoked-or-drifted"
     assert stale[0]["next"].startswith("restore the source, or memory-supersede")
     assert stale[0]["subject"].startswith("state/memory/")
-    note = [r for r in call(root, "memory-list")["notes"]
+    note = [r for r in call(root, "memory-list", workspace=WS)["notes"]
             if r["key"] == "ceramics-evidence" and r["status"] == "active"][0]
-    assert stale[0]["subject"] == "state/memory/" + note["id"] + ".json"
+    assert stale[0]["subject"] == "state/memory/" + WS + "/" + note["id"] + ".json"
     # Re-binding the note to a live source clears the item.
-    call(root, "memory-supersede", id=note["id"], text="官窑记录已无法核对，仅保留判断本身",
+    call(root, "memory-supersede", workspace=WS, id=note["id"], text="官窑记录已无法核对，仅保留判断本身",
          conditions=["核对官窑资料时"], sources=[], at="2026-10-23T11:40:00Z")
     assert [row for row in inbox(root) if row["kind"] == "memory-source-stale"] == []
 

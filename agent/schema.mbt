@@ -56,7 +56,8 @@ pub fn input_schema(t : Tool) -> Json {
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
       "start", "end", "query", "page", "ids", "cosine_floor", "policy",
       "params", "enabled", "subject", "outcome", "due_after_seconds", "min_opportunities",
-      "max_open_rounds"].contains(name) &&
+      "max_open_rounds", "session"].contains(name) &&
+      !(name == "workspace" && ["status", "stats", "inbox"].contains(t.name)) &&
       !(name == "context_token" && t.name != "draft-submit") &&
       !(name == "at" && t.name == "evo-policy") &&
       !(name == "note" && t.name == "dream-close") { required.push(name) }

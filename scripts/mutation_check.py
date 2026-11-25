@@ -18,7 +18,7 @@ BACKUP = Path("/tmp/mutation-backup")
 MUTATIONS = [
     ("memory note hash must bind conditions and sources",
      "core/records.mbt",
-     '''  if note_hash != memory_note_hash(kind, scope, text, conditions, sources, source_hashes) {
+     '''  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources, source_hashes) {
     @base.fail("memory_note_hash_mismatch")
   }''',
      '''  if false { @base.fail("memory_note_hash_mismatch") }''',
@@ -53,9 +53,12 @@ MUTATIONS = [
 
     ("duplicate detection must ignore the source binding",
      "agent/memory.mbt",
-     """    if @core.memory_judgment_hash(note.kind, note.scope, note.text, note.conditions) == judgment &&""",
-     """    if @core.memory_note_hash(note.kind, note.scope, note.text, note.conditions,
-      note.sources, note.source_hashes) == judgment &&""",
+     """    if @core.memory_judgment_hash(note.workspace, note.scope,
+      match note.session { None => ""; Some(value) => value },
+      note.kind, note.text, note.conditions) == judgment &&""",
+     """    if @core.memory_note_hash(note.workspace, note.scope,
+      match note.session { None => ""; Some(value) => value },
+      note.kind, note.text, note.conditions, note.sources, note.source_hashes) == judgment &&""",
      "duplicate and conflict detection ignore"),
 
     ("ingest event path must bind the order",
@@ -160,8 +163,8 @@ MUTATIONS = [
 
     ("the inbox must surface competing memory judgments",
      "agent/inbox.mbt",
-     '  for group in memory_conflict_groups(memory_rows_unchecked(store, entries)) {',
-     '  for group in memory_conflict_groups(memory_rows_unchecked(store, entries).filter(n => false)) {',
+     '  for group in memory_conflict_groups(memory_notes) {',
+     '  for group in memory_conflict_groups(memory_notes.filter(n => false)) {',
      "inbox: aggregation, determinism",
      "inbox_e2e.py"),
 
@@ -321,13 +324,13 @@ MUTATIONS = [
      "memory_e2e.py"),
     ("candidates must not merge notes of different kinds",
      "agent/memory.mbt",
-     '      if kept.2 == note.kind && kept.3 == note.scope &&\n        @index.similar_merge(tokens, kept.1) { keeper = kept.0 }',
+     '      if kept.2 == note.kind && kept.3 == note.scope && kept.4 ==\n        (match note.session { None => ""; Some(value) => value }) &&\n        @index.similar_merge(tokens, kept.1) { keeper = kept.0 }',
      '      if @index.similar_merge(tokens, kept.1) { keeper = kept.0 }',
      "memory candidates never merges across kinds or scopes"),
 
     ("prefetch must not collapse notes of different kinds",
      "agent/memory.mbt",
-     '            if kept.2 == note.kind && kept.3 == note.scope &&\n              @index.similar_merge(tokens, kept.1) { keeper = kept.0 }',
+     '            if kept.2 == note.kind && kept.3 == note.scope && kept.4 ==\n              (match note.session { None => ""; Some(value) => value }) &&\n              @index.similar_merge(tokens, kept.1) { keeper = kept.0 }',
      '            if @index.similar_merge(tokens, kept.1) { keeper = kept.0 }',
      "memory candidates never merges across kinds or scopes"),
     ("an impact with no dedicated item must surface on its own",
@@ -356,8 +359,8 @@ MUTATIONS = [
      "evidence_source_e2e.py"),
     ("every duplicate must point at one keeper, never at another duplicate",
      "agent/memory.mbt",
-     '        "reason": "similar_text" })\n      continue\n    }\n    keepers.push((note.id, tokens, note.kind, note.scope))',
-     '        "reason": "similar_text" })\n    }\n    keepers.push((note.id, tokens, note.kind, note.scope))',
+     '        "reason": "similar_text" })\n      continue\n    }\n    keepers.push((note.id, tokens, note.kind, note.scope,\n      match note.session { None => ""; Some(value) => value }))',
+     '        "reason": "similar_text" })\n    }\n    keepers.push((note.id, tokens, note.kind, note.scope,\n      match note.session { None => ""; Some(value) => value }))',
      "memory candidates groups every duplicate under one keeper"),
     ("prefetch must honour the requested candidate limit",
      "agent/memory.mbt",
@@ -470,9 +473,13 @@ MUTATIONS = [
 
     ("archived notes must not block the same judgment",     "agent/memory.mbt",
      '''    if note.status != "active" { continue }
-    if @core.memory_judgment_hash(note.kind, note.scope, note.text, note.conditions) == judgment &&''',
+    if @core.memory_judgment_hash(note.workspace, note.scope,
+      match note.session { None => ""; Some(value) => value },
+      note.kind, note.text, note.conditions) == judgment &&''',
      '''    if note.status == "superseded" { continue }
-    if @core.memory_judgment_hash(note.kind, note.scope, note.text, note.conditions) == judgment &&''',
+    if @core.memory_judgment_hash(note.workspace, note.scope,
+      match note.session { None => ""; Some(value) => value },
+      note.kind, note.text, note.conditions) == judgment &&''',
      "an archived note does not block"),
 
     # The modules below have no MoonBit behavioural test, so their guard lives
@@ -1264,7 +1271,7 @@ MUTATIONS = [
 
     ("a non-evo module must not read evolution state",
      "agent/inbox.mbt",
-     "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  @vault.verify(store, entries)",
+     "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {\n  @vault.verify(store, entries)",
      "pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {\n  ignore((store.read)(\"evo/population.json\"))\n  @vault.verify(store, entries)",
      "evo isolation: no non-evo module reads evo state",
      "evo_e2e.py"),
@@ -1523,6 +1530,52 @@ MUTATIONS = [
      '''  if id != workspace_id(path) { @base.fail("workspace_record_identity_invalid") }''',
      '''  if false { @base.fail("workspace_record_identity_invalid") }''',
      "workspace records reject a drifted id, path or time order"),
+
+    ("memory rows must stay inside their own workspace",
+     "agent/memory.mbt",
+     '''  let result = entries.filter(e => e.kind == "state" && e.path.has_prefix(prefix))''',
+     '''  let result = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/memory/"))''',
+     "a note is invisible outside its workspace and its session"),
+
+    ("a session note must stay hidden without its session",
+     "agent/memory.mbt",
+     '''    "session" => match session {
+      Some(value) => note.session == Some(value)
+      None => false
+    }''',
+     '''    "session" => true''',
+     "a note is invisible outside its workspace and its session"),
+
+    ("project notes must stay visible with or without a session",
+     "agent/memory.mbt",
+     '''  match note.scope {
+    "project" => true''',
+     '''  match note.scope {
+    "project" => session is None''',
+     "a note is invisible outside its workspace and its session"),
+
+    ("memory writes require a registered workspace",
+     "agent/memory.mbt",
+     '''  if (store.read)("state/workspaces/" + workspace + ".json") is None {
+    @base.fail("memory_workspace_unknown: " + workspace + "; run workspace-open first")
+  }''',
+     '''  if false {
+    @base.fail("memory_workspace_unknown: " + workspace + "; run workspace-open first")
+  }''',
+     "memory ops require a registered workspace"),
+
+    ("a project note must refuse a session selector",
+     "core/records.mbt",
+     '''  if scope == "project" && session != "" { @base.fail("memory_session_unexpected") }''',
+     '''  if false { @base.fail("memory_session_unexpected") }''',
+     "a project note may not carry a session selector"),
+
+    ("conflicts must not cross workspaces or visibility scopes",
+     "agent/memory.mbt",
+     '''  @base.hex_hash("memory-conflict-v2\\n" + note.workspace + "\\n" + note.scope + "\\n" +
+    session + "\\n" + note.kind + "\\n" + @base.canonical(conditions.to_json()))''',
+     '''  @base.hex_hash("memory-conflict-v2\\n" + note.kind + "\\n" + @base.canonical(conditions.to_json()))''',
+     "conflicts stay inside a workspace and a visibility scope"),
 
     ("proactive speech must wait for a long idle window",
      "agent/evo.mbt",

@@ -14,9 +14,84 @@ fn memory_id(value : String) -> Unit raise @base.Fault {
   }
 }
 
-fn memory_path(id : String) -> String raise @base.Fault {
+fn memory_workspace(value : String) -> Unit raise @base.Fault {
+  if value.length() != 64 || !value.iter().all(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+    @base.fail("memory_workspace_invalid")
+  }
+}
+
+fn memory_path(workspace : String, id : String) -> String raise @base.Fault {
   memory_id(id)
-  "state/memory/" + id + ".json"
+  memory_workspace(workspace)
+  "state/memory/" + workspace + "/" + id + ".json"
+}
+
+// A note is visible only inside the workspace that owns it, and session-scoped
+// notes are additionally invisible without that exact session. Reads of an
+// invisible id behave like a missing id, so existence does not leak.
+fn memory_visible(note : MemoryNote, session : String?) -> Bool {
+  match note.scope {
+    "project" => true
+    "session" => match session {
+      Some(value) => note.session == Some(value)
+      None => false
+    }
+    _ => false
+  }
+}
+
+// Optional workspace/session on aggregate reads (`status`, `stats`, `inbox`):
+// absent means "do not aggregate memory at all" so another workspace's notes
+// never leak into a global count.
+pub fn optional_workspace(request : Json) -> String? raise @base.Fault {
+  match optional(request, "workspace") {
+    None => None
+    Some(Json::Null) => None
+    Some(value) => {
+      let text = @base.text(value)
+      memory_workspace(text)
+      Some(text)
+    }
+  }
+}
+
+pub fn optional_session(request : Json) -> String? raise @base.Fault {
+  match optional(request, "session") {
+    None => None
+    Some(Json::Null) => None
+    Some(value) => Some(@base.text(value))
+  }
+}
+
+// Every memory op is anchored to a registered workspace; the host registers it
+// with workspace-open first. `scope`/`session` are only needed where the caller
+// is naming a new judgment (submit) or narrowing visibility.
+priv struct MemoryScope {
+  workspace : String
+  session : String?
+}
+
+fn memory_scope(
+  store : @vault.Storage, request : Json, session_required : Bool,
+) -> MemoryScope raise @base.Fault {
+  let workspace = @base.text(@base.field(request, "workspace"))
+  memory_workspace(workspace)
+  if (store.read)("state/workspaces/" + workspace + ".json") is None {
+    @base.fail("memory_workspace_unknown: " + workspace + "; run workspace-open first")
+  }
+  let session = match optional(request, "session") {
+    None => None
+    Some(Json::Null) => None
+    Some(value) => {
+      let text = @base.text(value)
+      if text.is_empty() || text.length() > 128 || text.contains("\n") || text.contains("\r") {
+        @base.fail("memory_session_invalid")
+      }
+      Some(text)
+    }
+  }
+  if session_required && session is None { @base.fail("memory_session_required") }
+  { workspace, session }
 }
 
 fn memory_time(value : String) -> Unit raise @base.Fault {
@@ -95,8 +170,14 @@ fn memory_strings(request : Json, key : String) -> Array[String] raise @base.Fau
 
 pub(all) struct MemoryNote {
   id : String
+  // The registered workspace this note belongs to. Notes from another
+  // workspace are invisible: reads behave as if the id did not exist.
+  workspace : String
   kind : String
+  // `project` notes are visible throughout the workspace; `session` notes only
+  // with the matching session id.
   scope : String
+  session : String?
   text : String
   conditions : Array[String]
   sources : Array[String]
@@ -125,10 +206,12 @@ pub impl ToJson for MemoryNote with to_json(self) {
     Some(text) => text.to_json()
   }
   {
-    "version": 1,
+    "version": 2,
     "id": self.id,
+    "workspace": self.workspace,
     "kind": self.kind,
     "scope": self.scope,
+    "session": nullable(self.session),
     "text": self.text,
     "conditions": self.conditions.to_json(),
     "sources": self.sources.to_json(),
@@ -147,9 +230,9 @@ pub impl ToJson for MemoryNote with to_json(self) {
 }
 
 pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
-  @base.keys(value, ["version", "id", "kind", "scope", "text", "conditions", "sources",
-    "source_hashes", "status", "key", "created_at", "updated_at", "archived_at",
-    "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash"])
+  @base.keys(value, ["version", "id", "workspace", "kind", "scope", "session", "text",
+    "conditions", "sources", "source_hashes", "status", "key", "created_at", "updated_at",
+    "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash"])
   // Records written before source version pinning simply have no hashes; they
   // fall back to path-only validity and stay readable.
   let source_hashes = match optional(value, "source_hashes") {
@@ -164,7 +247,8 @@ pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
     None => None
   }
   {
-    id: text("id"), kind: text("kind"), scope: text("scope"), text: text("text"),
+    id: text("id"), workspace: text("workspace"), kind: text("kind"),
+    scope: text("scope"), session: nullable("session"), text: text("text"),
     conditions: @base.strings(@base.field(value, "conditions")),
     sources: @base.strings(@base.field(value, "sources")),
     source_hashes,
@@ -179,26 +263,39 @@ pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
 }
 
 fn memory_entry(note : MemoryNote) -> @core.Entry {
-  let path = "state/memory/" + note.id + ".json"
+  let path = "state/memory/" + note.workspace + "/" + note.id + ".json"
   { id: path, path, kind: "state", format: "json",
     sha256: @base.hex_hash(@base.canonical(note.to_json())), sources: [], stale: false }
 }
 
-fn memory_entries(entries : Array[@core.Entry]) -> Array[@core.Entry] {
+fn memory_entries(entries : Array[@core.Entry], workspace : String) -> Array[@core.Entry] {
+  let prefix = "state/memory/" + workspace + "/"
+  let result = entries.filter(e => e.kind == "state" && e.path.has_prefix(prefix))
+  result.sort_by((a, b) => @base.compare(a.id, b.id))
+  result
+}
+
+fn memory_all_entries(entries : Array[@core.Entry]) -> Array[@core.Entry] {
   let result = entries.filter(e => e.kind == "state" && e.path.has_prefix("state/memory/"))
   result.sort_by((a, b) => @base.compare(a.id, b.id))
   result
 }
 
-pub fn memory_rows_unchecked(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[MemoryNote] raise @base.Fault {
-  memory_entries(entries).map(e => memory_from_json(@base.parse(@vault.required(store, e.path))))
+pub fn memory_rows_unchecked(
+  store : @vault.Storage, entries : Array[@core.Entry], workspace : String, session : String?,
+) -> Array[MemoryNote] raise @base.Fault {
+  memory_entries(entries, workspace)
+    .map(e => memory_from_json(@base.parse(@vault.required(store, e.path))))
+    .filter(note => memory_visible(note, session))
 }
 
 // Callers that already verified the vault reuse this directly; each row
 // helper verifying on its own made multi-source reads re-hash every file.
-pub fn memory_rows(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[MemoryNote] raise @base.Fault {
+pub fn memory_rows(
+  store : @vault.Storage, entries : Array[@core.Entry], workspace : String, session : String?,
+) -> Array[MemoryNote] raise @base.Fault {
   @vault.verify(store, entries)
-  memory_rows_unchecked(store, entries)
+  memory_rows_unchecked(store, entries, workspace, session)
 }
 
 // Sources are recorded inside the note rather than as catalog sources: a state
@@ -244,11 +341,13 @@ pub fn memory_read(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
   let id = @base.text(@base.field(request, "id"))
   memory_id(id)
-  let path = memory_path(id)
-  let note = memory_load(store, id)
-  let conflicted = memory_conflicted(memory_rows(store, entries))
+  let path = memory_path(scope.workspace, id)
+  let note = memory_load(store, scope.workspace, id)
+  if !memory_visible(note, scope.session) { @base.fail("entry_not_found: " + id) }
+  let conflicted = memory_conflicted(memory_rows(store, entries, scope.workspace, scope.session))
   // A read never carries `execution`: that field marks an operation which
   // recorded a plan the host still has to carry out.
   { "id": id, "path": path,
@@ -263,7 +362,12 @@ pub fn memory_read(
 fn memory_conflict_key(note : MemoryNote) -> String {
   let conditions = note.conditions.copy()
   conditions.sort_by(@base.compare)
-  @base.hex_hash("memory-conflict-v1\n" + note.kind + "\n" + @base.canonical(conditions.to_json()))
+  let session = match note.session { None => ""; Some(value) => value }
+  // Only judgments with the same visibility can genuinely compete: two
+  // workspaces never see each other, and a session note is a narrower
+  // commitment than a project note rather than a contradictory one.
+  @base.hex_hash("memory-conflict-v2\n" + note.workspace + "\n" + note.scope + "\n" +
+    session + "\n" + note.kind + "\n" + @base.canonical(conditions.to_json()))
 }
 
 pub fn memory_conflict_groups(rows : Array[MemoryNote]) -> Array[Array[MemoryNote]] {
@@ -280,7 +384,9 @@ pub fn memory_conflict_groups(rows : Array[MemoryNote]) -> Array[Array[MemoryNot
     let row = buckets.get(key).unwrap_or([])
     let distinct : Map[String, Bool] = Map([])
     for note in row {
-      distinct[@core.memory_judgment_hash(note.kind, note.scope, note.text, note.conditions)] = true
+      distinct[@core.memory_judgment_hash(note.workspace, note.scope,
+        match note.session { None => ""; Some(value) => value },
+        note.kind, note.text, note.conditions)] = true
     }
     if distinct.length() < 2 { continue }
     row.sort_by((a, b) => @base.compare(a.id, b.id))
@@ -323,8 +429,9 @@ fn memory_counts(rows : Array[MemoryNote], entries : Array[@core.Entry]) -> Json
   }
 }
 
-pub fn memory_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
-  let rows = memory_rows(store, entries)
+pub fn memory_list(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  let scope = memory_scope(store, request, false)
+  let rows = memory_rows(store, entries, scope.workspace, scope.session)
   let conflicted = memory_conflicted(rows)
   let views = rows.map(n => memory_view(n, entries, conflicted.get(n.id).unwrap_or(false)))
   { "notes": views.to_json(), "counts": memory_counts(rows, entries), "fingerprint": @vault.fingerprint(entries) }
@@ -333,8 +440,9 @@ pub fn memory_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json
 // A5's Autodream keeps conflicting judgments and marks them for confirmation
 // with the user instead of dropping one side. Listing them separately lets a
 // host review the whole picture, not only what a query surfaced.
-pub fn memory_conflicts(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
-  let rows = memory_rows(store, entries)
+pub fn memory_conflicts(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
+  let scope = memory_scope(store, request, false)
+  let rows = memory_rows(store, entries, scope.workspace, scope.session)
   let groups = memory_conflict_groups(rows)
   { "conflicts": groups.map(g => memory_conflict_view(g, entries)).to_json(),
     "counts": memory_conflict_counts(groups),
@@ -347,16 +455,17 @@ pub fn memory_conflicts(store : @vault.Storage, entries : Array[@core.Entry]) ->
 // already exposes competing judgments without a seed; this is the sibling for
 // merge and prune candidates, so an agent can discover the work without first
 // having to guess a query that would surface it through `memory-prefetch`.
-pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  let rows = memory_rows_unchecked(store, entries)
+  let scope = memory_scope(store, request, false)
+  let rows = memory_rows_unchecked(store, entries, scope.workspace, scope.session)
   let conflicted = memory_conflicted(rows)
   let active = rows.filter(n => n.status == "active")
   // Superseded and archived notes are history: proposing them would ask the host
   // to re-decide something already settled.
   let live = active.filter(n => !conflicted.get(n.id).unwrap_or(false))
   let merge : Array[Json] = []
-  let keepers : Array[(String, Array[String], String, String)] = []
+  let keepers : Array[(String, Array[String], String, String, String)] = []
   // Sorted by id so the keeper of each group and the output order are stable.
   let ordered = live.copy()
   ordered.sort_by((a, b) => @base.compare(a.id, b.id))
@@ -368,7 +477,8 @@ pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry]) -
       // A reworded duplicate is the same judgment in different bytes. The same
       // words under a different kind or scope are a different sort of judgment,
       // and merging them would silently drop that distinction.
-      if kept.2 == note.kind && kept.3 == note.scope &&
+      if kept.2 == note.kind && kept.3 == note.scope && kept.4 ==
+        (match note.session { None => ""; Some(value) => value }) &&
         @index.similar_merge(tokens, kept.1) { keeper = kept.0 }
     }
     if keeper != "" {
@@ -379,7 +489,8 @@ pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry]) -
         "reason": "similar_text" })
       continue
     }
-    keepers.push((note.id, tokens, note.kind, note.scope))
+    keepers.push((note.id, tokens, note.kind, note.scope,
+      match note.session { None => ""; Some(value) => value }))
   }
   // Pruning is a signal, never a verdict: the engine records whether a host ever
   // reported using a note, and nothing else. A recency threshold would be a
@@ -425,13 +536,15 @@ pub fn memory_protect(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
   let id = @base.text(@base.field(request, "id"))
   memory_id(id)
   let pinned = @base.boolean(@base.field(request, "pinned"))
   let at = @base.text(@base.field(request, "at"))
   memory_time(at)
-  let path = memory_path(id)
-  let note = memory_load(store, id)
+  let path = memory_path(scope.workspace, id)
+  let note = memory_load(store, scope.workspace, id)
+  if !memory_visible(note, scope.session) { @base.fail("entry_not_found: " + id) }
   // Pinning marks an active judgment as important; archived and superseded
   // notes are history and stay out of the pinned state in both directions.
   if note.status == "superseded" { @base.fail("memory_superseded_note_refused") }
@@ -468,9 +581,10 @@ pub fn memory_use(
   if ids.is_empty() || ids.length() > 64 { @base.fail("memory_use_count_invalid") }
   let at = @base.text(@base.field(request, "at"))
   memory_time(at)
+  let scope = memory_scope(store, request, false)
   let seen : Map[String, Bool] = Map([])
   let by_id : Map[String, MemoryNote] = Map([])
-  for note in memory_rows(store, entries) { by_id[note.id] = note }
+  for note in memory_rows(store, entries, scope.workspace, scope.session) { by_id[note.id] = note }
   let changes : Array[@vault.Change] = []
   let mut next = entries
   let mut used = 0
@@ -484,7 +598,7 @@ pub fn memory_use(
         // The same report twice is a replay, not a second write.
         if note.last_used_at == Some(at) { continue }
         let record : MemoryNote = { ..note, last_used_at: Some(at) }
-        let path = memory_path(id)
+        let path = memory_path(scope.workspace, id)
         let content = @base.canonical(record.to_json())
         changes.push({ path, before: (store.read)(path), after: Some(content) })
         next = upsert(next, memory_entry(record))
@@ -511,17 +625,25 @@ pub fn memory_use(
     "committed": true, "event": event_path }
 }
 
-pub fn memory_summary(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+// Workspace-scoped summary. Without a workspace the caller gets zeros rather
+// than a cross-workspace aggregate, because another workspace's notes must not
+// even be counted here.
+pub fn memory_summary(
+  store : @vault.Storage, entries : Array[@core.Entry], workspace : String?, session : String?,
+) -> Json raise @base.Fault {
   // Every caller (`status`, `stats`) verifies once before aggregating, so this
   // must not re-hash every file in the vault on top of that.
-  memory_counts(memory_rows_unchecked(store, entries), entries)
+  match workspace {
+    None => memory_counts([], entries)
+    Some(value) => memory_counts(memory_rows_unchecked(store, entries, value, session), entries)
+  }
 }
 
 // Schema faults are already reported by validate_record; this pass adds the
 // cross-record invariants a single record cannot express.
 fn lint_memory_notes(store : @vault.Storage, entries : Array[@core.Entry], issues : Array[Json]) -> Unit {
   let rows : Array[MemoryNote] = []
-  for entry in memory_entries(entries) {
+  for entry in memory_all_entries(entries) {
     let text = try { (store.read)(entry.path) } catch { _ => None }
     match text {
       None => ()
@@ -594,7 +716,9 @@ fn lint_memory_notes(store : @vault.Storage, entries : Array[@core.Entry], issue
     // Only active notes compete; superseded ones are history and archived ones
     // have left the default set.
     if note.status != "active" { continue }
-    let judgment = @core.memory_judgment_hash(note.kind, note.scope, note.text, note.conditions)
+    let judgment = note.workspace + "\n" + @core.memory_judgment_hash(note.workspace,
+      note.scope, match note.session { None => ""; Some(value) => value },
+      note.kind, note.text, note.conditions)
     match content.get(judgment) {
       Some(first) => lint_add(issues, "memory_duplicate_note", entry_path(note), entry_path(note),
         "identical memory content is recorded twice, first as " + first,
@@ -605,11 +729,13 @@ fn lint_memory_notes(store : @vault.Storage, entries : Array[@core.Entry], issue
   let keys : Map[String, String] = Map([])
   for note in rows {
     if note.status != "active" { continue }
-    match keys.get(note.key) {
+    let key = note.workspace + "\n" + note.scope + "\n" +
+      (match note.session { None => ""; Some(value) => value }) + "\n" + note.key
+    match keys.get(key) {
       Some(first) => lint_add(issues, "memory_key_ambiguous", entry_path(note), entry_path(note),
         "more than one active note shares an idempotency key, first as " + first,
         "supersede the older note so only one active note keeps the key", "error")
-      None => keys[note.key] = note.id
+      None => keys[key] = note.id
     }
   }
   // Competing judgments under the same conditions are review debt, not a fault:
@@ -623,7 +749,7 @@ fn lint_memory_notes(store : @vault.Storage, entries : Array[@core.Entry], issue
 }
 
 fn entry_path(note : MemoryNote) -> String {
-  "state/memory/" + note.id + ".json"
+  "state/memory/" + note.workspace + "/" + note.id + ".json"
 }
 
 fn memory_transition(
@@ -631,7 +757,7 @@ fn memory_transition(
   status : String, at : String, event_op : String,
 ) -> Json raise @base.Fault {
   memory_time_order(at, note)
-  let path = memory_path(note.id)
+  let path = memory_path(note.workspace, note.id)
   let record : MemoryNote = {
     ..note,
     status,
@@ -653,25 +779,27 @@ fn memory_transition(
   // Reload so the returned record reports the conflict state that actually
   // holds after the transition, not the one that held before it.
   let live = @vault.load(store)
-  let conflicted = memory_conflicted(memory_rows(store, live))
+  let conflicted = memory_conflicted(memory_rows(store, live, note.workspace, note.session))
   { "id": note.id, "path": path, "status": status, "replayed": false,
     "record": memory_view(record, live, conflicted.get(record.id).unwrap_or(false)),
     "event": event_path }
 }
 
-fn memory_load(store : @vault.Storage, id : String) -> MemoryNote raise @base.Fault {
-  memory_from_json(@base.parse(@vault.required(store, memory_path(id))))
+fn memory_load(store : @vault.Storage, workspace : String, id : String) -> MemoryNote raise @base.Fault {
+  memory_from_json(@base.parse(@vault.required(store, memory_path(workspace, id))))
 }
 
 pub fn memory_archive(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
   let id = @base.text(@base.field(request, "id"))
   memory_id(id)
-  let note = memory_load(store, id)
+  let note = memory_load(store, scope.workspace, id)
+  if !memory_visible(note, scope.session) { @base.fail("entry_not_found: " + id) }
   if note.status == "archived" {
-    return { "id": id, "path": memory_path(id), "status": "archived", "replayed": true,
+    return { "id": id, "path": memory_path(scope.workspace, id), "status": "archived", "replayed": true,
       "record": memory_view(note, entries, false) }
   }
   if note.status == "superseded" { @base.fail("memory_superseded_note_refused") }
@@ -685,11 +813,13 @@ pub fn memory_restore(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
   let id = @base.text(@base.field(request, "id"))
   memory_id(id)
-  let note = memory_load(store, id)
+  let note = memory_load(store, scope.workspace, id)
+  if !memory_visible(note, scope.session) { @base.fail("entry_not_found: " + id) }
   if note.status == "active" {
-    return { "id": id, "path": memory_path(id), "status": "active", "replayed": true,
+    return { "id": id, "path": memory_path(scope.workspace, id), "status": "active", "replayed": true,
       "record": memory_view(note, entries, false) }
   }
   if note.status == "superseded" { @base.fail("memory_superseded_note_refused") }
@@ -697,8 +827,9 @@ pub fn memory_restore(
 }
 
 fn memory_write(
-  store : @vault.Storage, entries : Array[@core.Entry], kind : String, scope : String,
-  body : String, conditions : Array[String], sources : Array[String],
+  store : @vault.Storage, entries : Array[@core.Entry], workspace : String,
+  note_scope : String, session : String?, kind : String, body : String,
+  conditions : Array[String], sources : Array[String],
   at : String, key : String, previous : MemoryNote?, event_op : String,
 ) -> Json raise @base.Fault {
   memory_body(body)
@@ -706,10 +837,12 @@ fn memory_write(
   memory_sources(sources)
   memory_time(at)
   let source_hashes = memory_source_hashes(store, entries, sources)
-  let digest = @core.memory_note_hash(kind, scope, body, conditions, sources, source_hashes)
+  let session_text = match session { None => ""; Some(value) => value }
+  let digest = @core.memory_note_hash(workspace, note_scope, session_text, kind, body,
+    conditions, sources, source_hashes)
   let id = @core.memory_note_id(key, digest)
-  let path = memory_path(id)
-  let rows = memory_rows(store, entries)
+  let path = memory_path(workspace, id)
+  let rows = memory_rows(store, entries, workspace, session)
   for note in rows {
     if note.id == id {
       // A replay reports the state it actually left behind: an active note is
@@ -727,12 +860,14 @@ fn memory_write(
   }
   // Identical understanding under another key is a duplicate, not a new note.
   // Merging is a judgment the host makes, so refuse instead of guessing.
-  let judgment = @core.memory_judgment_hash(kind, scope, body, conditions)
+  let judgment = @core.memory_judgment_hash(workspace, note_scope, session_text, kind, body, conditions)
   for note in rows {
     // Superseded notes are history and archived notes have left the default
     // set, so neither competes with a fresh submission of the same judgment.
     if note.status != "active" { continue }
-    if @core.memory_judgment_hash(note.kind, note.scope, note.text, note.conditions) == judgment &&
+    if @core.memory_judgment_hash(note.workspace, note.scope,
+      match note.session { None => ""; Some(value) => value },
+      note.kind, note.text, note.conditions) == judgment &&
       (match previous { Some(old) => note.id != old.id; None => true }) {
       @base.fail("memory_duplicate_text: " + note.id + "; supersede or archive that note instead")
     }
@@ -744,8 +879,8 @@ fn memory_write(
     None => ()
   }
   let record : MemoryNote = {
-    id, kind, scope, text: body, conditions, sources, status: "active", key,
-    created_at: at, updated_at: at, archived_at: None,
+    id, workspace, kind, scope: note_scope, session, text: body, conditions, sources,
+    status: "active", key, created_at: at, updated_at: at, archived_at: None,
     source_hashes,
     superseded_by: None, supersedes: previous.map(p => p.id),
     // A human's importance marker survives replacement: otherwise the pinned
@@ -770,7 +905,8 @@ fn memory_write(
     None => ()
     Some(old) => {
       let superseded : MemoryNote = { ..old, status: "superseded", superseded_by: Some(id), updated_at: at }
-      changes.push({ path: memory_path(old.id), before: (store.read)(memory_path(old.id)),
+      changes.push({ path: memory_path(workspace, old.id),
+        before: (store.read)(memory_path(workspace, old.id)),
         after: Some(@base.canonical(superseded.to_json())) })
       next = upsert(next, memory_entry(superseded))
     }
@@ -780,7 +916,7 @@ fn memory_write(
     sha256: @base.hex_hash(event_content), sources: [], stale: false })
   @vault.commit(store, @vault.fingerprint(entries), next, changes)
   let live = @vault.load(store)
-  let conflicted = memory_conflicted(memory_rows(store, live))
+  let conflicted = memory_conflicted(memory_rows(store, live, workspace, session))
   { "id": id, "path": path, "status": "active", "replayed": false, "key": key,
     "supersedes": match previous { None => Json::null(); Some(old) => old.id.to_json() },
     "record": memory_view(record, live, conflicted.get(record.id).unwrap_or(false)),
@@ -793,17 +929,24 @@ pub fn memory_submit(
   @vault.verify(store, entries)
   let kind = @base.text(@base.field(request, "kind"))
   if !memory_kinds().contains(kind) { @base.fail("memory_kind_unsupported: " + kind) }
-  let scope = @base.text(@base.field(request, "scope"))
-  if scope != "workspace" { @base.fail("memory_scope_unsupported: " + scope) }
+  let note_scope = @base.text(@base.field(request, "scope"))
+  if !["project", "session"].contains(note_scope) {
+    @base.fail("memory_scope_unsupported: " + note_scope)
+  }
+  let scope = memory_scope(store, request, note_scope == "session")
   let key = match optional(request, "key") {
     Some(value) => { let value = @base.text(value); memory_key(value); value }
     None => @base.hex_hash("memory-submit-v1\n" + kind + "\n" + @base.text(@base.field(request, "text")))
   }
-  let rows = memory_rows(store, entries)
-  let active = rows.filter(n => n.key == key && n.status == "active")
+  let rows = memory_rows(store, entries, scope.workspace, scope.session)
+  // Idempotency keys are scoped like the note itself: a project note and a
+  // session note with the same key are different judgments, not a conflict.
+  let active = rows.filter(n => n.key == key && n.status == "active" &&
+    n.scope == note_scope && n.session == scope.session)
   if active.length() > 1 { @base.fail("memory_key_ambiguous: " + key) }
   let previous = if active.is_empty() { None } else { Some(active[0]) }
-  memory_write(store, entries, kind, scope, @base.text(@base.field(request, "text")),
+  memory_write(store, entries, scope.workspace, note_scope, scope.session, kind,
+    @base.text(@base.field(request, "text")),
     memory_strings(request, "conditions"), memory_strings(request, "sources"),
     @base.text(@base.field(request, "at")), key, previous, "memory-submit")
 }
@@ -812,9 +955,11 @@ pub fn memory_supersede(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
   let id = @base.text(@base.field(request, "id"))
   memory_id(id)
-  let old = memory_load(store, id)
+  let old = memory_load(store, scope.workspace, id)
+  if !memory_visible(old, scope.session) { @base.fail("entry_not_found: " + id) }
   if old.status == "superseded" { @base.fail("memory_superseded_note_refused") }
   // Archiving is an explicit decision; leave it through memory-restore first.
   if old.status == "archived" { @base.fail("memory_archived_note_refused") }
@@ -822,7 +967,8 @@ pub fn memory_supersede(
     Some(value) => { let value = @base.text(value); memory_key(value); value }
     None => old.key
   }
-  memory_write(store, entries, old.kind, old.scope, @base.text(@base.field(request, "text")),
+  memory_write(store, entries, scope.workspace, old.scope, old.session, old.kind,
+    @base.text(@base.field(request, "text")),
     memory_strings(request, "conditions"), memory_strings(request, "sources"),
     @base.text(@base.field(request, "at")), key, Some(old), "memory-supersede")
 }
@@ -834,6 +980,7 @@ pub fn memory_prefetch(
   store : @vault.Storage, entries : Array[@core.Entry], request : Json,
 ) -> Json raise @base.Fault {
   @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
   // A host that already knows which page it is working on should not have to
   // distil a query from it. A page seed is derived from the page itself with the
   // same tokenizer the ranking uses, so it stays deterministic.
@@ -893,7 +1040,7 @@ pub fn memory_prefetch(
   }
   // The op verified once at the top; the row helper and overview status must
   // not each re-hash every file in the vault.
-  let rows = memory_rows_unchecked(store, entries).filter(n =>
+  let rows = memory_rows_unchecked(store, entries, scope.workspace, scope.session).filter(n =>
     (if archived { n.status != "superseded" } else { n.status == "active" }) &&
     (kinds.is_empty() || kinds.contains(n.kind)))
   let documents : Array[@index.Document] = []
@@ -908,7 +1055,7 @@ pub fn memory_prefetch(
   let conflicted = memory_conflicted(rows)
   let notes : Array[Json] = []
   let surfaced : Array[MemoryNote] = []
-  let keepers : Array[(String, Array[String], String, String)] = []
+  let keepers : Array[(String, Array[String], String, String, String)] = []
   let similar_duplicates : Array[Json] = []
   let mut used = 0
   let mut truncated = false
@@ -929,14 +1076,16 @@ pub fn memory_prefetch(
           let tokens = @index.similar_tokens(note.text)
           let mut keeper = ""
           for kept in keepers {
-            if kept.2 == note.kind && kept.3 == note.scope &&
+            if kept.2 == note.kind && kept.3 == note.scope && kept.4 ==
+              (match note.session { None => ""; Some(value) => value }) &&
               @index.similar_merge(tokens, kept.1) { keeper = kept.0 }
           }
           if keeper != "" {
             similar_duplicates.push({ "duplicate": note.id, "keeper": keeper })
             continue
           }
-          keepers.push((note.id, tokens, note.kind, note.scope))
+          keepers.push((note.id, tokens, note.kind, note.scope,
+            match note.session { None => ""; Some(value) => value }))
         }
         used += estimate
         surfaced.push(note)

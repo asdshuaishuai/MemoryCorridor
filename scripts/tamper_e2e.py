@@ -75,34 +75,37 @@ def publish(root, name, title, page_id, body):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-tamper-") as temp:
     root = Path(temp)
     call(root, "init", purpose="篡改探测")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")["id"]
     publish(root, "ceramics.md", "陶瓷", "concepts/ceramics", "器形与釉色。")
-    call(root, "memory-submit", kind="fact", scope="workspace", text="可据此核对",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=WS, text="可据此核对",
          conditions=["核对时"], sources=["raw/ceramics.md"],
          at="2026-11-14T09:30:00Z", key="note")
     call(root, "research-topic", topic="陶瓷釉色", queries=["釉色"],
          at="2026-11-14T09:45:00Z", key="topic")
     call(root, "impact-audit", at="2026-11-14T10:00:00Z")
     # Parameterised readers that need an id or a query.
-    note_id = call(root, "memory-list")["notes"][0]["id"]
+    note_id = call(root, "memory-list", workspace=WS)["notes"][0]["id"]
     topic_id = call(root, "research-list")[0]["id"]
-    READ_OPS += [("memory-read", {"id": note_id}),
+    READ_OPS += [("memory-read", {"workspace": WS, "id": note_id}),
                  ("page-history", {"id": "concepts/ceramics"})]
 
     # Baseline: every read op succeeds on an untouched vault.
     for op, fields in READ_OPS:
-        call(root, op, **fields)
+        extra = {"workspace": WS} if (op.startswith("memory-") or op == "inbox") and "workspace" not in fields else {}
+        call(root, op, **fields, **extra)
 
     # Tamper with one state record. Every verifying read must refuse it.
-    note_path = root / "state/memory" / (note_id + ".json")
+    note_path = root / "state/memory" / WS / (note_id + ".json")
     tampered = json.loads(note_path.read_text(encoding="utf-8"))
     tampered["text"] = "被外部编辑过的正文"
     note_path.write_text(json.dumps(tampered, ensure_ascii=False), encoding="utf-8")
 
     refused, leaked = [], []
     for op, fields in READ_OPS:
+        extra = {"workspace": WS} if (op.startswith("memory-") or op == "inbox") and "workspace" not in fields else {}
         value = json.loads(subprocess.run(
             [str(EXE)],
-            input=json.dumps({"op": op, "vault": str(root), **fields}) + "\n",
+            input=json.dumps({"op": op, "vault": str(root), **fields, **extra}) + "\n",
             capture_output=True, text=True, check=True, timeout=60).stdout)
         if value["ok"]:
             (refused if op in RAW_READERS else leaked).append(op)

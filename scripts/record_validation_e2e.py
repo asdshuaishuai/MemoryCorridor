@@ -86,7 +86,9 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     publish(root, "ceramics.md", "器形与釉色。", "concepts/ceramics", "陶瓷")
     order = publish(root, "glaze.md", "釉色对照。", "concepts/glaze", "釉色")
 
-    note = call(root, "memory-submit", kind="fact", scope="workspace",
+    WS = call(root, "workspace-open", path="/test/record-project",
+              at="2026-11-14T00:00:00Z")["id"]
+    note = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                 text="官窑记录可据此核对釉色与器形，长度足够通过相似度门槛。",
                 conditions=["核对时"], sources=["raw/ceramics.md"],
                 at="2026-11-14T09:30:00Z", key="note")["id"]
@@ -259,11 +261,11 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
                      if row["status"] == "pending")
 
     cases = [
-        (f"state/memory/{note}.json", "kind", "habit", "memory_kind_invalid"),
-        (f"state/memory/{note}.json", "scope", "user", "memory_scope_invalid"),
-        (f"state/memory/{note}.json", "status", "bogus", "memory_status_invalid"),
-        (f"state/memory/{note}.json", "text", "", "memory_text_invalid"),
-        (f"state/memory/{note}.json", "version", 2, "memory_version_unsupported"),
+        (f"state/memory/{WS}/{note}.json", "kind", "habit", "memory_kind_invalid"),
+        (f"state/memory/{WS}/{note}.json", "scope", "user", "memory_scope_invalid"),
+        (f"state/memory/{WS}/{note}.json", "status", "bogus", "memory_status_invalid"),
+        (f"state/memory/{WS}/{note}.json", "text", "", "memory_text_invalid"),
+        (f"state/memory/{WS}/{note}.json", "version", 1, "memory_version_unsupported"),
         (f"state/research/{topic}.json", "status", "bogus", "research_status_invalid"),
         (f"state/research/{topic}.json", "topic", "", "research_topic_invalid"),
         (f"state/research/{topic}.json", "queries", [], "research_queries_count_invalid"),
@@ -288,16 +290,16 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # hash check comes after the shape checks, so tampering them reaches the
     # shape branch first.
     cases += [
-        (f"state/memory/{note}.json", "archived_at", "short", "memory_time_invalid"),
-        (f"state/memory/{note}.json", "note_hash", "not-a-hash", "memory_note_hash_invalid"),
+        (f"state/memory/{WS}/{note}.json", "archived_at", "short", "memory_time_invalid"),
+        (f"state/memory/{WS}/{note}.json", "note_hash", "not-a-hash", "memory_note_hash_invalid"),
         #  is a parallel array to , not a map.
-        (f"state/memory/{note}.json", "source_hashes", ["short"],
+        (f"state/memory/{WS}/{note}.json", "source_hashes", ["short"],
          "memory_source_hash_invalid"),
-        (f"state/memory/{note}.json", "superseded_by", "short",
+        (f"state/memory/{WS}/{note}.json", "superseded_by", "short",
          "memory_superseded_by_invalid"),
-        (f"state/memory/{note}.json", "supersedes", "short", "memory_supersedes_invalid"),
-        (f"state/memory/{note}.json", "id", "short", "memory_record_identity_invalid"),
-        (f"state/memory/{note}.json", "key", "a\nb", "memory_key_invalid"),
+        (f"state/memory/{WS}/{note}.json", "supersedes", "short", "memory_supersedes_invalid"),
+        (f"state/memory/{WS}/{note}.json", "id", "short", "memory_record_identity_invalid"),
+        (f"state/memory/{WS}/{note}.json", "key", "a\nb", "memory_key_invalid"),
         (f"state/research/{topic}.json", "baseline", "short",
          "research_record_identity_invalid"),
         (f"state/research/{topic}.json", "inputs_hash", "short",
@@ -1080,9 +1082,9 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
         (f"state/impacts/{impact_id}.json", "status", "bogus", "impact_status_invalid"),
         (f"state/impacts/{impact_id}.json", "id", "short",
          "impact_record_identity_invalid"),
-        (f"state/memory/{note}.json", "archived_at", "2026-11-14T09:30:00Z",
+        (f"state/memory/{WS}/{note}.json", "archived_at", "2026-11-14T09:30:00Z",
          "memory_active_archived_at_invalid"),
-        (f"state/memory/{note}.json", "source_hashes", ["a", "b"],
+        (f"state/memory/{WS}/{note}.json", "source_hashes", ["a", "b"],
          "memory_source_hashes_count_invalid"),
         (f"state/overview/{overview}.json", "id", "short",
          "overview_record_identity_invalid"),
@@ -1156,11 +1158,11 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # a note whose status is `archived`.
     # `glaze.md` rather than `ceramics.md`: the page-lifecycle section above has
     # already revoked the latter by the time this runs.
-    replaced = call(root, "memory-supersede", id=note,
+    replaced = call(root, "memory-supersede", workspace=WS, id=note,
                     text="替换后的版本内容与原先不同，长度也足够通过门槛。",
                     conditions=["核对时"], sources=["raw/glaze.md"],
                     at="2026-11-14T09:35:00Z", key="replacement")["id"]
-    call(root, "memory-archive", id=replaced, at="2026-11-14T09:45:00Z")
+    call(root, "memory-archive", workspace=WS, id=replaced, at="2026-11-14T09:45:00Z")
     resolved_review = call(root, "review-list")[0]["id"]
     call(root, "review-resolve", id=resolved_review, action="skip", note="n",
          at="2026-11-14T11:45:00Z")
@@ -1172,10 +1174,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
 
     record_cases = [
         # A note the engine archived carries no `archived_at` of its own.
-        (f"state/memory/{replaced}.json", "archived_at", None,
+        (f"state/memory/{WS}/{replaced}.json", "archived_at", None,
          "memory_archived_at_required"),
         # The other half of the same pair, on the superseded note.
-        (f"state/memory/{note}.json", "superseded_by", None,
+        (f"state/memory/{WS}/{note}.json", "superseded_by", None,
          "memory_superseded_by_required"),
         # An overview that claims to be applied must say when, and with what
         # result hash.
@@ -1216,7 +1218,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
 
     # A record whose top level is not an object. Every other case edits a field
     # of a well-formed record; this one replaces the whole file.
-    target = root / f"state/memory/{note}.json"
+    target = root / f"state/memory/{WS}/{note}.json"
     original = target.read_text(encoding="utf-8")
     target.write_text("[]", encoding="utf-8")
     got = record_invalid_details(root)
@@ -1232,7 +1234,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # carries the same id in its name.
     index = root / "index.mbt.md"
     original_index = index.read_text(encoding="utf-8")
-    target = root / f"state/memory/{note}.json"
+    target = root / f"state/memory/{WS}/{note}.json"
     original = target.read_text(encoding="utf-8")
     parsed = json.loads(original)
     parsed["id"] = "a" * 64
@@ -1240,7 +1242,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     renamed.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
     target.unlink()
     lines = original_index.splitlines()
-    wanted = "state/memory/" + target.name
+    wanted = "state/memory/" + WS + "/" + target.name
     for i, line in enumerate(lines):
         if wanted in line and line.strip().startswith('entry("'):
             lines[i] = line.replace(target.name, renamed.name)
@@ -1628,8 +1630,8 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
                                "sources": ["raw/ceramics.md"] * 65,
                                "at": "2026-11-14T09:50:00Z"},
          "research_sources_count_invalid"),
-        ("memory-prefetch", {"query": ""}, "memory_query_invalid"),
-        ("memory-prefetch", {"query": "x" * 4097}, "memory_query_invalid"),
+        ("memory-prefetch", {"workspace": WS, "query": ""}, "memory_query_invalid"),
+        ("memory-prefetch", {"workspace": WS, "query": "x" * 4097}, "memory_query_invalid"),
         ("overview-apply", {"id": "a" * 64, "text": "",
                             "at": "2026-11-14T10:20:00Z"},
          "overview_text_invalid"),
@@ -1661,14 +1663,14 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
     # so replaying the *same* pair is a replay, but pinning True then False then
     # True again at one timestamp makes the third call land on the first call's
     # event path while the record has moved on.
-    pinned_note = call(root, "memory-submit", kind="fact", scope="workspace",
+    pinned_note = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                        text="另一条记忆，用于固定操作的幂等冲突，长度足够通过门槛。",
                        conditions=["核对时"], sources=["raw/fresh.md"],
                        at="2026-11-14T14:35:00Z", key="pin-note")["id"]
     pin_at = "2026-11-14T14:40:00Z"
-    call(root, "memory-pin", id=pinned_note, pinned=True, at=pin_at)
-    call(root, "memory-pin", id=pinned_note, pinned=False, at=pin_at)
-    call(root, "memory-pin", id=pinned_note, pinned=True, at=pin_at,
+    call(root, "memory-pin", workspace=WS, id=pinned_note, pinned=True, at=pin_at)
+    call(root, "memory-pin", workspace=WS, id=pinned_note, pinned=False, at=pin_at)
+    call(root, "memory-pin", workspace=WS, id=pinned_note, pinned=True, at=pin_at,
          error="memory_event_conflict")
     checked += 1
 
@@ -2182,15 +2184,15 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
 
     # A superseded note keeps its audit history but refuses further lifecycle
     # operations: the chain has already moved past it.
-    superseded_note = call(root, "memory-submit", kind="fact", scope="workspace",
+    superseded_note = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                            text="另一条用于取代链的记忆，长度足够通过相似度门槛。",
                            conditions=["核对时"], sources=["raw/fresh.md"],
                            at="2026-11-14T15:00:00Z", key="chain")["id"]
-    call(root, "memory-supersede", id=superseded_note,
+    call(root, "memory-supersede", workspace=WS, id=superseded_note,
          text="取代后的内容与原先不同，长度同样足够通过门槛。",
          conditions=["核对时"], sources=["raw/fresh.md"],
          at="2026-11-14T15:05:00Z", key="chain-2")
-    call(root, "memory-archive", id=superseded_note, at="2026-11-14T15:10:00Z",
+    call(root, "memory-archive", workspace=WS, id=superseded_note, at="2026-11-14T15:10:00Z",
          error="memory_superseded_note_refused")
     checked += 1
 
@@ -2315,9 +2317,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-records-") as temp:
 
     # A tampered record is also refused by every verifying read, so the branch
     # above is a second line of defence rather than the only one.
-    target, original = tamper(root, f"state/memory/{note}.json", "kind", "habit")
+    target, original = tamper(root, f"state/memory/{WS}/{note}.json", "kind", "habit")
     for op in ("verify", "memory-list", "status", "stats", "impact-list", "inbox"):
-        call(root, op, error="content_changed")
+        fields = {"workspace": WS} if op in ("memory-list", "status", "stats", "inbox") else {}
+        call(root, op, error="content_changed", **fields)
     target.write_text(original, encoding="utf-8")
     call(root, "rebuild")
     call(root, "verify")

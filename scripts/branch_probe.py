@@ -138,7 +138,9 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-probe-") as temp:
     root = Path(temp)
     call(root, "init", purpose="分支可达性")
     publish(root, "ceramics.md", "器形与釉色。", "concepts/ceramics", "陶瓷")
-    note = call(root, "memory-submit", kind="fact", scope="workspace",
+    ws = call(root, "workspace-open", path="/probe/branch",
+              at="2026-11-14T09:00:00Z")["id"]
+    note = call(root, "memory-submit", workspace=ws, kind="fact", scope="project",
                 text="官窑记录可据此核对釉色与器形，长度足够通过相似度门槛。",
                 conditions=["核对时"], sources=["raw/ceramics.md"],
                 at="2026-11-14T09:30:00Z", key="note")["id"]

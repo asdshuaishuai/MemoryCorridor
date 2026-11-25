@@ -154,15 +154,18 @@ def main():
             s.call("verify")
             check("broken literate helper refuses via the host moon subprocess; tail glue refused")
 
-            # Agent face on wasm: memory, inbox.
-            s.call("memory-submit", kind="preference", scope="workspace",
+            # Agent face on wasm: memory, inbox. Memory is workspace-scoped,
+            # so the script registers its workspace before writing a note.
+            ws = s.call("workspace-open", path="/workspace/wasm-e2e",
+                        at="2026-10-30T08:00:00Z")["id"]
+            s.call("memory-submit", workspace=ws, kind="preference", scope="project",
                    text="优先安排光合作用实验", conditions=["规划实验时"], sources=["raw/甲.md"],
                    at="2026-10-30T09:00:00Z", key="photosynthesis-preference")
-            notes = s.call("memory-list")
+            notes = s.call("memory-list", workspace=ws)
             assert notes["notes"] and notes["notes"][0]["valid"] is True
-            inbox = s.call("inbox")
+            inbox = s.call("inbox", workspace=ws)
             assert isinstance(inbox["items"], list)
-            prefetch = s.call("memory-prefetch", query="光合作用 实验", limit=5)
+            prefetch = s.call("memory-prefetch", workspace=ws, query="光合作用 实验", limit=5)
             assert prefetch["candidates"] >= 1 and prefetch["notes"][0]["conflicted"] is False
             check("memory layer and inbox answer through the wasm dispatch")
 

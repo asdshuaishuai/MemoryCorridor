@@ -59,7 +59,13 @@ fn inbox_counts(items : Array[InboxItem]) -> Json {
   { "total": items.length(), "by_kind": rows.to_json() }
 }
 
-fn inbox_items(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[InboxItem] raise @base.Fault {
+fn inbox_items(
+  store : @vault.Storage, entries : Array[@core.Entry], workspace : String?, session : String?,
+) -> Array[InboxItem] raise @base.Fault {
+  let memory_notes = match workspace {
+    None => []
+    Some(value) => memory_rows_unchecked(store, entries, value, session)
+  }
   let items : Array[InboxItem] = []
   // HumanGate review debt raised by quality-audit.
   for row in review_rows_unchecked(store, entries) {
@@ -114,7 +120,7 @@ fn inbox_items(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[In
   }
   // A memory note whose bound source was revoked or rewritten keeps its history
   // but can no longer be checked, which is confirmation debt as well.
-  for note in memory_rows_unchecked(store, entries) {
+  for note in memory_notes {
     if note.status != "active" { continue }
     let invalid = invalid_memory_sources(note, entries)
     let drifted = drifted_memory_sources(note, entries)
@@ -125,15 +131,15 @@ fn inbox_items(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[In
     } else {
       note.kind + " note is bound to " + invalid.join(", ")
     }
-    items.push(inbox_item("memory-source-stale", "state/memory/" + note.id + ".json",
+    items.push(inbox_item("memory-source-stale", "state/memory/" + note.workspace + "/" + note.id + ".json",
       reason, detail,
       "restore the source, or memory-supersede the note against the current bytes",
       note.updated_at))
   }
   // Competing memory judgments are confirmation debt too: A5 marks unresolved
   // conflicts for the user rather than resolving them silently.
-  for group in memory_conflict_groups(memory_rows_unchecked(store, entries)) {
-    let ids = group.map(n => "state/memory/" + n.id + ".json").join(", ")
+  for group in memory_conflict_groups(memory_notes) {
+    let ids = group.map(n => "state/memory/" + n.workspace + "/" + n.id + ".json").join(", ")
     items.push(inbox_item("memory-conflict", ids, "conditions-overlap",
       group[0].kind + " notes share conditions " + group[0].conditions.join("/") + " but disagree",
       "memory-supersede with narrower conditions, or memory-archive the losing side",
@@ -175,9 +181,13 @@ fn inbox_items(store : @vault.Storage, entries : Array[@core.Entry]) -> Array[In
   merged
 }
 
-pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
+pub fn inbox(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  let items = inbox_items(store, entries)
+  // Memory items are workspace-scoped. Without a workspace the inbox carries no
+  // memory debt at all: another workspace's notes must not even be counted.
+  let workspace = optional_workspace(request)
+  let session = optional_session(request)
+  let items = inbox_items(store, entries, workspace, session)
   { "items": items.map(inbox_view).to_json(), "counts": inbox_counts(items),
     "fingerprint": @vault.fingerprint(entries) }
 }

@@ -274,12 +274,15 @@ def main():
         s.call("verify")
         check("work-order intake across stateless batch replays with lease locks")
 
-        # Agent face through WASI storage.
-        s.call("memory-submit", kind="preference", scope="workspace",
+        # Agent face through WASI storage. Memory is workspace-scoped, so the
+        # script registers its workspace before writing a note.
+        ws = s.call("workspace-open", path="/workspace/wasipure-e2e",
+                    at="2026-10-31T08:00:00Z")["id"]
+        s.call("memory-submit", workspace=ws, kind="preference", scope="project",
                text="优先安排光合作用实验", conditions=["规划实验时"], sources=["raw/甲.md"],
                at="2026-10-31T09:00:00Z", key="photosynthesis-preference")
-        assert s.call("memory-list")["notes"][0]["valid"] is True
-        assert isinstance(s.call("inbox")["items"], list)
+        assert s.call("memory-list", workspace=ws)["notes"][0]["valid"] is True
+        assert isinstance(s.call("inbox", workspace=ws)["items"], list)
         check("memory layer and inbox through the pure-WASI dispatch")
 
         # External drift refusal and restore.

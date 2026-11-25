@@ -49,10 +49,11 @@ fn extraction_body(value : String) -> Unit raise @base.Fault {
 // written. Without it a note stays "valid" after its source is rewritten whole,
 // and the evidence behind the judgment silently becomes different material.
 pub fn memory_note_hash(
-  kind : String, scope : String, text : String,
+  workspace : String, scope : String, session : String, kind : String, text : String,
   conditions : Array[String], sources : Array[String], source_hashes : Array[String],
 ) -> String {
-  @base.hex_hash("memory-note-v2\n" + kind + "\n" + scope + "\n" + text + "\n" +
+  @base.hex_hash("memory-note-v3\n" + workspace + "\n" + scope + "\n" + session + "\n" +
+    kind + "\n" + text + "\n" +
     @base.canonical(conditions.to_json()) + "\n" + @base.canonical(sources.to_json()) +
     "\n" + @base.canonical(source_hashes.to_json()))
 }
@@ -62,10 +63,11 @@ pub fn memory_note_hash(
 // notes that say the same thing under the same conditions are duplicates even
 // when they bind different sources, and must not be reported as competing.
 pub fn memory_judgment_hash(
-  kind : String, scope : String, text : String, conditions : Array[String],
+  workspace : String, scope : String, session : String, kind : String, text : String,
+  conditions : Array[String],
 ) -> String {
-  @base.hex_hash("memory-judgment-v1\n" + kind + "\n" + scope + "\n" + text + "\n" +
-    @base.canonical(conditions.to_json()))
+  @base.hex_hash("memory-judgment-v2\n" + workspace + "\n" + scope + "\n" + session + "\n" +
+    kind + "\n" + text + "\n" + @base.canonical(conditions.to_json()))
 }
 
 pub fn memory_note_id(key : String, note_hash : String) -> String {
@@ -206,13 +208,25 @@ fn memory_nullable_hash(value : Json, field : String, id : String) -> String? ra
 }
 
 fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
-  if @base.field(value, "version") != Json::number(1.0) { @base.fail("memory_version_unsupported") }
+  if @base.field(value, "version") != Json::number(2.0) { @base.fail("memory_version_unsupported") }
   let kind = @base.text(@base.field(value, "kind"))
   if !["preference", "decision", "constraint", "fact", "goal"].contains(kind) {
     @base.fail("memory_kind_invalid")
   }
+  let workspace = @base.text(@base.field(value, "workspace"))
+  if !valid_hash(workspace) { @base.fail("memory_workspace_invalid") }
   let scope = @base.text(@base.field(value, "scope"))
-  if scope != "workspace" { @base.fail("memory_scope_invalid") }
+  if !["project", "session"].contains(scope) { @base.fail("memory_scope_invalid") }
+  let session = match optional_record_field(value, "session") {
+    None | Some(Null) => ""
+    Some(String(text)) => text
+    _ => { @base.fail("memory_session_invalid"); "" }
+  }
+  if scope == "project" && session != "" { @base.fail("memory_session_unexpected") }
+  if scope == "session" && session == "" { @base.fail("memory_session_required") }
+  if session != "" && (session.length() > 128 || session.contains("\n") || session.contains("\r")) {
+    @base.fail("memory_session_invalid")
+  }
   let text = @base.text(@base.field(value, "text"))
   if text.is_empty() || text.length() > 4096 || text.contains("\r") { @base.fail("memory_text_invalid") }
   let conditions = @base.strings(@base.field(value, "conditions"))
@@ -256,7 +270,7 @@ fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
   for hash in source_hashes {
     if !valid_hash(hash) { @base.fail("memory_source_hash_invalid") }
   }
-  if note_hash != memory_note_hash(kind, scope, text, conditions, sources, source_hashes) {
+  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources, source_hashes) {
     @base.fail("memory_note_hash_mismatch")
   }
   if id != memory_note_id(key, note_hash) { @base.fail("memory_record_identity_mismatch") }
@@ -1449,11 +1463,13 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     }
     workspace_record(value, id)
   } else if entry.path.has_prefix("state/memory/") {
-    @base.keys(value, ["version", "id", "kind", "scope", "text", "conditions", "sources",
-      "source_hashes", "status", "key", "created_at", "updated_at", "archived_at",
-      "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash"])
+    @base.keys(value, ["version", "id", "workspace", "scope", "session", "kind", "text",
+      "conditions", "sources", "source_hashes", "status", "key", "created_at", "updated_at",
+      "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash"])
     let id = string("id")
-    if !valid_hash(id) || entry.path != "state/memory/" + id + ".json" {
+    let workspace = string("workspace")
+    if !valid_hash(id) || !valid_hash(workspace) ||
+      entry.path != "state/memory/" + workspace + "/" + id + ".json" {
       @base.fail("memory_record_identity_invalid")
     }
     memory_record(value, id)

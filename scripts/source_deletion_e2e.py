@@ -23,6 +23,7 @@ def call(root, op, error=None, **fields):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-source-delete-") as temp:
     root = Path(temp)
     call(root, "init", purpose="来源删除")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")["id"]
     (root / "raw/source.md").write_text("来源正文。\n")
     order = call(root, "scan")["orders"][0]
     context = call(root, "context", order=order)
@@ -82,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-source-delete-") as temp
     call(root, "forget", source="raw/revived.md", at="2026-10-18T01:00:00Z")
     (root / "raw/revived.md").write_text(original)
     assert call(root, "scan")["orders"] == []
-    call(root, "memory-submit", kind="fact", scope="workspace",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
          text="撤销后的来源不可核对", conditions=["核对资料时"],
          sources=["raw/revived.md"], at="2026-10-18T01:30:00Z", key="sticky-note",
          error="memory_source_not_active")
@@ -91,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-source-delete-") as temp
     assert len(call(root, "scan")["orders"]) == 1
     call(root, "rebuild")
     call(root, "verify")
-    note = call(root, "memory-submit", kind="fact", scope="workspace",
+    note = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                 text="重新登记后可核对", conditions=["核对资料时"],
                 sources=["raw/revived.md"], at="2026-10-18T02:00:00Z", key="sticky-note")
     assert note["record"]["valid"] is True

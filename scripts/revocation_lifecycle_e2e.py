@@ -48,8 +48,9 @@ def predicates(root):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-revoke-") as temp:
     root = Path(temp)
     call(root, "init", purpose="研究陶瓷")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")["id"]
     publish(root, "ceramics.md", "陶瓷", "concepts/ceramics", "器形与釉色。")
-    call(root, "memory-submit", kind="fact", scope="workspace",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
          text="官窑记录可据此核对", conditions=["核对官窑资料时"],
          sources=["raw/ceramics.md"], at="2026-11-14T09:30:00Z", key="note")
     call(root, "research-topic", topic="陶瓷釉色", queries=["釉色 对照"],
@@ -61,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-revoke-") as temp:
     call(root, "scan")
 
     # A revoked source is invalid, which is a different debt from drifted.
-    note = [r for r in call(root, "memory-list")["notes"] if r["key"] == "note"][0]
+    note = [r for r in call(root, "memory-list", workspace=WS)["notes"] if r["key"] == "note"][0]
     assert note["status"] == "active" and note["valid"] is False
     assert note["invalid_sources"] == ["raw/ceramics.md"]
     assert note["drifted_sources"] == []
@@ -77,24 +78,24 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-revoke-") as temp:
     # is what compares it against the live fingerprint.
     assert call(root, "research-list")[0]["inputs_hash"] == before
     assert call(root, "impact-audit", at="2026-11-14T10:30:00Z")["opened"] == 1
-    items = {i["kind"]: i for i in call(root, "inbox")["items"]}
+    items = {i["kind"]: i for i in call(root, "inbox", workspace=WS)["items"]}
     assert "impact" not in items, "one subject must not be proposed twice"
     assert items["research"]["drift"] == ["baseline-drift"]
     assert any(i["kind"] == "memory-source-stale" for i in items.values())
-    assert call(root, "stats")["memory"]["invalid"] == 1
-    assert call(root, "stats")["memory"]["drifted"] == 0
+    assert call(root, "stats", workspace=WS)["memory"]["invalid"] == 1
+    assert call(root, "stats", workspace=WS)["memory"]["drifted"] == 0
 
     # Revocation is durable: restoring identical bytes does not re-approve it.
     (root / "raw/ceramics.md").write_text("器形与釉色。")
     call(root, "scan")
-    still = [r for r in call(root, "memory-list")["notes"] if r["key"] == "note"][0]
+    still = [r for r in call(root, "memory-list", workspace=WS)["notes"] if r["key"] == "note"][0]
     assert still["valid"] is False, "forget must stay sticky"
     assert "stale_source" in predicates(root)
 
     # Clearing the debt requires new content, not the old bytes.
     (root / "raw/ceramics.md").write_text("第二版：器形、釉色与窑口。")
     call(root, "scan")
-    cleared = [r for r in call(root, "memory-list")["notes"] if r["key"] == "note"][0]
+    cleared = [r for r in call(root, "memory-list", workspace=WS)["notes"] if r["key"] == "note"][0]
     assert cleared["valid"] is False
     assert cleared["drifted_sources"] == ["raw/ceramics.md"]
     assert "memory_source_drift" in predicates(root)

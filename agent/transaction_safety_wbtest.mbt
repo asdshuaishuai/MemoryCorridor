@@ -39,8 +39,10 @@ fn crashing(fail_after : Int) -> (@vault.Storage, @vault.Storage, Map[String, St
 }
 
 fn submit_note(store : @vault.Storage) -> String raise @base.Fault {
+  memory_open_workspace(store)
   let result = memory_submit(store, @vault.load(store), {
-    "op": "memory-submit", "kind": "preference", "scope": "workspace",
+    "op": "memory-submit", "kind": "preference", "scope": "project",
+    "workspace": test_ws(),
     "text": "优先安排陶瓷窑口对比的参观时间", "conditions": ["规划博物馆行程时"],
     "sources": [], "at": "2026-10-29T09:00:00Z", "key": "k1",
   })
@@ -53,7 +55,7 @@ test "memory pin recovers from a crash at any publish point" {
     let (store, broken, files) = crashing(fail_after)
     ignore(initialize(store, "研究陶瓷"))
     let id = submit_note(store)
-    let request : Json = { "op": "memory-pin", "id": id, "pinned": true,
+    let request : Json = { "op": "memory-pin", "workspace": test_ws(), "id": id, "pinned": true,
       "at": "2026-10-29T09:30:00Z" }
     let failed = try { ignore(memory_protect(broken, @vault.load(broken), request)); false } catch {
       _ => true
@@ -65,7 +67,7 @@ test "memory pin recovers from a crash at any publish point" {
     assert_false(files.contains("state/transactions/pending.json"))
     let after = @vault.load(store)
     @vault.verify(store, after)
-    let row = memory_rows(store, after).filter(n => n.id == id)[0]
+    let row = memory_rows(store, after, test_ws(), None).filter(n => n.id == id)[0]
     // Either the whole transition landed, or none of it did.
     if row.pinned {
       assert_eq(row.updated_at, "2026-10-29T09:30:00Z")
@@ -79,7 +81,7 @@ test "memory pin recovers from a crash at any publish point" {
     // A pinned note survives an interrupted archive attempt.
     if row.pinned {
       let refused = try {
-        ignore(memory_archive(broken, @vault.load(broken), { "op": "memory-archive", "id": id,
+        ignore(memory_archive(broken, @vault.load(broken), { "op": "memory-archive", "workspace": test_ws(), "id": id,
           "at": "2026-10-29T10:00:00Z" }))
         false
       } catch { _ => true }
@@ -96,7 +98,7 @@ test "memory supersede recovers from a crash at any publish point" {
     let (store, broken, files) = crashing(fail_after)
     ignore(initialize(store, "研究陶瓷"))
     let id = submit_note(store)
-    let request : Json = { "op": "memory-supersede", "id": id,
+    let request : Json = { "op": "memory-supersede", "workspace": test_ws(), "id": id,
       "text": "优先安排陶瓷窑口对比的参观时间，并保留半天自由活动",
       "conditions": ["规划博物馆行程时"], "sources": [], "at": "2026-10-29T09:30:00Z" }
     let failed = try { ignore(memory_supersede(broken, @vault.load(broken), request)); false } catch {
@@ -108,7 +110,7 @@ test "memory supersede recovers from a crash at any publish point" {
     assert_false(files.contains("state/transactions/pending.json"))
     let after = @vault.load(store)
     @vault.verify(store, after)
-    let rows = memory_rows(store, after)
+    let rows = memory_rows(store, after, test_ws(), None)
     let replacement = rows.filter(n => n.supersedes == Some(id))
     if replacement.is_empty() {
       // Nothing landed: the original note is untouched and still active.
@@ -136,18 +138,18 @@ test "memory pin is idempotent and refuses an externally edited record" {
   ignore(initialize(store, "研究陶瓷"))
   let id = submit_note(store)
   let entries = @vault.load(store)
-  let first = memory_protect(store, entries, { "op": "memory-pin", "id": id, "pinned": true,
+  let first = memory_protect(store, entries, { "op": "memory-pin", "workspace": test_ws(), "id": id, "pinned": true,
     "at": "2026-10-29T09:30:00Z" })
   assert_eq(@base.boolean(@base.field(first, "replayed")), false)
-  let replay = memory_protect(store, @vault.load(store), { "op": "memory-pin", "id": id,
+  let replay = memory_protect(store, @vault.load(store), { "op": "memory-pin", "workspace": test_ws(), "id": id,
     "pinned": true, "at": "2026-10-29T09:30:00Z" })
   assert_eq(@base.boolean(@base.field(replay, "replayed")), true)
   // A human editing the record outside the engine must not be overwritten.
-  let path = "state/memory/" + id + ".json"
+  let path = "state/memory/" + test_ws() + "/" + id + ".json"
   let edited = @base.replace_all(@vault.required(store, path), "\"pinned\":true", "\"pinned\":false")
   files[path] = edited
   let refused = try {
-    ignore(memory_protect(store, @vault.load(store), { "op": "memory-pin", "id": id,
+    ignore(memory_protect(store, @vault.load(store), { "op": "memory-pin", "workspace": test_ws(), "id": id,
       "pinned": true, "at": "2026-10-29T10:00:00Z" }))
     false
   } catch { _ => true }
@@ -222,7 +224,7 @@ test "impact audit recovers from a crash at any publish point" {
 }
 
 fn use_note_request(key : String) -> Json {
-  { "op": "memory-submit", "kind": "fact", "scope": "workspace",
+  { "op": "memory-submit", "workspace": test_ws(), "kind": "fact", "scope": "project",
     "text": "判断 " + key, "conditions": [], "sources": [],
     "at": "2026-11-11T09:00:00Z", "key": key }
 }
@@ -233,11 +235,12 @@ test "memory use recovers from a crash at any publish point" {
   for fail_after in [0, 1, 2, 3, 4, 5, 6, 7] {
     let (store, broken, files) = crashing(fail_after)
     ignore(initialize(store, "研究陶瓷"))
+    memory_open_workspace(store)
     let first = memory_submit(store, @vault.load(store), use_note_request("k1"))
     let first_id = @base.text(@base.field(first, "id"))
     let second = memory_submit(store, @vault.load(store), use_note_request("k2"))
     let second_id = @base.text(@base.field(second, "id"))
-    let request : Json = { "op": "memory-use", "ids": [first_id, second_id],
+    let request : Json = { "op": "memory-use", "workspace": test_ws(), "ids": [first_id, second_id],
       "at": "2026-11-11T10:00:00Z" }
     let failed = try {
       ignore(memory_use(broken, @vault.load(broken), request))
@@ -251,7 +254,7 @@ test "memory use recovers from a crash at any publish point" {
     assert_false(files.contains("state/transactions/pending.json"))
     let after = @vault.load(store)
     @vault.verify(store, after)
-    let rows = memory_rows(store, after)
+    let rows = memory_rows(store, after, test_ws(), None)
     // The batch is atomic: either both notes were reported or neither was.
     let stamped = rows.filter(n => n.last_used_at == Some("2026-11-11T10:00:00Z"))
     assert_true(stamped.length() == 0 || stamped.length() == 2)
@@ -266,7 +269,7 @@ test "memory use recovers from a crash at any publish point" {
     assert_eq(registered, stamped.length() == 2)
     // Re-reporting settles and a further report with the same time is silent.
     ignore(memory_use(store, after, request))
-    let settled = memory_rows(store, @vault.load(store)).filter(n =>
+    let settled = memory_rows(store, @vault.load(store), test_ws(), None).filter(n =>
       n.last_used_at == Some("2026-11-11T10:00:00Z"))
     assert_eq(settled.length(), 2)
     let quiet = memory_use(store, @vault.load(store), request)

@@ -63,6 +63,7 @@ def publish(root, name, body, page_id, title):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-impact-") as temp:
     root = Path(temp)
     call(root, "init", purpose="研究陶瓷器形与釉色")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")["id"]
 
     # Nothing durable is open yet, so an audit is a no-op and writes nothing.
     first = call(root, "impact-audit", at="2026-10-21T09:30:00Z")
@@ -99,7 +100,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-impact-") as temp:
     assert row["current"] != record["current"]
 
     # Filing more state must not move the knowledge inputs, so the audit replays.
-    call(root, "memory-submit", kind="preference", scope="workspace", text="关注器形",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=WS, text="关注器形",
          conditions=["规划参观时"], sources=[], at="2026-10-21T10:15:00Z", key="shape")
     fingerprint = call(root, "status")["fingerprint"]
     again = call(root, "impact-audit", at="2026-10-21T10:30:00Z")

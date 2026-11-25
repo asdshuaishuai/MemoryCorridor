@@ -86,7 +86,7 @@ fn maintenance(store : @vault.Storage, entries : Array[@core.Entry], request : J
         "pending_suggestions": suggestions.filter(r => optional(r, "status") == Some("proposed".to_json())).length(),
         "overview_status": overview_state,
         "evidence": evidence,
-        "memory": memory_summary(store, entries),
+        "memory": memory_summary(store, entries, optional_workspace(request), optional_session(request)),
         "impacts": impact_summary(store, entries),
         "providers": { "total": providers.length(), "active": providers.filter(r => optional(r, "status") == Some("active".to_json())).length(),
           "revoked": providers.filter(r => optional(r, "status") == Some("revoked".to_json())).length() },

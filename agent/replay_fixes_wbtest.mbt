@@ -189,8 +189,9 @@ test "commit without a token still refuses a drifted catalog" {
 }
 
 fn memory_seed_note(store : @vault.Storage) -> String raise @base.Fault {
+  memory_open_workspace(store)
   let first = memory_submit(store, @vault.load(store), {
-    "op": "memory-submit", "kind": "preference", "scope": "workspace",
+    "op": "memory-submit", "workspace": test_ws(), "kind": "preference", "scope": "project",
     "text": "优先安排陶瓷窑口对比的参观时间", "conditions": ["规划博物馆行程时"],
     "sources": [], "at": "2026-10-29T09:00:00Z", "key": "k1" })
   @base.text(@base.field(first, "id"))
@@ -200,19 +201,19 @@ test "memory-submit replay reports archived and superseded notes as refusals" {
   let (store, _broken, _files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
   let id = memory_seed_note(store)
-  let request : Json = { "op": "memory-submit", "kind": "preference", "scope": "workspace",
+  let request : Json = { "op": "memory-submit", "workspace": test_ws(), "kind": "preference", "scope": "project",
     "text": "优先安排陶瓷窑口对比的参观时间", "conditions": ["规划博物馆行程时"],
     "sources": [], "at": "2026-10-29T09:00:00Z", "key": "k1" }
   let active = memory_submit(store, @vault.load(store), request)
   assert_eq(@base.boolean(@base.field(active, "replayed")), true)
-  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive",
+  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive", "workspace": test_ws(),
     "id": id, "at": "2026-10-29T10:00:00Z" }))
   let archived = fault_of(() => ignore(memory_submit(store, @vault.load(store), request)))
   assert_true(archived.has_prefix("memory_archived_note_refused"), msg=archived)
   // The superseded side of the key refuses just as distinctly.
-  ignore(memory_restore(store, @vault.load(store), { "op": "memory-restore",
+  ignore(memory_restore(store, @vault.load(store), { "op": "memory-restore", "workspace": test_ws(),
     "id": id, "at": "2026-10-29T11:00:00Z" }))
-  ignore(memory_supersede(store, @vault.load(store), { "op": "memory-supersede",
+  ignore(memory_supersede(store, @vault.load(store), { "op": "memory-supersede", "workspace": test_ws(),
     "id": id, "text": "改期后的参观安排", "conditions": ["规划博物馆行程时"],
     "sources": [], "at": "2026-10-29T12:00:00Z", "key": "k1" }))
   let superseded = fault_of(() => ignore(memory_submit(store, @vault.load(store), request)))
@@ -223,18 +224,18 @@ test "memory-pin refuses archived and superseded notes" {
   let (store, _broken, _files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
   let id = memory_seed_note(store)
-  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive",
+  ignore(memory_archive(store, @vault.load(store), { "op": "memory-archive", "workspace": test_ws(),
     "id": id, "at": "2026-10-29T10:00:00Z" }))
   let archived = fault_of(() => ignore(memory_protect(store, @vault.load(store),
-    { "op": "memory-pin", "id": id, "pinned": true, "at": "2026-10-29T10:30:00Z" })))
+    { "op": "memory-pin", "workspace": test_ws(), "id": id, "pinned": true, "at": "2026-10-29T10:30:00Z" })))
   assert_true(archived.has_prefix("memory_archived_note_refused"), msg=archived)
-  ignore(memory_restore(store, @vault.load(store), { "op": "memory-restore",
+  ignore(memory_restore(store, @vault.load(store), { "op": "memory-restore", "workspace": test_ws(),
     "id": id, "at": "2026-10-29T11:00:00Z" }))
-  ignore(memory_supersede(store, @vault.load(store), { "op": "memory-supersede",
+  ignore(memory_supersede(store, @vault.load(store), { "op": "memory-supersede", "workspace": test_ws(),
     "id": id, "text": "改期后的参观安排", "conditions": ["规划博物馆行程时"],
     "sources": [], "at": "2026-10-29T12:00:00Z", "key": "k1" }))
   let superseded = fault_of(() => ignore(memory_protect(store, @vault.load(store),
-    { "op": "memory-pin", "id": id, "pinned": true, "at": "2026-10-29T12:30:00Z" })))
+    { "op": "memory-pin", "workspace": test_ws(), "id": id, "pinned": true, "at": "2026-10-29T12:30:00Z" })))
   assert_true(superseded.has_prefix("memory_superseded_note_refused"), msg=superseded)
 }
 
@@ -242,19 +243,19 @@ test "supersede inherits the pinned marker into the successor" {
   let (store, _broken, _files) = crashing(-1)
   ignore(initialize(store, "研究陶瓷"))
   let id = memory_seed_note(store)
-  ignore(memory_protect(store, @vault.load(store), { "op": "memory-pin",
+  ignore(memory_protect(store, @vault.load(store), { "op": "memory-pin", "workspace": test_ws(),
     "id": id, "pinned": true, "at": "2026-10-29T10:00:00Z" }))
-  ignore(memory_supersede(store, @vault.load(store), { "op": "memory-supersede",
+  ignore(memory_supersede(store, @vault.load(store), { "op": "memory-supersede", "workspace": test_ws(),
     "id": id, "text": "改期后的参观安排", "conditions": ["规划博物馆行程时"],
     "sources": [], "at": "2026-10-29T11:00:00Z" }))
-  let rows = memory_rows(store, @vault.load(store))
+  let rows = memory_rows(store, @vault.load(store), test_ws(), None)
   let successor = rows.filter(n => n.supersedes == Some(id))[0]
   assert_true(successor.pinned)
   let old = rows.filter(n => n.id == id)[0]
   assert_true(old.pinned)
   // The inherited pin keeps the successor out of automated pruning's reach.
   let refused = fault_of(() => ignore(memory_archive(store, @vault.load(store),
-    { "op": "memory-archive", "id": successor.id, "at": "2026-10-29T12:00:00Z" })))
+    { "op": "memory-archive", "workspace": test_ws(), "id": successor.id, "at": "2026-10-29T12:00:00Z" })))
   assert_true(refused.has_prefix("memory_pinned_archive_refused"), msg=refused)
 }
 
@@ -263,17 +264,17 @@ test "memory transitions refuse backwards timestamps and lint reports them" {
   ignore(initialize(store, "研究陶瓷"))
   let id = memory_seed_note(store)
   let backwards = fault_of(() => ignore(memory_archive(store, @vault.load(store),
-    { "op": "memory-archive", "id": id, "at": "2026-10-29T08:00:00Z" })))
+    { "op": "memory-archive", "workspace": test_ws(), "id": id, "at": "2026-10-29T08:00:00Z" })))
   assert_true(backwards.has_prefix("memory_time_order_invalid"), msg=backwards)
   let pin_back = fault_of(() => ignore(memory_protect(store, @vault.load(store),
-    { "op": "memory-pin", "id": id, "pinned": true, "at": "2020-01-01" })))
+    { "op": "memory-pin", "workspace": test_ws(), "id": id, "pinned": true, "at": "2020-01-01" })))
   assert_true(pin_back.has_prefix("memory_time_order_invalid"), msg=pin_back)
   let supersede_back = fault_of(() => ignore(memory_supersede(store, @vault.load(store),
-    { "op": "memory-supersede", "id": id, "text": "更早的改写", "conditions": [],
+    { "op": "memory-supersede", "workspace": test_ws(), "id": id, "text": "更早的改写", "conditions": [],
       "sources": [], "at": "2026-10-28T09:00:00Z" })))
   assert_true(supersede_back.has_prefix("memory_time_order_invalid"), msg=supersede_back)
   // An inverted record that predates the guard is a lint finding, not silence.
-  let path = "state/memory/" + id + ".json"
+  let path = "state/memory/" + test_ws() + "/" + id + ".json"
   let value = @base.parse(@vault.required(store, path))
   let record = match value {
     Object(fields) => { fields["updated_at"] = "2026-10-28T09:00:00Z".to_json(); Json::object(fields) }

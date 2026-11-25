@@ -21,8 +21,8 @@ def call(root, op, error=None, **fields):
     return value
 
 
-def notes(root):
-    return {row["id"]: row for row in call(root, "memory-list")["notes"]}
+def notes(root, ws):
+    return {row["id"]: row for row in call(root, "memory-list", workspace=ws)["notes"]}
 
 
 def lint_predicates(root):
@@ -63,13 +63,14 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # writing and never rewinds last_opened_at.
     workspace_path = "/Users/kelthas/work/陶瓷"
     workspace = call(root, "workspace-open", path=workspace_path, at="2026-10-19T09:00:00Z")
+    ws = workspace["id"]
     assert workspace["replayed"] is False
     assert workspace["id"] == call(root, "workspace-open", path=workspace_path,
                                    at="2026-10-19T09:00:00Z")["id"]
-    fingerprint = call(root, "status")["fingerprint"]
+    fingerprint = call(root, "status", workspace=ws)["fingerprint"]
     assert call(root, "workspace-open", path=workspace_path,
                 at="2026-10-19T09:00:00Z")["replayed"] is True
-    assert call(root, "status")["fingerprint"] == fingerprint
+    assert call(root, "status", workspace=ws)["fingerprint"] == fingerprint
     later = call(root, "workspace-open", path=workspace_path, at="2026-10-19T10:00:00Z")
     assert later["created_at"] == "2026-10-19T09:00:00Z"
     assert later["last_opened_at"] == "2026-10-19T10:00:00Z"
@@ -81,50 +82,50 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     assert listed["count"] == 1 and listed["workspaces"][0]["path"] == workspace_path
 
     # A preference note bound to a raw source, with an applicability condition.
-    first = call(root, "memory-submit", kind="preference", scope="workspace",
+    first = call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
                  text="优先安排陶瓷窑口对比的参观时间",
                  conditions=["规划博物馆行程时"],
                  sources=[], at="2026-10-20T09:00:00Z", key="ceramics-preference")
     assert first["replayed"] is False and first["status"] == "active"
     assert first["record"]["valid"] is True
     # Idempotent replay of the same key and content.
-    replay = call(root, "memory-submit", kind="preference", scope="workspace",
+    replay = call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
                   text="优先安排陶瓷窑口对比的参观时间",
                   conditions=["规划博物馆行程时"],
                   sources=[], at="2026-10-20T09:00:00Z", key="ceramics-preference")
     assert replay["replayed"] is True and replay["id"] == first["id"]
 
     # A different key with identical content is a duplicate, not a second note.
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="优先安排陶瓷窑口对比的参观时间",
          conditions=["规划博物馆行程时"],
          sources=[], at="2026-10-20T09:00:00Z", key="ceramics-preference-copy",
          error="memory_duplicate_text")
 
     # A corrected note supersedes instead of forking, and keeps its history.
-    corrected = call(root, "memory-submit", kind="preference", scope="workspace",
+    corrected = call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
                      text="优先安排陶瓷窑口对比的参观时间，并保留半天自由活动",
                      conditions=["规划博物馆行程时"],
                      sources=[], at="2026-10-20T10:00:00Z", key="ceramics-preference")
     assert corrected["supersedes"] == first["id"]
-    rows = notes(root)
+    rows = notes(root, ws)
     assert rows[first["id"]]["status"] == "superseded"
     assert rows[first["id"]]["superseded_by"] == corrected["id"]
     assert rows[corrected["id"]]["status"] == "active"
     assert rows[corrected["id"]]["supersedes"] == first["id"]
 
     # A second, unrelated note plus an explicit supersede by id.
-    constraint = call(root, "memory-submit", kind="constraint", scope="workspace",
+    constraint = call(root, "memory-submit", kind="constraint", scope="project", workspace=ws,
                       text="交付物必须带来源引用", conditions=[], sources=[],
                       at="2026-10-20T11:00:00Z", key="citation-rule")
-    replaced = call(root, "memory-supersede", id=constraint["id"],
+    replaced = call(root, "memory-supersede", workspace=ws, id=constraint["id"],
                     text="交付物必须带可核对的来源引用", conditions=["发布知识页时"],
                     sources=[], at="2026-10-20T12:00:00Z")
     assert replaced["supersedes"] == constraint["id"]
-    assert notes(root)[constraint["id"]]["status"] == "superseded"
+    assert notes(root, ws)[constraint["id"]]["status"] == "superseded"
 
     # Prefetch ranks the relevant note and reports its applicability conditions.
-    brief = call(root, "memory-prefetch", query="陶瓷 参观 时间")
+    brief = call(root, "memory-prefetch", workspace=ws, query="陶瓷 参观 时间")
     assert [row["id"] for row in brief["notes"]][0] == corrected["id"]
     assert brief["notes"][0]["conditions"] == ["规划博物馆行程时"]
     assert brief["notes"][0]["score"] > 0
@@ -136,127 +137,129 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     assert first["id"] not in {row["id"] for row in brief["notes"]}
 
     # Archived notes leave the default set but stay listable and restorable.
-    archived = call(root, "memory-archive", id=corrected["id"], at="2026-10-20T13:00:00Z")
+    archived = call(root, "memory-archive", workspace=ws, id=corrected["id"], at="2026-10-20T13:00:00Z")
     assert archived["status"] == "archived" and archived["replayed"] is False
-    assert call(root, "memory-archive", id=corrected["id"], at="2026-10-20T13:00:00Z")["replayed"] is True
-    default_ids = {row["id"] for row in call(root, "memory-prefetch", query="陶瓷 参观 时间")["notes"]}
+    assert call(root, "memory-archive", workspace=ws, id=corrected["id"], at="2026-10-20T13:00:00Z")["replayed"] is True
+    default_ids = {row["id"] for row in call(root, "memory-prefetch", workspace=ws, query="陶瓷 参观 时间")["notes"]}
     assert corrected["id"] not in default_ids
-    widened = call(root, "memory-prefetch", query="陶瓷 参观 时间", archived=True)
+    widened = call(root, "memory-prefetch", workspace=ws, query="陶瓷 参观 时间", archived=True)
     assert corrected["id"] in {row["id"] for row in widened["notes"]}
     # Leaving the archived state is explicit: restore, never a silent supersede.
-    call(root, "memory-supersede", id=corrected["id"], text="已归档笔记", conditions=[],
+    call(root, "memory-supersede", workspace=ws, id=corrected["id"], text="已归档笔记", conditions=[],
          sources=[], at="2026-10-20T15:00:00Z", error="memory_archived_note_refused")
-    restored = call(root, "memory-restore", id=corrected["id"], at="2026-10-20T14:00:00Z")
+    restored = call(root, "memory-restore", workspace=ws, id=corrected["id"], at="2026-10-20T14:00:00Z")
     assert restored["status"] == "active" and restored["record"]["archived_at"] is None
     assert corrected["id"] in {row["id"] for row in
-                               call(root, "memory-prefetch", query="陶瓷 参观 时间")["notes"]}
-    call(root, "memory-archive", id=corrected["id"], at="2026-10-20T18:30:00Z")
-    assert notes(root)[corrected["id"]]["status"] == "archived"
+                               call(root, "memory-prefetch", workspace=ws, query="陶瓷 参观 时间")["notes"]}
+    call(root, "memory-archive", workspace=ws, id=corrected["id"], at="2026-10-20T18:30:00Z")
+    assert notes(root, ws)[corrected["id"]]["status"] == "archived"
 
     # Source drift invalidates the note without deleting its history.
     ingest(root, "ceramics.md", "南宋官窑博物馆的器形与釉色记录。\n")
-    bound = call(root, "memory-submit", kind="fact", scope="workspace",
+    bound = call(root, "memory-submit", kind="fact", scope="project", workspace=ws,
                  text="官窑记录来自已登记来源", conditions=[], sources=["raw/ceramics.md"],
                  at="2026-10-20T16:00:00Z", key="ceramics-fact")
     assert bound["record"]["valid"] is True
     forgotten = call(root, "forget", source="raw/ceramics.md", at="2026-10-20T17:00:00Z")
     assert forgotten["source"] == "raw/ceramics.md" and forgotten["raw_retained"] is True
-    rows = notes(root)
+    rows = notes(root, ws)
     assert rows[bound["id"]]["valid"] is False
     assert rows[bound["id"]]["invalid_sources"] == ["raw/ceramics.md"]
     assert rows[bound["id"]]["status"] == "active"
     assert "memory_source_stale" in lint_predicates(root)
-    summary = call(root, "stats")["memory"]
+    summary = call(root, "stats", workspace=ws)["memory"]
     assert summary["invalid"] >= 1
 
     # A note pins the bytes it was written against, so rewriting the source
     # whole is drift rather than something the note silently survives.
     (root / "raw/ceramics.md").write_text("完全无关的内容：天气与市场行情。\n")
     call(root, "scan")
-    note = [r for r in notes(root).values() if r["key"] == "ceramics-fact"][0]
+    note = [r for r in notes(root, ws).values()
+            if r["key"] == "ceramics-fact" and r["status"] == "active"][0]
     assert note["valid"] is False
     assert note["invalid_sources"] == []
     assert note["drifted_sources"] == ["raw/ceramics.md"]
     assert len(note["source_hashes"]) == len(note["sources"])
     assert "memory_source_drift" in lint_predicates(root)
-    assert call(root, "stats")["memory"]["drifted"] >= 1
-    stale_items = [i for i in call(root, "inbox")["items"]
+    assert call(root, "stats", workspace=ws)["memory"]["drifted"] >= 1
+    stale_items = [i for i in call(root, "inbox", workspace=ws)["items"]
                    if i["kind"] == "memory-source-stale"]
     assert len(stale_items) == 1
     assert stale_items[0]["reason"] == "source-bytes-changed"
     assert stale_items[0]["detail"].startswith("fact note was written against different bytes")
     # Re-binding against the current bytes clears the debt.
-    call(root, "memory-supersede", id=note["id"], text="来源已改写，需重新核对",
+    call(root, "memory-supersede", workspace=ws, id=note["id"], text="来源已改写，需重新核对",
          conditions=[], sources=["raw/ceramics.md"], at="2026-10-20T17:30:00Z")
-    rebound = [r for r in notes(root).values() if r["key"] == "ceramics-fact"][0]
+    rebound = [r for r in notes(root, ws).values()
+               if r["key"] == "ceramics-fact" and r["status"] == "active"][0]
     assert rebound["valid"] is True and rebound["drifted_sources"] == []
-    assert [i for i in call(root, "inbox")["items"]
+    assert [i for i in call(root, "inbox", workspace=ws)["items"]
             if i["kind"] == "memory-source-stale"] == []
     # The same judgment under different bindings is a duplicate, not a
     # competing judgment: `note_hash` pins the evidence, but duplicate and
     # conflict detection must look at what the note actually says.
     (root / "raw/other.md").write_text("另一份官窑记录。\n")
     call(root, "scan")
-    current = [r for r in notes(root).values()
+    current = [r for r in notes(root, ws).values()
                if r["key"] == "ceramics-fact" and r["status"] == "active"][0]
-    call(root, "memory-submit", kind="fact", scope="workspace",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws,
          text=current["text"], conditions=current["conditions"],
          sources=["raw/other.md"], at="2026-10-20T18:00:00Z", key="ceramics-fact-copy",
          error="memory_duplicate_text")
-    assert call(root, "memory-conflicts")["counts"]["notes"] == 0
+    assert call(root, "memory-conflicts", workspace=ws)["counts"]["notes"] == 0
     # A genuinely different judgment under the same conditions still conflicts.
-    call(root, "memory-submit", kind="fact", scope="workspace",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws,
          text="官窑记录只说明器形，不涉及釉色", conditions=current["conditions"],
          sources=["raw/other.md"], at="2026-10-20T18:15:00Z", key="ceramics-rival")
-    rivals = call(root, "memory-conflicts")
+    rivals = call(root, "memory-conflicts", workspace=ws)
     assert rivals["counts"]["notes"] == 2
     assert {n["key"] for g in rivals["conflicts"] for n in g["notes"]} == {
         "ceramics-fact", "ceramics-rival"}
     # Narrowing the rival's conditions resolves it, so the rest of the flow sees
     # a single conflict group again.
-    rival = [r for r in notes(root).values()
+    rival = [r for r in notes(root, ws).values()
              if r["key"] == "ceramics-rival" and r["status"] == "active"][0]
-    call(root, "memory-supersede", id=rival["id"], text="官窑记录只说明器形，不涉及釉色",
+    call(root, "memory-supersede", workspace=ws, id=rival["id"], text="官窑记录只说明器形，不涉及釉色",
          conditions=["只核对器形时"], sources=["raw/other.md"],
          at="2026-10-20T18:30:00Z")
-    assert call(root, "memory-conflicts")["counts"] == {"groups": 0, "notes": 0}
+    assert call(root, "memory-conflicts", workspace=ws)["counts"] == {"groups": 0, "notes": 0}
 
     # A binding must point at a registered, active source.
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x", conditions=[],
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x", conditions=[],
          sources=["raw/absent.md"], at="2026-10-20T17:45:00Z", key="unregistered",
          error="memory_source_not_registered")
 
     # Competing judgments under the same conditions are review debt: both sides
     # stay readable until a host resolves one of them.
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="行程优先看陶瓷窑口", conditions=["规划博物馆行程时"], sources=[],
          at="2026-10-20T18:00:00Z", key="trip-ceramics")
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="行程优先看青铜器", conditions=["规划博物馆行程时"], sources=[],
          at="2026-10-20T18:05:00Z", key="trip-bronze")
     # A different kind and a different condition are not competing judgments.
-    call(root, "memory-submit", kind="constraint", scope="workspace",
+    call(root, "memory-submit", kind="constraint", scope="project", workspace=ws,
          text="行程预算不超过三千", conditions=["规划博物馆行程时"], sources=[],
          at="2026-10-20T18:10:00Z", key="trip-budget")
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="阅读时先看摘要", conditions=["整理资料时"], sources=[],
          at="2026-10-20T18:15:00Z", key="reading-order")
-    conflicts = call(root, "memory-conflicts")
+    conflicts = call(root, "memory-conflicts", workspace=ws)
     assert conflicts["counts"] == {"groups": 1, "notes": 2}
     group = conflicts["conflicts"][0]
     assert group["kind"] == "preference" and group["conditions"] == ["规划博物馆行程时"]
     assert {n["key"] for n in group["notes"]} == {"trip-ceramics", "trip-bronze"}
     assert all(n["conflicted"] for n in group["notes"])
-    listed = notes(root)
+    listed = notes(root, ws)
     by_key = {row["key"]: row for row in listed.values()}
     assert by_key["trip-ceramics"]["conflicted"] is True
     assert by_key["trip-bronze"]["conflicted"] is True
     assert by_key["trip-budget"]["conflicted"] is False
     assert by_key["reading-order"]["conflicted"] is False
-    assert call(root, "stats")["memory"]["conflicted"] == 2
+    assert call(root, "stats", workspace=ws)["memory"]["conflicted"] == 2
     assert "memory_conflict" in lint_predicates(root)
     # Prefetch surfaces the competing judgments with the candidates.
-    brief = call(root, "memory-prefetch", query="行程 陶瓷 青铜")
+    brief = call(root, "memory-prefetch", workspace=ws, query="行程 陶瓷 青铜")
     assert brief["conflict_counts"] == {"groups": 1, "notes": 2}
     assert [g["kind"] for g in brief["conflicts"]] == ["preference"]
     assert all(n["conflicted"] for n in brief["notes"]
@@ -264,83 +267,83 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # Superseding one side does not resolve it: the replacement is still a
     # competing judgment under the same conditions. Narrowing the conditions or
     # archiving the losing side does, and both keep the history.
-    loser = [r for r in notes(root).values() if r["key"] == "trip-bronze" and r["status"] == "active"][0]
-    call(root, "memory-supersede", id=loser["id"], text="行程优先看青铜器，仅次于陶瓷",
+    loser = [r for r in notes(root, ws).values() if r["key"] == "trip-bronze" and r["status"] == "active"][0]
+    call(root, "memory-supersede", workspace=ws, id=loser["id"], text="行程优先看青铜器，仅次于陶瓷",
          conditions=["规划博物馆行程时"], sources=[], at="2026-10-20T19:00:00Z")
-    assert call(root, "memory-conflicts")["counts"] == {"groups": 1, "notes": 2}
-    narrowed = [r for r in notes(root).values() if r["key"] == "trip-bronze" and r["status"] == "active"][0]
-    call(root, "memory-supersede", id=narrowed["id"], text="只有青铜特展时优先看青铜器",
+    assert call(root, "memory-conflicts", workspace=ws)["counts"] == {"groups": 1, "notes": 2}
+    narrowed = [r for r in notes(root, ws).values() if r["key"] == "trip-bronze" and r["status"] == "active"][0]
+    call(root, "memory-supersede", workspace=ws, id=narrowed["id"], text="只有青铜特展时优先看青铜器",
          conditions=["规划青铜特展时"], sources=[], at="2026-10-20T19:30:00Z")
-    assert call(root, "memory-conflicts")["counts"] == {"groups": 0, "notes": 0}
-    assert call(root, "stats")["memory"]["conflicted"] == 0
+    assert call(root, "memory-conflicts", workspace=ws)["counts"] == {"groups": 0, "notes": 0}
+    assert call(root, "stats", workspace=ws)["memory"]["conflicted"] == 0
     assert "memory_conflict" not in lint_predicates(root)
     # Both judgments remain readable; only the default conflict set is empty.
-    bronze = [r for r in notes(root).values()
+    bronze = [r for r in notes(root, ws).values()
               if r["key"] == "trip-bronze" and r["status"] == "active"][0]
     assert bronze["conditions"] == ["规划青铜特展时"]
     assert bronze["supersedes"] == narrowed["id"]
-    assert notes(root)[loser["id"]]["status"] == "superseded"
-    assert notes(root)[narrowed["id"]]["status"] == "superseded"
-    ceramics = [r for r in notes(root).values()
+    assert notes(root, ws)[loser["id"]]["status"] == "superseded"
+    assert notes(root, ws)[narrowed["id"]]["status"] == "superseded"
+    ceramics = [r for r in notes(root, ws).values()
                 if r["key"] == "trip-ceramics" and r["status"] == "active"][0]
     # Archiving the remaining side also clears it, and restore brings it back.
-    call(root, "memory-archive", id=ceramics["id"], at="2026-10-20T20:00:00Z")
-    assert call(root, "memory-conflicts")["counts"] == {"groups": 0, "notes": 0}
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-archive", workspace=ws, id=ceramics["id"], at="2026-10-20T20:00:00Z")
+    assert call(root, "memory-conflicts", workspace=ws)["counts"] == {"groups": 0, "notes": 0}
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="行程优先看瓷器", conditions=["规划博物馆行程时"], sources=[],
          at="2026-10-20T20:30:00Z", key="trip-porcelain")
-    assert call(root, "memory-conflicts")["counts"] == {"groups": 0, "notes": 0}
-    call(root, "memory-restore", id=ceramics["id"], at="2026-10-20T21:00:00Z")
-    assert call(root, "memory-conflicts")["counts"] == {"groups": 1, "notes": 2}
+    assert call(root, "memory-conflicts", workspace=ws)["counts"] == {"groups": 0, "notes": 0}
+    call(root, "memory-restore", workspace=ws, id=ceramics["id"], at="2026-10-20T21:00:00Z")
+    assert call(root, "memory-conflicts", workspace=ws)["counts"] == {"groups": 1, "notes": 2}
 
     # A5's Autodream merges duplicate information: a reworded judgment must not
     # crowd a distinct one out of the budget. The two notes differ only in
     # punctuation and apply under different conditions, so they are not
     # competing judgments.
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="行程优先安排陶瓷窑口对比的参观时间，并保留半天的自由活动",
          conditions=["规划周末短途旅行时"], sources=[], at="2026-10-20T21:30:00Z", key="plan-a")
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="行程优先安排陶瓷窑口对比的参观时间，并保留半天的自由活动！",
          conditions=["规划城市漫步时"], sources=[], at="2026-10-20T21:35:00Z", key="plan-b")
     query = "陶瓷 窑口 参观 时间 自由活动"
-    plain = call(root, "memory-prefetch", query=query, limit=10)
+    plain = call(root, "memory-prefetch", workspace=ws, query=query, limit=10)
     assert plain["dedup"] == "none" and plain["similar_duplicates"] == []
     assert len([n for n in plain["notes"] if n["key"].startswith("plan-")]) == 2
-    merged = call(root, "memory-prefetch", query=query, limit=10, dedup="similar")
+    merged = call(root, "memory-prefetch", workspace=ws, query=query, limit=10, dedup="similar")
     assert merged["dedup"] == "similar"
     kept = [n for n in merged["notes"] if n["key"].startswith("plan-")]
     assert len(kept) == 1
     assert len(merged["similar_duplicates"]) == 1
     duplicate = merged["similar_duplicates"][0]
     assert duplicate["keeper"] == kept[0]["id"]
-    assert duplicate["duplicate"] in {row["id"] for row in call(root, "memory-list")["notes"]}
+    assert duplicate["duplicate"] in {row["id"] for row in call(root, "memory-list", workspace=ws)["notes"]}
     assert duplicate["duplicate"] != duplicate["keeper"]
     # Both notes stay listed; only the default candidate set is deduplicated.
-    assert len([n for n in call(root, "memory-list")["notes"]
+    assert len([n for n in call(root, "memory-list", workspace=ws)["notes"]
                 if n["key"].startswith("plan-")]) == 2
     # Short notes never merge on a coincidental token sequence.
-    call(root, "memory-submit", kind="constraint", scope="workspace", text="预算三千",
+    call(root, "memory-submit", kind="constraint", scope="project", workspace=ws, text="预算三千",
          conditions=["规划预算时"], sources=[], at="2026-10-20T21:40:00Z", key="budget-a")
-    call(root, "memory-submit", kind="constraint", scope="workspace", text="预算三千。",
+    call(root, "memory-submit", kind="constraint", scope="project", workspace=ws, text="预算三千。",
          conditions=["规划差旅时"], sources=[], at="2026-10-20T21:45:00Z", key="budget-b")
-    short = call(root, "memory-prefetch", query="预算 三千", limit=10, dedup="similar")
+    short = call(root, "memory-prefetch", workspace=ws, query="预算 三千", limit=10, dedup="similar")
     assert len([n for n in short["notes"] if n["key"].startswith("budget-")]) == 2
     assert short["similar_duplicates"] == []
     # kinds restricts the candidate set without touching the others.
-    only = call(root, "memory-prefetch", query="陶瓷 预算", limit=10, kinds=["constraint"])
+    only = call(root, "memory-prefetch", workspace=ws, query="陶瓷 预算", limit=10, kinds=["constraint"])
     assert {n["kind"] for n in only["notes"]} == {"constraint"}
     assert {"budget-a", "budget-b"} <= {n["key"] for n in only["notes"]}
     # A near-duplicate under the SAME conditions is a competing judgment, so it
     # is never merged: dropping one side would hide the conflict.
-    call(root, "memory-submit", kind="decision", scope="workspace",
+    call(root, "memory-submit", kind="decision", scope="project", workspace=ws,
          text="本阶段只整理陶瓷窑口的资料，暂不扩展到其他窑口",
          conditions=["规划资料整理范围时"], sources=[], at="2026-10-20T22:00:00Z", key="scope-a")
-    call(root, "memory-submit", kind="decision", scope="workspace",
+    call(root, "memory-submit", kind="decision", scope="project", workspace=ws,
          text="本阶段只整理陶瓷窑口的资料，暂不扩展到其他窑口。",
          conditions=["规划资料整理范围时"], sources=[], at="2026-10-20T22:05:00Z", key="scope-b")
-    assert call(root, "memory-conflicts")["counts"]["notes"] >= 2
-    guarded = call(root, "memory-prefetch", query="陶瓷 窑口 资料 整理 范围",
+    assert call(root, "memory-conflicts", workspace=ws)["counts"]["notes"] >= 2
+    guarded = call(root, "memory-prefetch", workspace=ws, query="陶瓷 窑口 资料 整理 范围",
                    limit=10, dedup="similar")
     scope_notes = [n for n in guarded["notes"] if n["key"].startswith("scope-")]
     assert len(scope_notes) == 2, scope_notes
@@ -351,11 +354,11 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # A candidate dropped by the budget must be reported, not silently lost.
     big = "陶瓷" * 2048
     assert len(big) == 4096
-    call(root, "memory-submit", kind="fact", scope="workspace", text=big,
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text=big,
          conditions=["整理长篇资料时"], sources=[], at="2026-10-20T23:20:00Z", key="big-note")
-    call(root, "memory-submit", kind="fact", scope="workspace", text="陶瓷短判断",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="陶瓷短判断",
          conditions=["整理短资料时"], sources=[], at="2026-10-20T23:25:00Z", key="small-note")
-    capped = call(root, "memory-prefetch", query="陶瓷", limit=10)
+    capped = call(root, "memory-prefetch", workspace=ws, query="陶瓷", limit=10)
     assert capped["truncated"] is True, capped["truncated"]
     assert len(capped["notes"]) == 1
     assert capped["notes"][0]["key"] == "big-note"
@@ -365,12 +368,12 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # silently ignored looks exactly like a limit that is honoured, so bind it
     # against notes written for the purpose.
     for index in range(4):
-        call(root, "memory-submit", kind="fact", scope="workspace",
+        call(root, "memory-submit", kind="fact", scope="project", workspace=ws,
              text=f"限定标记的第{index}条独立判断，用于验证候选条数上限。",
              conditions=[f"限定条件{index}"], sources=[],
              at=f"2026-10-21T00:0{index}:00Z", key=f"cap-{index}")
     def capped_read(count):
-        rows = call(root, "memory-prefetch", query="限定标记", limit=count)["notes"]
+        rows = call(root, "memory-prefetch", workspace=ws, query="限定标记", limit=count)["notes"]
         return [row for row in rows if row["key"].startswith("cap-")]
     for count in range(1, 4):
         bounded = capped_read(count)
@@ -380,7 +383,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # A limit above the candidate count returns them all rather than padding.
     wide = capped_read(50)
     assert len(wide) == 4, [n["key"] for n in wide]
-    assert call(root, "memory-prefetch", query="限定标记", limit=50)["truncated"] is False
+    assert call(root, "memory-prefetch", workspace=ws, query="限定标记", limit=50)["truncated"] is False
     # The capped read is a prefix of the uncapped one, so the limit selects the
     # top of the same ranking instead of a different subset.
     assert [row["id"] for row in wide[:2]] == [row["id"] for row in capped_read(2)]
@@ -391,7 +394,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     publish(root, "page-seed.md", "陶瓷窑口", "concepts/ceramics",
             "陶瓷窑口的器形与釉色对比记录。")
     page_id = "concepts/ceramics"
-    seeded = call(root, "memory-prefetch", page=page_id)
+    seeded = call(root, "memory-prefetch", workspace=ws, page=page_id)
     assert seeded["query_seed"] == "page:" + page_id
     assert seeded["query"] != ""
     assert "陶瓷" in seeded["query"]
@@ -399,51 +402,51 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     assert seeded["notes"], seeded
     assert all(n["status"] == "active" for n in seeded["notes"])
     # An explicit query reports its own seed and is mutually exclusive.
-    explicit = call(root, "memory-prefetch", query="陶瓷 参观 时间")
+    explicit = call(root, "memory-prefetch", workspace=ws, query="陶瓷 参观 时间")
     assert explicit["query_seed"] == "query"
-    call(root, "memory-prefetch", query="陶瓷", page=page_id,
+    call(root, "memory-prefetch", workspace=ws, query="陶瓷", page=page_id,
          error="memory_query_exclusive")
-    call(root, "memory-prefetch", error="memory_query_required")
-    call(root, "memory-prefetch", page="purpose.md", error="memory_page_required")
-    call(root, "memory-prefetch", page="concepts/absent", error="entry_not_found")
+    call(root, "memory-prefetch", workspace=ws, error="memory_query_required")
+    call(root, "memory-prefetch", workspace=ws, page="purpose.md", error="memory_page_required")
+    call(root, "memory-prefetch", workspace=ws, page="concepts/absent", error="entry_not_found")
     # The seed is read-only and deterministic.
-    fingerprint = call(root, "status")["fingerprint"]
-    assert call(root, "memory-prefetch", page=page_id) == seeded
-    assert call(root, "status")["fingerprint"] == fingerprint
+    fingerprint = call(root, "status", workspace=ws)["fingerprint"]
+    assert call(root, "memory-prefetch", workspace=ws, page=page_id) == seeded
+    assert call(root, "status", workspace=ws)["fingerprint"] == fingerprint
 
     # Unknown dedup modes and kinds are refused, and nothing changes.
-    before = call(root, "status")["fingerprint"]
-    call(root, "memory-prefetch", query="陶瓷", dedup="exact", error="memory_dedup_unsupported")
-    call(root, "memory-prefetch", query="陶瓷", kinds=["habit"], error="memory_kind_unsupported")
-    assert call(root, "status")["fingerprint"] == before
+    before = call(root, "status", workspace=ws)["fingerprint"]
+    call(root, "memory-prefetch", workspace=ws, query="陶瓷", dedup="exact", error="memory_dedup_unsupported")
+    call(root, "memory-prefetch", workspace=ws, query="陶瓷", kinds=["habit"], error="memory_kind_unsupported")
+    assert call(root, "status", workspace=ws)["fingerprint"] == before
 
     # A single note is addressable by id, so a host does not have to list the
     # whole memory set to read one judgment.
-    target = [r for r in notes(root).values() if r["key"] == "ceramics-fact"][0]
-    read = call(root, "memory-read", id=target["id"])
+    target = [r for r in notes(root, ws).values() if r["key"] == "ceramics-fact"][0]
+    read = call(root, "memory-read", workspace=ws, id=target["id"])
     assert read["record"]["text"] == target["text"]
     assert read["record"]["conditions"] == target["conditions"]
     assert read["record"]["pinned"] is False
     # A read never claims a pending host action.
     assert "execution" not in read
-    call(root, "memory-read", id="deadbeef", error="invalid_memory_id")
-    call(root, "memory-read", id=target["id"][:63], error="invalid_memory_id")
+    call(root, "memory-read", workspace=ws, id="deadbeef", error="invalid_memory_id")
+    call(root, "memory-read", workspace=ws, id=target["id"][:63], error="invalid_memory_id")
 
     # A pinned note is important despite being used infrequently, so automated
     # archiving cannot drop it without an explicit unprotect.
-    pinned = call(root, "memory-submit", kind="goal", scope="workspace",
+    pinned = call(root, "memory-submit", kind="goal", scope="project", workspace=ws,
                   text="长期目标是建立可核对的陶瓷知识库", conditions=[], sources=[],
                   at="2026-10-20T22:30:00Z", key="long-goal")
-    call(root, "memory-pin", id=pinned["id"], pinned=True, at="2026-10-20T22:45:00Z")
-    assert notes(root)[pinned["id"]]["pinned"] is True
-    call(root, "memory-archive", id=pinned["id"], at="2026-10-20T23:00:00Z",
+    call(root, "memory-pin", workspace=ws, id=pinned["id"], pinned=True, at="2026-10-20T22:45:00Z")
+    assert notes(root, ws)[pinned["id"]]["pinned"] is True
+    call(root, "memory-archive", workspace=ws, id=pinned["id"], at="2026-10-20T23:00:00Z",
          error="memory_pinned_archive_refused")
-    assert call(root, "memory-pin", id=pinned["id"], pinned=True,
+    assert call(root, "memory-pin", workspace=ws, id=pinned["id"], pinned=True,
                 at="2026-10-20T22:45:00Z")["replayed"] is True
-    call(root, "memory-pin", id=pinned["id"], pinned=False, at="2026-10-20T23:30:00Z")
-    assert notes(root)[pinned["id"]]["pinned"] is False
-    call(root, "memory-archive", id=pinned["id"], at="2026-10-20T23:45:00Z")
-    assert notes(root)[pinned["id"]]["status"] == "archived"
+    call(root, "memory-pin", workspace=ws, id=pinned["id"], pinned=False, at="2026-10-20T23:30:00Z")
+    assert notes(root, ws)[pinned["id"]]["pinned"] is False
+    call(root, "memory-archive", workspace=ws, id=pinned["id"], at="2026-10-20T23:45:00Z")
+    assert notes(root, ws)[pinned["id"]]["status"] == "archived"
 
     # Every memory transition writes a registered event: an orphan state file is
     # invisible to read-log and verify, so lint has to report it.
@@ -463,18 +466,18 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
                 if v["predicate"] == "file_unregistered"]
 
     # A rejected scope or kind never reaches the vault.
-    before = call(root, "status")["fingerprint"]
-    call(root, "memory-submit", kind="habit", scope="workspace", text="x", conditions=[],
+    before = call(root, "status", workspace=ws)["fingerprint"]
+    call(root, "memory-submit", kind="habit", scope="project", workspace=ws, text="x", conditions=[],
          sources=[], at="2026-10-20T18:00:00Z", key="bad-kind", error="memory_kind_unsupported")
     call(root, "memory-submit", kind="fact", scope="user", text="x", conditions=[],
          sources=[], at="2026-10-20T18:00:00Z", key="bad-scope", error="memory_scope_unsupported")
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x", conditions=["a\nb"],
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x", conditions=["a\nb"],
          sources=[], at="2026-10-20T18:00:00Z", key="bad-condition", error="memory_condition_invalid")
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x",
          conditions=[], sources=["wiki/index.md"], at="2026-10-20T18:00:00Z",
          key="bad-source", error="memory_source_invalid")
-    call(root, "memory-prefetch", query="陶瓷", limit=0, error="memory_limit_invalid")
-    assert call(root, "status")["fingerprint"] == before
+    call(root, "memory-prefetch", workspace=ws, query="陶瓷", limit=0, error="memory_limit_invalid")
+    assert call(root, "status", workspace=ws)["fingerprint"] == before
 
     # The string and array bounds had only ever been exercised with trivially
     # valid values ("x", one condition, no sources), so neither edge was pinned.
@@ -483,117 +486,117 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # fail. `length()` counts characters, so the CJK cases below would fail if
     # anyone switched the check to bytes.
     def sized(text, key, conditions=None, sources=None):
-        return call(root, "memory-submit", kind="fact", scope="workspace", text=text,
+        return call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text=text,
                     conditions=conditions or [], sources=sources or [],
                     at="2026-10-20T19:00:00Z", key=key)
 
     assert sized("a" * 4096, "text-max")["status"] == "active"
-    call(root, "memory-submit", kind="fact", scope="workspace", text="a" * 4097,
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="a" * 4097,
          conditions=[], sources=[], at="2026-10-20T19:00:00Z",
          key="text-over", error="memory_text_invalid")
     # 4096 CJK characters are 12288 bytes, so this only passes while the bound
     # counts characters rather than bytes.
     assert sized("陶" * 4096, "text-cjk-max")["status"] == "active"
-    call(root, "memory-submit", kind="fact", scope="workspace", text="",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="",
          conditions=[], sources=[], at="2026-10-20T19:00:00Z",
          key="text-empty", error="memory_text_invalid")
     assert sized("x", "key-" + "k" * 252)["status"] == "active"
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x",
          conditions=[], sources=[], at="2026-10-20T19:00:00Z",
          key="k" * 257, error="memory_idempotency_key_invalid")
     assert sized("x", "cond-count-max", conditions=["c"] * 16)["status"] == "active"
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x",
          conditions=["c"] * 17, sources=[], at="2026-10-20T19:00:00Z",
          key="cond-count-over", error="memory_conditions_count_invalid")
     assert sized("x", "cond-len-max", conditions=["c" * 256])["status"] == "active"
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x",
          conditions=["c" * 257], sources=[], at="2026-10-20T19:00:00Z",
          key="cond-len-over", error="memory_condition_invalid")
     # The count bound is checked before registration, so an unregistered path
     # still reaches it -- and that ordering is what lets the lower edge be pinned
     # without registering 32 files: at the documented limit the count check
     # passes and the registration check fires instead.
-    call(root, "memory-submit", kind="fact", scope="workspace", text="x",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x",
          conditions=[], sources=[f"raw/f{index}.md" for index in range(33)],
          at="2026-10-20T19:00:00Z", key="src-count-over",
          error="memory_sources_count_invalid")
-    at_limit = call(root, "memory-submit", kind="fact", scope="workspace", text="x",
+    at_limit = call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text="x",
                     conditions=[], sources=[f"raw/f{index}.md" for index in range(32)],
                     at="2026-10-20T19:00:00Z", key="src-count-max",
                     error="memory_source_not_registered")
-    assert call(root, "status")["fingerprint"] != before
+    assert call(root, "status", workspace=ws)["fingerprint"] != before
 
     # Reporting foreground usage is what makes selective pruning possible:
     # without it a host can only guess which notes have gone stale by disuse.
-    used = [r["id"] for r in notes(root).values()
+    used = [r["id"] for r in notes(root, ws).values()
             if r["key"] == "ceramics-fact" and r["status"] == "active"]
-    assert notes(root)[used[0]]["last_used_at"] is None
-    report = call(root, "memory-use", ids=used, at="2026-10-20T23:30:00Z")
+    assert notes(root, ws)[used[0]]["last_used_at"] is None
+    report = call(root, "memory-use", workspace=ws, ids=used, at="2026-10-20T23:30:00Z")
     assert report["used"] == 1 and report["replayed"] is False
-    assert notes(root)[used[0]]["last_used_at"] == "2026-10-20T23:30:00Z"
+    assert notes(root, ws)[used[0]]["last_used_at"] == "2026-10-20T23:30:00Z"
     # The same report twice is a replay, not a second write.
-    assert call(root, "memory-use", ids=used, at="2026-10-20T23:30:00Z")["replayed"] is True
+    assert call(root, "memory-use", workspace=ws, ids=used, at="2026-10-20T23:30:00Z")["replayed"] is True
     # A later report advances the timestamp.
-    assert call(root, "memory-use", ids=used, at="2026-10-20T23:40:00Z")["used"] == 1
-    assert notes(root)[used[0]]["last_used_at"] == "2026-10-20T23:40:00Z"
+    assert call(root, "memory-use", workspace=ws, ids=used, at="2026-10-20T23:40:00Z")["used"] == 1
+    assert notes(root, ws)[used[0]]["last_used_at"] == "2026-10-20T23:40:00Z"
     # Prefetch itself never records usage.
-    before = notes(root)[used[0]]["last_used_at"]
-    call(root, "memory-prefetch", query="官窑 记录")
-    assert notes(root)[used[0]]["last_used_at"] == before
+    before = notes(root, ws)[used[0]]["last_used_at"]
+    call(root, "memory-prefetch", workspace=ws, query="官窑 记录")
+    assert notes(root, ws)[used[0]]["last_used_at"] == before
     # A batch reports many notes in one transaction.
-    batch = [r["id"] for r in notes(root).values() if r["status"] == "active"][:3]
-    assert call(root, "memory-use", ids=batch, at="2026-10-20T23:50:00Z")["used"] == len(batch)
+    batch = [r["id"] for r in notes(root, ws).values() if r["status"] == "active"][:3]
+    assert call(root, "memory-use", workspace=ws, ids=batch, at="2026-10-20T23:50:00Z")["used"] == len(batch)
     assert "memory-use" in [e["op"] for e in call(root, "read-log")]
-    call(root, "memory-use", ids=[], at="2026-10-20T23:55:00Z",
+    call(root, "memory-use", workspace=ws, ids=[], at="2026-10-20T23:55:00Z",
          error="memory_use_count_invalid")
-    call(root, "memory-use", ids=[batch[0], batch[0]], at="2026-10-20T23:55:00Z",
+    call(root, "memory-use", workspace=ws, ids=[batch[0], batch[0]], at="2026-10-20T23:55:00Z",
          error="memory_use_duplicate_id")
-    call(root, "memory-use", ids=["0" * 64], at="2026-10-20T23:55:00Z",
+    call(root, "memory-use", workspace=ws, ids=["0" * 64], at="2026-10-20T23:55:00Z",
          error="entry_not_found")
 
     # An archived note has left the default set, so it must not block a fresh
     # submission of the same judgment under a new binding.
-    gone = call(root, "memory-submit", kind="decision", scope="workspace",
+    gone = call(root, "memory-submit", kind="decision", scope="project", workspace=ws,
                 text="阶段性结论：先整理陶瓷资料", conditions=["规划资料整理范围时"],
                 sources=[], at="2026-10-20T23:50:00Z", key="stage-conclusion")
-    call(root, "memory-archive", id=gone["id"], at="2026-10-20T23:55:00Z")
-    reborn = call(root, "memory-submit", kind="decision", scope="workspace",
+    call(root, "memory-archive", workspace=ws, id=gone["id"], at="2026-10-20T23:55:00Z")
+    reborn = call(root, "memory-submit", kind="decision", scope="project", workspace=ws,
                   text="阶段性结论：先整理陶瓷资料", conditions=["规划资料整理范围时"],
                   sources=[], at="2026-10-20T23:59:00Z", key="stage-conclusion-again")
     assert reborn["status"] == "active" and reborn["id"] != gone["id"]
-    assert [r for r in notes(root).values() if r["key"] == "stage-conclusion"
+    assert [r for r in notes(root, ws).values() if r["key"] == "stage-conclusion"
             and r["status"] == "archived"]
     assert not [v for v in call(root, "lint")["violations"]
                 if v["predicate"] == "memory_duplicate_note"]
     # A competing ACTIVE note is still refused as a duplicate.
-    call(root, "memory-submit", kind="decision", scope="workspace",
+    call(root, "memory-submit", kind="decision", scope="project", workspace=ws,
          text="阶段性结论：先整理陶瓷资料", conditions=["规划资料整理范围时"],
          sources=[], at="2026-10-21T00:05:00Z", key="stage-conclusion-third",
          error="memory_duplicate_text")
 
     call(root, "rebuild")
     call(root, "verify")
-    assert call(root, "memory-list")["counts"]["active"] >= 1
+    assert call(root, "memory-list", workspace=ws)["counts"]["active"] >= 1
 
     # A5's Autodream surface: an external agent must be able to discover what to
     # consolidate without first guessing a query that would surface it through
     # `memory-prefetch`. This block is the only place that capability is covered.
     reworded = "官窑记录的器形与釉色特征可以据此核对，包括胎质釉层厚度与开片形态便于断代参考"
     rephrased = "官窑记录的器形与釉色特征可以据此核对；包括胎质釉层厚度与开片形态便于断代参考"
-    call(root, "memory-submit", kind="fact", scope="workspace", text=reworded,
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text=reworded,
          conditions=["核对釉色"], sources=[], at="2026-11-01T09:00:00Z", key="cand-a")
-    call(root, "memory-submit", kind="fact", scope="workspace", text=rephrased,
+    call(root, "memory-submit", kind="fact", scope="project", workspace=ws, text=rephrased,
          conditions=["撰写说明"], sources=[], at="2026-11-01T09:05:00Z", key="cand-b")
-    call(root, "memory-submit", kind="preference", scope="workspace",
+    call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
          text="偏好：上午参观。这条记录足够长以通过门槛并且从未被使用过。",
          conditions=["待定项"], sources=[], at="2026-11-01T09:10:00Z", key="cand-fresh")
-    keep_id = call(root, "memory-submit", kind="preference", scope="workspace",
+    keep_id = call(root, "memory-submit", kind="preference", scope="project", workspace=ws,
                    text="偏好：保留午休。这条记录足够长以通过门槛并且从未被使用过。",
                    conditions=["保护项"], sources=[],
                    at="2026-11-01T09:15:00Z", key="cand-pinned")["id"]
-    call(root, "memory-pin", id=keep_id, pinned=True, at="2026-11-01T09:20:00Z")
+    call(root, "memory-pin", workspace=ws, id=keep_id, pinned=True, at="2026-11-01T09:20:00Z")
 
-    candidates = call(root, "memory-candidates")
+    candidates = call(root, "memory-candidates", workspace=ws)
     assert "execution" not in candidates, "a read op must not claim a host action"
     # Earlier blocks already created a near-duplicate pair, so filter to the keys
     # this block owns rather than assuming it is the only group.
@@ -617,13 +620,13 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     assert not (mine & set(prune)), prune
     assert candidates["counts"]["pinned"] >= 1
     # The same vault state always yields the same candidates.
-    assert call(root, "memory-candidates") == candidates
+    assert call(root, "memory-candidates", workspace=ws) == candidates
 
     # Both surfaces must agree: the seedless view and the seeded prefetch name
     # the same duplicate and keeper for the same pair.
-    brief = call(root, "memory-prefetch", query="官窑 釉色", dedup="similar")
-    cand_ids = {row["id"] for row in call(root, "memory-list")["notes"]}
-    by_key = {row["key"]: row["id"] for row in call(root, "memory-list")["notes"]}
+    brief = call(root, "memory-prefetch", workspace=ws, query="官窑 釉色", dedup="similar")
+    cand_ids = {row["id"] for row in call(root, "memory-list", workspace=ws)["notes"]}
+    by_key = {row["key"]: row["id"] for row in call(root, "memory-list", workspace=ws)["notes"]}
     seeded = sorted((row["duplicate"], row["keeper"])
                     for row in brief["similar_duplicates"])
     expected = {by_key["cand-a"], by_key["cand-b"]}
@@ -638,8 +641,8 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     (round / "imports/candidates.mcpack").write_bytes(
         (root / "exports/candidates.mcpack").read_bytes())
     assert call(round, "unpack", file="imports/candidates.mcpack")["vault_fingerprint"] == \
-        call(root, "status")["fingerprint"]
-    assert call(round, "memory-candidates") == candidates
+        call(root, "status", workspace=ws)["fingerprint"]
+    assert call(round, "memory-candidates", workspace=ws) == candidates
     call(round, "rebuild")
     call(round, "verify")
     # Memory notes are catalog state, so a deterministic pack survives a round trip.
@@ -648,8 +651,8 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     (target / "imports").mkdir(parents=True, exist_ok=True)
     (target / "imports/memory.mcpack").write_bytes((root / "exports/memory.mcpack").read_bytes())
     assert call(target, "unpack", file="imports/memory.mcpack")["vault_fingerprint"] == \
-        call(root, "status")["fingerprint"]
-    assert {row["id"] for row in call(target, "memory-list")["notes"]} == set(notes(root))
+        call(root, "status", workspace=ws)["fingerprint"]
+    assert {row["id"] for row in call(target, "memory-list", workspace=ws)["notes"]} == set(notes(root, ws))
     # Workspace registration is durable state too: pack/unpack must carry it.
     assert call(target, "workspace-list") == call(root, "workspace-list")
     call(target, "rebuild")
@@ -658,12 +661,13 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # Every aggregator reached from dispatch must notice an external edit, not
     # silently serve the tampered bytes. `graph_unchecked` trusts its caller, so
     # this is what keeps that trust honest.
-    note_path = next((root / "state/memory").glob("*.json"))
+    note_path = next((root / "state" / "memory" / ws).glob("*.json"))
     tampered = json.loads(note_path.read_text(encoding="utf-8"))
     tampered["text"] = "外部编辑过的正文"
     note_path.write_text(json.dumps(tampered, ensure_ascii=False), encoding="utf-8")
     for op in ("stats", "memory-list", "impact-list", "inbox"):
-        assert call(root, op, error="content_changed"), op
+        fields = {"workspace": ws} if op in ("stats", "memory-list", "inbox") else {}
+        assert call(root, op, error="content_changed", **fields), op
     # `lint` is the diagnostic path: it reports instead of rejecting.
     assert call(root, "lint")["errors"] >= 1
 

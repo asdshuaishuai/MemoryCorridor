@@ -31,6 +31,9 @@ if any(n < 4 or n > 2048 for n in args.pages) or args.queries < 1 or any(w < 1 f
     parser.error("pages must be 4..2048; queries/workers must be positive")
 
 
+WS = None
+
+
 def call(root, op, **fields):
     started = time.perf_counter()
     run = subprocess.run([str(EXE)], input=json.dumps({"op": op, "vault": str(root), **fields}) + "\n",
@@ -42,7 +45,9 @@ def call(root, op, **fields):
 
 
 def build(root, count):
+    global WS
     call(root, "init", purpose=f"规模基准 {count} pages")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")[0]["id"]
     (root / "raw/benchmark.md").write_text("Benchmark source with needle-alpha and needle-beta evidence.\n")
     scan, _ = call(root, "scan")
     order = scan["orders"][0]
@@ -134,15 +139,15 @@ def memory_probe(root, notes, queries):
     """
     for index in range(notes):
         call(root, "memory-submit", kind="preference" if index % 2 else "constraint",
-             scope="workspace", text=f"记忆判断 {index}：陶瓷器形与釉色的核对方式",
+             scope="project", workspace=WS, text=f"记忆判断 {index}：陶瓷器形与釉色的核对方式",
              conditions=[f"条件 {index % 8}"], sources=[], at="2026-10-16",
              key=f"memory-{index}")
     call(root, "research-topic", topic="陶瓷釉色", queries=["釉色 对照"], at="2026-10-16",
          key="scale-topic")
     rows = []
-    for op, fields in [("memory-prefetch", {"query": "陶瓷 器形 釉色", "limit": 10}),
-                       ("memory-list", {}),
-                       ("inbox", {}),
+    for op, fields in [("memory-prefetch", {"workspace": WS, "query": "陶瓷 器形 釉色", "limit": 10}),
+                       ("memory-list", {"workspace": WS}),
+                       ("inbox", {"workspace": WS}),
                        ("impact-audit", {"at": "2026-10-17"})]:
         samples = []
         for _ in range(queries):

@@ -1,5 +1,5 @@
 test "inbox tool declares a read-only empty field set" {
-  assert_eq(tool("inbox").fields, [])
+  assert_eq(tool("inbox").fields, ["workspace", "session"])
   let schema = input_schema(tool("inbox"))
   assert_eq(@base.field(schema, "type"), "object".to_json())
   assert_eq(@base.array(@base.field(schema, "required")).length(), 0)

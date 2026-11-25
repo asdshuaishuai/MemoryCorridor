@@ -57,6 +57,7 @@ def publish(root, name, body, page_id, title):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-lint-") as temp:
     root = Path(temp)
     call(root, "init", purpose="lint 谓词")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")["id"]
     page = publish(root, "ceramics.md", "器形与釉色。", "concepts/ceramics", "陶瓷")
     original = page.read_text(encoding="utf-8")
     call(root, "rebuild")
@@ -92,13 +93,13 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lint-") as temp:
     # does not exist, and two live notes claiming the same idempotency key. Both
     # need a second record, so they are constructed rather than tampered with in
     # isolation.
-    first = call(root, "memory-submit", kind="fact", scope="workspace",
+    first = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                  text="第一条判断，长度足够通过门槛。", conditions=["判断甲"],
                  sources=[], at="2026-11-14T10:00:00Z", key="chain-a")
-    call(root, "memory-supersede", id=first["id"],
+    call(root, "memory-supersede", workspace=WS, id=first["id"],
          text="第二条判断，长度足够通过门槛。", conditions=["判断甲"],
          sources=[], at="2026-11-14T10:10:00Z")
-    first_path = root / "state/memory" / (first["id"] + ".json")
+    first_path = root / "state/memory" / WS / (first["id"] + ".json")
     original_first = first_path.read_text(encoding="utf-8")
     parsed = json.loads(original_first)
     parsed["supersedes"] = "f" * 64
@@ -107,10 +108,10 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lint-") as temp:
     first_path.write_text(original_first, encoding="utf-8")
     checked += 1
 
-    third = call(root, "memory-submit", kind="fact", scope="workspace",
+    third = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                  text="第三条判断，长度足够通过门槛。", conditions=["判断乙"],
                  sources=[], at="2026-11-14T10:20:00Z", key="chain-c")
-    third_path = root / "state/memory" / (third["id"] + ".json")
+    third_path = root / "state/memory" / WS / (third["id"] + ".json")
     original_third = third_path.read_text(encoding="utf-8")
     parsed = json.loads(original_third)
     parsed["key"] = "chain-a"
@@ -192,14 +193,14 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lint-") as temp:
     # The two remaining supersede-chain invariants. `target_missing` is a record
     # pointing at a replacement that does not exist; `link_asymmetric` is a real
     # chain whose back-pointer was redirected, so the two halves disagree.
-    head = call(root, "memory-submit", kind="fact", scope="workspace",
+    head = call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
                 text="链首判断，长度足够通过门槛。", conditions=["链条"],
                 sources=[], at="2026-11-14T12:00:00Z", key="link-head")
-    tail = call(root, "memory-supersede", id=head["id"],
+    tail = call(root, "memory-supersede", workspace=WS, id=head["id"],
                 text="链尾判断，长度足够通过门槛。", conditions=["链条"],
                 sources=[], at="2026-11-14T12:10:00Z")
-    head_path = root / "state/memory" / (head["id"] + ".json")
-    tail_path = root / "state/memory" / (tail["id"] + ".json")
+    head_path = root / "state/memory" / WS / (head["id"] + ".json")
+    tail_path = root / "state/memory" / WS / (tail["id"] + ".json")
     original_head = head_path.read_text(encoding="utf-8")
     original_tail = tail_path.read_text(encoding="utf-8")
 

@@ -79,7 +79,10 @@ fn cached(store : @vault.Storage, entries : Array[@core.Entry]) -> @retrieval.Co
   @retrieval.load(store, entries)
 }
 
-fn status_result(store : @vault.Storage, entries : Array[@core.Entry], fingerprint : String) -> Json raise @base.Fault {
+fn status_result(
+  store : @vault.Storage, entries : Array[@core.Entry], fingerprint : String,
+  workspace : String?, session : String?,
+) -> Json raise @base.Fault {
   @vault.verify(store, entries)
   let cache = try { ignore(cached(store, entries)); "valid" } catch { _ => "missing_or_invalid" }
   // This op already verified once; the aggregators below must not each re-hash
@@ -105,7 +108,7 @@ fn status_result(store : @vault.Storage, entries : Array[@core.Entry], fingerpri
     "pending_suggestions": suggestions.filter(r => optional(r, "status") == Some("proposed".to_json())).length(),
     "overview_status": overview_state,
     "evidence": evidence,
-    "memory": memory_summary(store, entries),
+    "memory": memory_summary(store, entries, workspace, session),
     "impacts": impact_summary(store, entries),
     "providers": { "total": providers.length(), "active": providers.filter(r => optional(r, "status") == Some("active".to_json())).length(),
       "revoked": providers.filter(r => optional(r, "status") == Some("revoked".to_json())).length() },
@@ -194,18 +197,18 @@ pub fn dispatch_with_catalog(
     "memory-supersede" => memory_supersede(store, entries, request)
     "memory-archive" => memory_archive(store, entries, request)
     "memory-restore" => memory_restore(store, entries, request)
-    "memory-list" => memory_list(store, entries)
+    "memory-list" => memory_list(store, entries, request)
     "memory-read" => memory_read(store, entries, request)
     "memory-pin" => memory_protect(store, entries, request)
     "memory-use" => memory_use(store, entries, request)
     "memory-prefetch" => memory_prefetch(store, entries, request)
-    "memory-conflicts" => memory_conflicts(store, entries)
-    "memory-candidates" => memory_candidates(store, entries)
+    "memory-conflicts" => memory_conflicts(store, entries, request)
+    "memory-candidates" => memory_candidates(store, entries, request)
     "page-redundancy" => page_redundancy(store, entries, request)
     "impact-audit" => impact_audit(store, entries, request)
     "impact-list" => impact_list(store, entries)
     "impact-resolve" => impact_resolve(store, entries, request)
-    "inbox" => inbox(store, entries)
+    "inbox" => inbox(store, entries, request)
     "view-init" | "render-view" => visual(store, entries, request)
     "tree" | "graph" | "neighbors" | "path" | "weighted-path" | "insights" => explore(store, entries, request)
     "topics" => topics(store, entries)
@@ -244,7 +247,8 @@ pub fn dispatch_with_catalog(
     "read-index" => @vault.required(store, "index.mbt.md").to_json()
     "read-purpose" => @vault.required(store, "purpose.md").to_json()
     "read-source" => read_source(store, entries, request)
-    "status" => status_result(store, entries, fingerprint)
+    "status" => status_result(store, entries, fingerprint,
+      optional_workspace(request), optional_session(request))
     "list-pages" => {
       // A derived read, not a raw byte reader: it must refuse a vault whose
       // state no longer matches the catalog, exactly like status/topics/tree.

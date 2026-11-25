@@ -101,8 +101,11 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
         # Every operation added to the dictionary must survive the transport, not
         # just be advertised by it: name translation, field types and the error
         # envelope are all part of the contract a client relies on.
+        opened = call("tools/call", {"name": "corridor_workspace_open", "arguments": {
+            "vault": work, "path": "/test/mcp-project", "at": "2026-11-02T08:00:00Z"}})["result"]
+        ws = opened["structuredContent"]["result"]["id"]
         note = call("tools/call", {"name": "corridor_memory_submit", "arguments": {
-            "vault": work, "kind": "preference", "scope": "workspace",
+            "vault": work, "workspace": ws, "kind": "preference", "scope": "project",
             "text": "优先安排陶瓷窑口对比的参观时间", "conditions": ["规划博物馆行程时"],
             "sources": [], "at": "2026-11-02T09:00:00Z", "key": "mcp-note"}})["result"]
         assert not note["isError"], note
@@ -110,37 +113,37 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
         assert note["structuredContent"]["result"]["status"] == "active"
         # A boolean field must round-trip as a boolean.
         pinned = call("tools/call", {"name": "corridor_memory_pin", "arguments": {
-            "vault": work, "id": note_id, "pinned": True,
+            "vault": work, "workspace": ws, "id": note_id, "pinned": True,
             "at": "2026-11-02T09:30:00Z"}})["result"]
         assert not pinned["isError"] and pinned["structuredContent"]["result"]["pinned"] is True
         refused = call("tools/call", {"name": "corridor_memory_archive", "arguments": {
-            "vault": work, "id": note_id, "at": "2026-11-02T10:00:00Z"}})["result"]
+            "vault": work, "workspace": ws, "id": note_id, "at": "2026-11-02T10:00:00Z"}})["result"]
         assert refused["isError"]
         assert refused["structuredContent"]["result"]["error_code"] == "memory_pinned_archive_refused"
         # A read operation must not claim a pending host action.
         read = call("tools/call", {"name": "corridor_memory_read", "arguments": {
-            "vault": work, "id": note_id}})["result"]
+            "vault": work, "workspace": ws, "id": note_id}})["result"]
         assert not read["isError"]
         assert "execution" not in read["structuredContent"]["result"]
         assert read["structuredContent"]["result"]["record"]["pinned"] is True
         brief = call("tools/call", {"name": "corridor_memory_prefetch", "arguments": {
-            "vault": work, "query": "陶瓷 参观"}})["result"]
+            "vault": work, "workspace": ws, "query": "陶瓷 参观"}})["result"]
         assert not brief["isError"] and brief["structuredContent"]["result"]["query_seed"] == "query"
         assert brief["structuredContent"]["result"]["notes"][0]["id"] == note_id
         # The two seed forms are mutually exclusive, and the refusal names why.
         exclusive = call("tools/call", {"name": "corridor_memory_prefetch", "arguments": {
-            "vault": work, "query": "陶瓷", "page": "concepts/x"}})["result"]
+            "vault": work, "workspace": ws, "query": "陶瓷", "page": "concepts/x"}})["result"]
         assert exclusive["isError"]
         assert exclusive["structuredContent"]["result"]["error_code"] == "memory_query_exclusive"
         neither = call("tools/call", {"name": "corridor_memory_prefetch",
-                                      "arguments": {"vault": work}})["result"]
+                                      "arguments": {"vault": work, "workspace": ws}})["result"]
         assert neither["isError"]
         assert neither["structuredContent"]["result"]["error_code"] == "memory_query_required"
         # The consolidation surface is the one place an agent can discover merge
         # and prune candidates without a seed, so it must answer through the
         # transport with the same shape it has natively.
         seeded = call("tools/call", {"name": "corridor_memory_candidates",
-            "arguments": {"vault": work}})["result"]
+            "arguments": {"vault": work, "workspace": ws}})["result"]
         assert not seeded["isError"], seeded
         for field in ["merge", "prune", "counts", "fingerprint"]:
             assert field in seeded["structuredContent"]["result"], field
@@ -151,25 +154,27 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
         # Read-only views return their empty shapes through the transport.
         for name in ["corridor_memory_list", "corridor_memory_conflicts", "corridor_impact_list",
                      "corridor_inbox", "corridor_topics"]:
-            empty = call("tools/call", {"name": name, "arguments": {"vault": work}})["result"]
+            extra = {"workspace": ws} if name in (
+                "corridor_memory_list", "corridor_memory_conflicts", "corridor_inbox") else {}
+            empty = call("tools/call", {"name": name, "arguments": {"vault": work, **extra}})["result"]
             assert not empty["isError"], (name, empty)
         # A batch usage report is one transaction and replays on the same time.
         used = call("tools/call", {"name": "corridor_memory_use", "arguments": {
-            "vault": work, "ids": [note_id], "at": "2026-11-02T10:30:00Z"}})["result"]
+            "vault": work, "workspace": ws, "ids": [note_id], "at": "2026-11-02T10:30:00Z"}})["result"]
         assert not used["isError"], used
         assert used["structuredContent"]["result"]["used"] == 1
         assert used["structuredContent"]["result"]["replayed"] is False
         again = call("tools/call", {"name": "corridor_memory_use", "arguments": {
-            "vault": work, "ids": [note_id], "at": "2026-11-02T10:30:00Z"}})["result"]
+            "vault": work, "workspace": ws, "ids": [note_id], "at": "2026-11-02T10:30:00Z"}})["result"]
         assert again["structuredContent"]["result"]["replayed"] is True
         listed = call("tools/call", {"name": "corridor_memory_list", "arguments": {
-            "vault": work}})["result"]
+            "vault": work, "workspace": ws}})["result"]
         assert listed["structuredContent"]["result"]["notes"][0]["last_used_at"] == "2026-11-02T10:30:00Z"
         # An empty batch and a repeated id are refused with a stable code.
         for bad in [{"ids": [], "at": "2026-11-02T11:00:00Z"},
                     {"ids": [note_id, note_id], "at": "2026-11-02T11:00:00Z"}]:
             refused = call("tools/call", {"name": "corridor_memory_use",
-                                          "arguments": {"vault": work, **bad}})["result"]
+                                          "arguments": {"vault": work, "workspace": ws, **bad}})["result"]
             assert refused["isError"]
             assert refused["structuredContent"]["result"]["error_code"].startswith("memory_use_")
         # A page that was never published has no history to report.

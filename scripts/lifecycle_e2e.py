@@ -49,21 +49,22 @@ def predicates(root, prefix):
 with tempfile.TemporaryDirectory(prefix="memorycorridor-lifecycle-") as temp:
     root = Path(temp)
     call(root, "init", purpose="研究陶瓷")
+    WS = call(root, "workspace-open", path="/test/project", at="2026-10-01T00:00:00Z")["id"]
     publish(root, "ceramics.md", "陶瓷", "concepts/ceramics", "第一版：器形与釉色。")
-    call(root, "memory-submit", kind="fact", scope="workspace",
+    call(root, "memory-submit", kind="fact", scope="project", workspace=WS,
          text="官窑记录可据此核对", conditions=["核对官窑资料时"],
          sources=["raw/ceramics.md"], at="2026-11-14T09:30:00Z", key="note")
     call(root, "research-topic", topic="陶瓷釉色", queries=["釉色 对照"],
          at="2026-11-14T09:45:00Z", key="topic")
     assert predicates(root, "memory") == set()
-    assert call(root, "inbox")["items"] != []
+    assert call(root, "inbox", workspace=WS)["items"] != []
 
     # The same path is re-registered with entirely different bytes.
     (root / "raw/ceramics.md").write_text("第二版：完全不同的内容。")
     call(root, "scan")
 
     # The memory note is not revoked, but its evidence is no longer what it was.
-    note = [r for r in call(root, "memory-list")["notes"] if r["key"] == "note"][0]
+    note = [r for r in call(root, "memory-list", workspace=WS)["notes"] if r["key"] == "note"][0]
     assert note["status"] == "active"
     assert note["valid"] is False
     assert note["invalid_sources"] == []
@@ -81,11 +82,11 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lifecycle-") as temp:
     assert audit["opened"] == 1
     impacts = call(root, "impact-list")["impacts"]
     assert [r["cause"] for r in impacts] == ["baseline-drift"]
-    inbox = {i["kind"]: i for i in call(root, "inbox")["items"]}
+    inbox = {i["kind"]: i for i in call(root, "inbox", workspace=WS)["items"]}
     assert inbox["research"]["drift"] == ["baseline-drift"]
     assert "impact" not in inbox, "one subject must not be proposed twice"
     assert any(i["kind"] == "memory-source-stale" for i in inbox.values())
-    assert call(root, "stats")["memory"]["drifted"] == 1
+    assert call(root, "stats", workspace=WS)["memory"]["drifted"] == 1
 
     # Clearing the debt: re-commit the page and re-bind the note to new bytes.
     order = call(root, "plan")[0]["id"]
@@ -100,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lifecycle-") as temp:
     call(root, "commit", order=order,
          pages=[{"id": "concepts/ceramics", "path": "wiki/concepts/ceramics.md",
                  "staged": f"staging/{order}/page.md"}], at="2026-11-14T11:00:00Z")
-    call(root, "memory-supersede", id=note["id"], text="第二版内容已核对",
+    call(root, "memory-supersede", workspace=WS, id=note["id"], text="第二版内容已核对",
          conditions=["核对官窑资料时"], sources=["raw/ceramics.md"],
          at="2026-11-14T11:30:00Z")
     assert predicates(root, "memory") == set()
@@ -110,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-lifecycle-") as temp:
     call(root, "research-complete", id=call(root, "research-list")[0]["id"],
          sources=["raw/ceramics.md"], at="2026-11-14T12:30:00Z")
     assert call(root, "impact-audit", at="2026-11-14T13:00:00Z")["open"] == 0
-    assert call(root, "inbox")["items"] == []
+    assert call(root, "inbox", workspace=WS)["items"] == []
 
     call(root, "rebuild")
     call(root, "verify")
