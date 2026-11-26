@@ -168,6 +168,63 @@ fn memory_strings(request : Json, key : String) -> Array[String] raise @base.Fau
   }
 }
 
+// Optional affect snapshot supplied by the host (normally the independent
+// emotion module) when the judgment is written. The engine stores and returns
+// it; it does not infer emotion from text.
+pub(all) struct MemoryEmotion {
+  valence : Double
+  arousal : Double
+  dominance : Double
+  label : String?
+}
+
+pub extend MemoryEmotion with ToJson::{to_json}
+
+pub impl ToJson for MemoryEmotion with to_json(self) {
+  let label : Json = match self.label {
+    None => Json::null()
+    Some(text) => text.to_json()
+  }
+  { "valence": self.valence.to_json(), "arousal": self.arousal.to_json(),
+    "dominance": self.dominance.to_json(), "label": label }
+}
+
+fn memory_emotion_from_json(value : Json) -> MemoryEmotion raise @base.Fault {
+  @base.keys(value, ["valence", "arousal", "dominance", "label"])
+  let number = (key : String) => match @base.field(value, key) {
+    Number(n, ..) if n >= -1.0 && n <= 1.0 => n
+    _ => raise @base.Fault("memory_emotion_invalid")
+  }
+  let label = match optional(value, "label") {
+    None | Some(Null) => None
+    Some(other) => Some(@base.text(other))
+  }
+  { valence: number("valence"), arousal: number("arousal"),
+    dominance: number("dominance"), label }
+}
+
+fn memory_emotion_json(emotion : MemoryEmotion?) -> Json {
+  match emotion {
+    None => Json::null()
+    Some(value) => value.to_json()
+  }
+}
+
+fn memory_importance_request(request : Json) -> Double? raise @base.Fault {
+  match optional(request, "importance") {
+    None | Some(Null) => None
+    Some(Number(n, ..)) if n >= 0.0 && n <= 1.0 => Some(n)
+    _ => raise @base.Fault("memory_importance_invalid")
+  }
+}
+
+fn memory_emotion_request(request : Json) -> MemoryEmotion? raise @base.Fault {
+  match optional(request, "emotion") {
+    None | Some(Null) => None
+    Some(value) => Some(memory_emotion_from_json(value))
+  }
+}
+
 pub(all) struct MemoryNote {
   id : String
   // The registered workspace this note belongs to. Notes from another
@@ -195,6 +252,14 @@ pub(all) struct MemoryNote {
   // a pinned note is never archived, so automated pruning cannot drop it.
   pinned : Bool
   last_used_at : String?
+  // Host-supplied weight and affect snapshot; both are part of the note's
+  // identity (changing either creates a superseding record). `use_count` is a
+  // mutable usage signal, not identity.
+  importance : Double?
+  emotion : MemoryEmotion?
+  episodic : Bool
+  promoted_at : String?
+  use_count : Int
   note_hash : String
 }
 
@@ -206,7 +271,7 @@ pub impl ToJson for MemoryNote with to_json(self) {
     Some(text) => text.to_json()
   }
   {
-    "version": 2,
+    "version": 3,
     "id": self.id,
     "workspace": self.workspace,
     "kind": self.kind,
@@ -225,6 +290,14 @@ pub impl ToJson for MemoryNote with to_json(self) {
     "supersedes": nullable(self.supersedes),
     "pinned": self.pinned,
     "last_used_at": nullable(self.last_used_at),
+    "importance": match self.importance {
+      None => Json::null()
+      Some(value) => value.to_json()
+    },
+    "emotion": memory_emotion_json(self.emotion),
+    "episodic": self.episodic,
+    "promoted_at": nullable(self.promoted_at),
+    "use_count": self.use_count.to_json(),
     "note_hash": self.note_hash,
   }
 }
@@ -232,7 +305,8 @@ pub impl ToJson for MemoryNote with to_json(self) {
 pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
   @base.keys(value, ["version", "id", "workspace", "kind", "scope", "session", "text",
     "conditions", "sources", "source_hashes", "status", "key", "created_at", "updated_at",
-    "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash"])
+    "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash",
+    "importance", "emotion", "episodic", "promoted_at", "use_count"])
   // Records written before source version pinning simply have no hashes; they
   // fall back to path-only validity and stay readable.
   let source_hashes = match optional(value, "source_hashes") {
@@ -258,6 +332,25 @@ pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
     superseded_by: nullable("superseded_by"), supersedes: nullable("supersedes"),
     pinned: @base.boolean(@base.field(value, "pinned")),
     last_used_at: nullable("last_used_at"),
+    importance: match optional(value, "importance") {
+      None | Some(Null) => None
+      Some(Number(n, ..)) if n >= 0.0 && n <= 1.0 => Some(n)
+      _ => raise @base.Fault("memory_importance_invalid")
+    },
+    emotion: match optional(value, "emotion") {
+      None | Some(Null) => None
+      Some(other) => Some(memory_emotion_from_json(other))
+    },
+    episodic: match optional(value, "episodic") {
+      None => false
+      Some(other) => @base.boolean(other)
+    },
+    promoted_at: nullable("promoted_at"),
+    use_count: match optional(value, "use_count") {
+      Some(Number(n, ..)) if n >= 0.0 && n == n.to_int().to_double() => n.to_int()
+      None => 0
+      _ => raise @base.Fault("memory_use_count_invalid")
+    },
     note_hash: text("note_hash"),
   }
 }
@@ -597,7 +690,8 @@ pub fn memory_use(
       Some(note) => {
         // The same report twice is a replay, not a second write.
         if note.last_used_at == Some(at) { continue }
-        let record : MemoryNote = { ..note, last_used_at: Some(at) }
+        let record : MemoryNote = { ..note, last_used_at: Some(at),
+          use_count: note.use_count + 1 }
         let path = memory_path(scope.workspace, id)
         let content = @base.canonical(record.to_json())
         changes.push({ path, before: (store.read)(path), after: Some(content) })
@@ -830,7 +924,8 @@ fn memory_write(
   store : @vault.Storage, entries : Array[@core.Entry], workspace : String,
   note_scope : String, session : String?, kind : String, body : String,
   conditions : Array[String], sources : Array[String],
-  at : String, key : String, previous : MemoryNote?, event_op : String,
+  importance : Double?, emotion : MemoryEmotion?, episodic : Bool, promoted_at : String?,
+  use_count : Int, at : String, key : String, previous : MemoryNote?, event_op : String,
 ) -> Json raise @base.Fault {
   memory_body(body)
   memory_conditions(conditions)
@@ -838,8 +933,12 @@ fn memory_write(
   memory_time(at)
   let source_hashes = memory_source_hashes(store, entries, sources)
   let session_text = match session { None => ""; Some(value) => value }
+  let importance_json : Json = match importance {
+    None => Json::null()
+    Some(value) => value.to_json()
+  }
   let digest = @core.memory_note_hash(workspace, note_scope, session_text, kind, body,
-    conditions, sources, source_hashes)
+    conditions, sources, source_hashes, importance_json, memory_emotion_json(emotion), episodic)
   let id = @core.memory_note_id(key, digest)
   let path = memory_path(workspace, id)
   let rows = memory_rows(store, entries, workspace, session)
@@ -886,7 +985,8 @@ fn memory_write(
     // A human's importance marker survives replacement: otherwise the pinned
     // judgment becomes prunable the moment it is superseded, silently.
     pinned: match previous { Some(old) => old.pinned; None => false },
-    last_used_at: None, note_hash: digest,
+    last_used_at: None, importance, emotion, episodic, promoted_at, use_count,
+    note_hash: digest,
   }
   let content = @base.canonical(record.to_json())
   let event_path = if event_op == "memory-supersede" {
@@ -934,6 +1034,8 @@ pub fn memory_submit(
     @base.fail("memory_scope_unsupported: " + note_scope)
   }
   let scope = memory_scope(store, request, note_scope == "session")
+  let importance = memory_importance_request(request)
+  let emotion = memory_emotion_request(request)
   let key = match optional(request, "key") {
     Some(value) => { let value = @base.text(value); memory_key(value); value }
     None => @base.hex_hash("memory-submit-v1\n" + kind + "\n" + @base.text(@base.field(request, "text")))
@@ -948,6 +1050,7 @@ pub fn memory_submit(
   memory_write(store, entries, scope.workspace, note_scope, scope.session, kind,
     @base.text(@base.field(request, "text")),
     memory_strings(request, "conditions"), memory_strings(request, "sources"),
+    importance, emotion, false, None, 0,
     @base.text(@base.field(request, "at")), key, previous, "memory-submit")
 }
 
@@ -967,9 +1070,21 @@ pub fn memory_supersede(
     Some(value) => { let value = @base.text(value); memory_key(value); value }
     None => old.key
   }
+  // Metadata is part of the note's identity: an explicit override creates the
+  // new record, while omitted fields carry the old judgment's weight/affect
+  // forward so a text correction does not silently reset them.
+  let importance = match optional(request, "importance") {
+    None => old.importance
+    Some(_) => memory_importance_request(request)
+  }
+  let emotion = match optional(request, "emotion") {
+    None => old.emotion
+    Some(_) => memory_emotion_request(request)
+  }
   memory_write(store, entries, scope.workspace, old.scope, old.session, old.kind,
     @base.text(@base.field(request, "text")),
     memory_strings(request, "conditions"), memory_strings(request, "sources"),
+    importance, emotion, old.episodic, old.promoted_at, old.use_count,
     @base.text(@base.field(request, "at")), key, Some(old), "memory-supersede")
 }
 

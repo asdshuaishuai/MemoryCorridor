@@ -59,14 +59,6 @@ const EXCERPT_CHARS : Int = 360
 // includes the inode, so two vaults cannot collide in one process.
 let cache : Ref[(String, String, Collection)?] = @ref.new(None)
 
-pub fn index_path() -> String {
-  INDEX_PATH
-}
-
-pub fn clear_cache() -> Unit {
-  cache.val = None
-}
-
 pub fn active_pages(entries : Array[@core.Entry]) -> Array[@core.Entry] {
   let pages = entries.filter(e => @core.is_page(e) && !e.stale)
   pages.sort_by((a, b) => @base.compare(a.id, b.id))
@@ -307,26 +299,6 @@ pub fn search_pages(
 }
 
 // Chunk-level view for `retrieve` and for callers that want lane diagnostics.
-pub fn search_chunks(
-  entries : Array[@core.Entry], collection : Collection, query : String, limit : Int,
-  prefix? : String = "",
-) -> Array[@MoonRetrieve.SearchResult] {
-  let allowed = allowed_pages(entries, prefix)
-  let out : Array[@MoonRetrieve.SearchResult] = []
-  for hit in collection.index.search(query, top_k=Int::max(limit * 4, 40)) {
-    match collection.by_id.get(hit.doc_id) {
-      Some(chunk) => if allowed.get(chunk.page).unwrap_or(false) { out.push(hit) }
-      None => ()
-    }
-    if out.length() >= limit { break }
-  }
-  out
-}
-
-pub fn chunk_of(collection : Collection, id : String) -> ChunkRef? {
-  collection.by_id.get(id)
-}
-
 pub fn page_title(collection : Collection, page : String) -> String {
   for binding in collection.pages {
     if binding.id == page { return binding.title }

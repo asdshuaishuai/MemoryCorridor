@@ -18,7 +18,8 @@ BACKUP = Path("/tmp/mutation-backup")
 MUTATIONS = [
     ("memory note hash must bind conditions and sources",
      "core/records.mbt",
-     '''  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources, source_hashes) {
+     '''  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources,
+    source_hashes, importance, emotion, episodic) {
     @base.fail("memory_note_hash_mismatch")
   }''',
      '''  if false { @base.fail("memory_note_hash_mismatch") }''',
@@ -70,8 +71,10 @@ MUTATIONS = [
 
     ("memory use must record the reported timestamp",
      "agent/memory.mbt",
-     """        let record : MemoryNote = { ..note, last_used_at: Some(at) }""",
-     """        let record : MemoryNote = { ..note, last_used_at: note.last_used_at }""",
+     """        let record : MemoryNote = { ..note, last_used_at: Some(at),
+          use_count: note.use_count + 1 }""",
+     """        let record : MemoryNote = { ..note, last_used_at: note.last_used_at,
+          use_count: note.use_count + 1 }""",
      "memory use records foreground usage"),
 
     ("memory use batch must be atomic",
@@ -1563,6 +1566,40 @@ MUTATIONS = [
     @base.fail("memory_workspace_unknown: " + workspace + "; run workspace-open first")
   }''',
      "memory ops require a registered workspace"),
+
+    ("note identity must bind importance, emotion and episodic",
+     "core/records.mbt",
+     '''    "\\n" + @base.canonical(source_hashes.to_json()) + "\\n" +
+    @base.canonical(importance) + "\\n" + @base.canonical(emotion) + "\\n" +
+    (if episodic { "episodic" } else { "plain" }))''',
+     '''    "\\n" + @base.canonical(source_hashes.to_json()))''',
+     "importance and emotion are identity-bound companion metadata"),
+
+    ("importance must stay inside 0..1",
+     "core/records.mbt",
+     '''    Number(n, ..) if n >= 0.0 && n <= 1.0 => ()''',
+     '''    Number(_n, ..) => ()''',
+     "companion metadata bounds are refused"),
+
+    ("emotion axes must stay inside -1..1",
+     "core/records.mbt",
+     '''          Some(Number(n, ..)) if n >= -1.0 && n <= 1.0 => ()''',
+     '''          Some(Number(_n, ..)) => ()''',
+     "companion metadata bounds are refused"),
+
+    ("memory use must increment the usage count",
+     "agent/memory.mbt",
+     '''          use_count: note.use_count + 1 }''',
+     '''          use_count: note.use_count }''',
+     "memory use increments a replay-safe usage count"),
+
+    ("supersede must inherit omitted metadata",
+     "agent/memory.mbt",
+     '''  let importance = match optional(request, "importance") {
+    None => old.importance''',
+     '''  let importance = match optional(request, "importance") {
+    None => None''',
+     "importance and emotion are identity-bound companion metadata"),
 
     ("a project note must refuse a session selector",
      "core/records.mbt",

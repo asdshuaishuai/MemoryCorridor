@@ -8,7 +8,7 @@ budget:
   official Unix installer (the repository does not vendor the toolchain, but
   pins the version so CI matches the locally verified gate). The gate includes
   the wasm service e2e (`scripts/wasm_service_e2e.py`), which bootstraps a
-  wasmtime venv on the runner, and the 230-entry mutation gate. Budget:
+  wasmtime venv on the runner, and the 235-entry mutation gate. Budget:
   `timeout-minutes: 300`.
 - `release` independently builds the deterministic native release archive with
   `scripts/release.py`, re-checks it with `scripts/release_e2e.py`, and uploads

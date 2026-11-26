@@ -94,10 +94,6 @@ pub fn document(entry : @core.Entry, text : String) -> Document raise @base.Faul
     title_terms: tokens(page.title), body_terms: tokens(page.body) }
 }
 
-pub fn search(documents : Array[Document], query : String, limit? : Int = 10) -> Array[Hit] raise @base.Fault {
-  search_index(build_index(documents), query, limit~)
-}
-
 pub fn search_index(index : TextIndex, query : String, limit? : Int = 10) -> Array[Hit] {
   let terms = tokens(query)
   let unique : Map[String, Bool] = Map([])

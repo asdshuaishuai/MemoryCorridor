@@ -51,11 +51,52 @@ fn extraction_body(value : String) -> Unit raise @base.Fault {
 pub fn memory_note_hash(
   workspace : String, scope : String, session : String, kind : String, text : String,
   conditions : Array[String], sources : Array[String], source_hashes : Array[String],
+  importance : Json, emotion : Json, episodic : Bool,
 ) -> String {
-  @base.hex_hash("memory-note-v3\n" + workspace + "\n" + scope + "\n" + session + "\n" +
+  @base.hex_hash("memory-note-v4\n" + workspace + "\n" + scope + "\n" + session + "\n" +
     kind + "\n" + text + "\n" +
     @base.canonical(conditions.to_json()) + "\n" + @base.canonical(sources.to_json()) +
-    "\n" + @base.canonical(source_hashes.to_json()))
+    "\n" + @base.canonical(source_hashes.to_json()) + "\n" +
+    @base.canonical(importance) + "\n" + @base.canonical(emotion) + "\n" +
+    (if episodic { "episodic" } else { "plain" }))
+}
+
+// Optional companion-memory metadata: importance is a host-supplied 0..1
+// weight, emotion is the affect snapshot at the moment of the judgment. Both
+// are validated here so a tampered record cannot smuggle arbitrary values into
+// retrieval scoring. `null` means "not supplied"; retrieval uses defaults.
+fn memory_importance(value : Json) -> Unit raise @base.Fault {
+  match value {
+    Null => ()
+    Number(n, ..) if n >= 0.0 && n <= 1.0 => ()
+    _ => @base.fail("memory_importance_invalid")
+  }
+}
+
+fn memory_emotion(value : Json) -> Unit raise @base.Fault {
+  match value {
+    Null => ()
+    Object(fields) => {
+      for key in fields.keys() {
+        if !["valence", "arousal", "dominance", "label"].contains(key) {
+          @base.fail("memory_emotion_invalid")
+        }
+      }
+      for key in ["valence", "arousal", "dominance"] {
+        match fields.get(key) {
+          Some(Number(n, ..)) if n >= -1.0 && n <= 1.0 => ()
+          _ => @base.fail("memory_emotion_invalid")
+        }
+      }
+      match fields.get("label") {
+        None | Some(Null) => ()
+        Some(String(text)) if !text.is_empty() && text.length() <= 64 &&
+          !text.contains("\n") && !text.contains("\r") => ()
+        _ => @base.fail("memory_emotion_invalid")
+      }
+    }
+    _ => @base.fail("memory_emotion_invalid")
+  }
 }
 
 // The judgment a note makes, independent of which evidence it cites. Duplicate
@@ -208,7 +249,7 @@ fn memory_nullable_hash(value : Json, field : String, id : String) -> String? ra
 }
 
 fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
-  if @base.field(value, "version") != Json::number(2.0) { @base.fail("memory_version_unsupported") }
+  if @base.field(value, "version") != Json::number(3.0) { @base.fail("memory_version_unsupported") }
   let kind = @base.text(@base.field(value, "kind"))
   if !["preference", "decision", "constraint", "fact", "goal"].contains(kind) {
     @base.fail("memory_kind_invalid")
@@ -270,7 +311,21 @@ fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
   for hash in source_hashes {
     if !valid_hash(hash) { @base.fail("memory_source_hash_invalid") }
   }
-  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources, source_hashes) {
+  let importance = optional_record_field(value, "importance").unwrap_or(Json::null())
+  memory_importance(importance)
+  let emotion = optional_record_field(value, "emotion").unwrap_or(Json::null())
+  memory_emotion(emotion)
+  let episodic = @base.boolean(@base.field(value, "episodic"))
+  let promoted_at = optional_record_field(value, "promoted_at").unwrap_or(Json::null())
+  memory_nullable_time(promoted_at, "promoted_at")
+  if episodic && promoted_at == Json::null() { @base.fail("memory_promoted_at_required") }
+  if !episodic && promoted_at != Json::null() { @base.fail("memory_promoted_at_unexpected") }
+  ignore(match @base.field(value, "use_count") {
+    Number(n, ..) if n >= 0.0 && n <= 4294967295.0 && n == n.to_int().to_double() => ()
+    _ => @base.fail("memory_use_count_invalid")
+  })
+  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources,
+    source_hashes, importance, emotion, episodic) {
     @base.fail("memory_note_hash_mismatch")
   }
   if id != memory_note_id(key, note_hash) { @base.fail("memory_record_identity_mismatch") }
@@ -1465,7 +1520,8 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
   } else if entry.path.has_prefix("state/memory/") {
     @base.keys(value, ["version", "id", "workspace", "scope", "session", "kind", "text",
       "conditions", "sources", "source_hashes", "status", "key", "created_at", "updated_at",
-      "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash"])
+      "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash",
+      "importance", "emotion", "episodic", "promoted_at", "use_count"])
     let id = string("id")
     let workspace = string("workspace")
     if !valid_hash(id) || !valid_hash(workspace) ||

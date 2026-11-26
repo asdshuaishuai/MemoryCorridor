@@ -1,3 +1,9 @@
+// Test-only convenience: production search is the retrieval kernel; this wraps
+// the legacy page-level index the memory prefetch still uses.
+fn search(documents : Array[Document], query : String) -> Array[Hit] raise @base.Fault {
+  search_index(build_index(documents), query)
+}
+
 test "Chinese bigrams and title weighted ranking with deterministic ties" {
   assert_true(tokens("接口，VectorSearchBackend 负责检索。").contains("vectorsearchbackend"))
   assert_eq(tokens("Hello😀world，Test"), ["hello", "world", "test"])

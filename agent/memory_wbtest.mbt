@@ -11,14 +11,14 @@ fn memory_open_workspace(store : @vault.Storage) -> Unit raise @base.Fault {
 
 test "memory note identity is content addressed and supersede preserves history" {
   let conditions = ["规划博物馆行程时"]
-  let digest = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间", conditions, [], [])
+  let digest = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间", conditions, [], [], Json::null(), Json::null(), false)
   let id = @core.memory_note_id("ceramics", digest)
   assert_eq(id, @core.memory_note_id("ceramics", digest))
   // Same key and content replay; a correction derives a different id.
-  let corrected = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间并保留自由活动", conditions, [], [])
+  let corrected = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间并保留自由活动", conditions, [], [], Json::null(), Json::null(), false)
   assert_true(@core.memory_note_id("ceramics", corrected) != id)
   // A condition changes the identity even when the text does not.
-  let reconditioned = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间", ["规划城市行程时"], [], [])
+  let reconditioned = @core.memory_note_hash(test_ws(), "project", "", "preference", "优先安排陶瓷参观时间", ["规划城市行程时"], [], [], Json::null(), Json::null(), false)
   assert_true(reconditioned != digest)
   // The key participates in the record id, so two keys never share a note.
   assert_true(@core.memory_note_id("other", digest) != id)
@@ -27,13 +27,14 @@ test "memory note identity is content addressed and supersede preserves history"
 test "memory note json round trip keeps nullable transition fields" {
   let body = "官窑记录来自已登记来源"
   let note : MemoryNote = {
-    id: @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [])),
+    id: @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false)),
     workspace: test_ws(), kind: "fact", scope: "project", session: None, text: body,
     conditions: [], sources: [], source_hashes: [], status: "archived", key: "k",
     created_at: "2026-10-20T09:00:00Z", updated_at: "2026-10-20T10:00:00Z",
     archived_at: Some("2026-10-20T10:00:00Z"), superseded_by: None, supersedes: None,
     pinned: false, last_used_at: None,
-    note_hash: @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []),
+    importance: None, emotion: None, episodic: false, promoted_at: None, use_count: 0,
+    note_hash: @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false),
   }
   let text = @base.canonical(note.to_json())
   let parsed = memory_from_json(@base.parse(text))
@@ -70,19 +71,21 @@ fn event_entry(path : String, content : String) -> @core.Entry {
 
 test "memory record validation rejects drift between fields and identity" {
   let body = "t"
-  let id = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []))
+  let id = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false))
   let path = "state/memory/" + test_ws() + "/" + id + ".json"
   let entry : @core.Entry = {
     id: path, path, kind: "state", format: "json",
     sha256: "0000000000000000000000000000000000000000000000000000000000000000",
     sources: [], stale: false,
   }
-  let base : Json = { "version": 2, "id": id, "workspace": test_ws(), "kind": "fact", "scope": "project", "session": Json::null(),
+  let base : Json = { "version": 3, "id": id, "workspace": test_ws(), "kind": "fact", "scope": "project", "session": Json::null(),
     "text": body, "conditions": [], "sources": [], "status": "active", "key": "k",
     "created_at": "2026-10-20T09:00:00Z", "updated_at": "2026-10-20T09:00:00Z",
     "archived_at": Json::null(), "superseded_by": Json::null(), "supersedes": Json::null(),
     "source_hashes": Json::array([]), "pinned": false, "last_used_at": Json::null(),
-    "note_hash": @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []) }
+    "importance": Json::null(), "emotion": Json::null(), "episodic": false,
+    "promoted_at": Json::null(), "use_count": Json::number(0.0),
+    "note_hash": @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false) }
   @core.validate_record(entry, @base.canonical(base))
   // Unknown fields and unsupported kinds/scopes are refused, not ignored.
   let refused : Array[Json] = [
@@ -113,14 +116,14 @@ test "memory record validation rejects drift between fields and identity" {
   assert_true(refuses(() => @core.validate_record(entry, @base.canonical(superseded))))
   // A replacement may not be the note itself.
   let self_supersede = json_override(json_override(superseded, "superseded_by", id.to_json()),
-    "note_hash", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []).to_json())
+    "note_hash", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false).to_json())
   assert_true(refuses(() => @core.validate_record(entry, @base.canonical(self_supersede))))
 }
 
 test "memory event dictionary rejects unknown operations and forged paths" {
   let body = "t"
-  let note_id = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], []))
-  let note_hash = @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [])
+  let note_id = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false))
+  let note_hash = @core.memory_note_hash(test_ws(), "project", "", "fact", body, [], [], [], Json::null(), Json::null(), false)
   let submit : Json = { "op": "memory-submit", "memory": note_id, "at": "2026-10-20T09:00:00Z",    "key": "k", "note_hash": note_hash, "supersedes": Json::null() }
   let submit_path = "state/events/memory-submit-" + note_id + ".json"
   @core.validate_record(event_entry(submit_path, @base.canonical(submit)), @base.canonical(submit))
@@ -137,8 +140,8 @@ test "memory event dictionary rejects unknown operations and forged paths" {
 }
 
 test "memory tools declare strict field sets and bounded prefetch limits" {
-  assert_eq(tool("memory-submit").fields, ["workspace", "session", "kind", "scope", "text", "conditions", "sources", "at", "key"])
-  assert_eq(tool("memory-supersede").fields, ["workspace", "session", "id", "text", "conditions", "sources", "at", "key"])
+  assert_eq(tool("memory-submit").fields, ["workspace", "session", "kind", "scope", "text", "conditions", "sources", "importance", "emotion", "at", "key"])
+  assert_eq(tool("memory-supersede").fields, ["workspace", "session", "id", "text", "conditions", "sources", "importance", "emotion", "at", "key"])
   assert_eq(tool("memory-archive").fields, ["workspace", "session", "id", "at"])
   assert_eq(tool("memory-restore").fields, ["workspace", "session", "id", "at"])
   assert_eq(tool("memory-list").fields, ["workspace", "session"])
@@ -179,7 +182,8 @@ fn memory_note(
     created_at: "2026-10-22T09:00:00Z", updated_at: "2026-10-22T09:00:00Z",
     archived_at: None, superseded_by: None, supersedes: None, pinned: false,
     last_used_at: None,
-    note_hash: @core.memory_note_hash(test_ws(), "project", "", kind, text, conditions, [], []),
+    importance: None, emotion: None, episodic: false, promoted_at: None, use_count: 0,
+    note_hash: @core.memory_note_hash(test_ws(), "project", "", kind, text, conditions, [], [], Json::null(), Json::null(), false),
   }
 }
 
@@ -260,7 +264,7 @@ test "memory read and pin tools declare strict field sets" {
 }
 
 test "memory pin event path binds the flag and the time" {
-  let memory = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", "t", [], [], []))
+  let memory = @core.memory_note_id("k", @core.memory_note_hash(test_ws(), "project", "", "fact", "t", [], [], [], Json::null(), Json::null(), false))
   let at = "2026-10-27T09:30:00Z"
   for pinned in [true, false] {
     let event : Json = { "op": "memory-pin", "memory": memory, "at": at, "pinned": pinned }
@@ -274,10 +278,10 @@ test "memory pin event path binds the flag and the time" {
       @base.canonical(event))))
   }
   // A supersede event must name the note it replaces.
-  let superseded = @base.hex_hash("memory-v1\nold\n" + @core.memory_note_hash(test_ws(), "project", "", "fact", "a", [], [], []))
-  let replacement = @core.memory_note_id("old", @core.memory_note_hash(test_ws(), "project", "", "fact", "b", [], [], []))
+  let superseded = @base.hex_hash("memory-v1\nold\n" + @core.memory_note_hash(test_ws(), "project", "", "fact", "a", [], [], [], Json::null(), Json::null(), false))
+  let replacement = @core.memory_note_id("old", @core.memory_note_hash(test_ws(), "project", "", "fact", "b", [], [], [], Json::null(), Json::null(), false))
   let event : Json = { "op": "memory-supersede", "memory": replacement, "at": at, "key": "k",
-    "note_hash": @core.memory_note_hash(test_ws(), "project", "", "fact", "b", [], [], []),
+    "note_hash": @core.memory_note_hash(test_ws(), "project", "", "fact", "b", [], [], [], Json::null(), Json::null(), false),
     "supersedes": superseded }
   let path = "state/events/memory-supersede-" + superseded + "-" + replacement + ".json"
   @core.validate_record(event_entry(path, @base.canonical(event)), @base.canonical(event))
@@ -502,9 +506,13 @@ test "memory candidates proposes a reworded duplicate without a seed" {
   let merge = @base.array(@base.field(candidates, "merge"))
   assert_eq(merge.length(), 1)
   let row = merge[0]
-  // The keeper is the earlier id, so the pair is stable across runs.
-  assert_eq(@base.text(@base.field(row, "duplicate_key")), "b")
-  assert_eq(@base.text(@base.field(row, "keeper_key")), "a")
+  // The keeper is the earlier id, so the pair is stable across runs without
+  // pinning which key happened to hash first.
+  assert_eq(@base.text(@base.field(row, "keeper")) < @base.text(@base.field(row, "duplicate")), true)
+  let kept_key = @base.text(@base.field(row, "keeper_key"))
+  let duplicate_key = @base.text(@base.field(row, "duplicate_key"))
+  assert_true((kept_key == "a" && duplicate_key == "b") ||
+    (kept_key == "b" && duplicate_key == "a"))
   assert_eq(@base.text(@base.field(row, "reason")), "similar_text")
   // A read operation must not claim a pending host action.
   match candidates {
@@ -801,4 +809,144 @@ test "memory ops require a registered workspace" {
     @base.Fault(message) => message.has_prefix("memory_workspace_unknown")
   }
   assert_true(refused)
+}
+
+test "importance and emotion are identity-bound companion metadata" {
+  let (store, _broken, files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  let emotion : Json = { "valence": 0.6, "arousal": 0.4, "dominance": 0.5, "label": "欣慰" }
+  let first = memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "preference", "scope": "project",
+    "text": "那次看展很触动", "conditions": ["聊到展览时"], "sources": [],
+    "importance": 0.8, "emotion": emotion,
+    "at": "2026-11-21T09:00:00Z", "key": "moment" })
+  let first_id = @base.text(@base.field(first, "id"))
+  let first_note = memory_read(store, @vault.load(store),
+    { "workspace": test_ws(), "id": first_id })
+  assert_eq(@base.field(@base.field(first_note, "record"), "importance"), Json::number(0.8))
+  assert_eq(@base.field(@base.field(@base.field(first_note, "record"), "emotion"), "label"),
+    "欣慰".to_json())
+  assert_eq(@base.field(@base.field(first_note, "record"), "use_count"), Json::number(0.0))
+  // Usage is a mutable signal outside the identity hash.
+  ignore(memory_use(store, @vault.load(store), { "op": "memory-use",
+    "workspace": test_ws(), "ids": [first_id], "at": "2026-11-21T09:10:00Z" }))
+  // Changing the weight keeps history: a superseding record inherits the
+  // fields that were not overridden, including usage count.
+  let second = memory_supersede(store, @vault.load(store), { "op": "memory-supersede",
+    "workspace": test_ws(), "id": first_id, "text": "那次看展至今难忘",
+    "conditions": ["聊到展览时"], "sources": [], "importance": 0.2, "emotion": Json::null(),
+    "at": "2026-11-21T09:20:00Z", "key": "moment" })
+  let second_id = @base.text(@base.field(second, "id"))
+  assert_true(second_id != first_id)
+  let second_note = @base.field(memory_read(store, @vault.load(store),
+    { "workspace": test_ws(), "id": second_id }), "record")
+  assert_eq(@base.field(second_note, "importance"), Json::number(0.2))
+  assert_eq(@base.field(second_note, "emotion"), Json::null())
+  assert_eq(@base.field(second_note, "use_count"), Json::number(1.0))
+  // Omitted metadata is inherited, not reset.
+  let third = memory_supersede(store, @vault.load(store), { "op": "memory-supersede",
+    "workspace": test_ws(), "id": second_id, "text": "那次看展至今难忘，细节仍在",
+    "conditions": ["聊到展览时"], "sources": [],
+    "at": "2026-11-21T09:30:00Z", "key": "moment" })
+  let third_note = @base.field(memory_read(store, @vault.load(store),
+    { "workspace": test_ws(), "id": @base.text(@base.field(third, "id")) }), "record")
+  assert_eq(@base.field(third_note, "importance"), Json::number(0.2))
+  assert_eq(@base.field(third_note, "emotion"), Json::null())
+  assert_eq(@base.field(third_note, "use_count"), Json::number(1.0))
+  // The identity hash covers the metadata: rewriting only importance without
+  // recomputing note_hash is refused by record validation.
+  let path = memory_path(test_ws(), first_id)
+  let raw = @base.parse(files[path])
+  let changed = json_override(raw, "importance", Json::number(0.9))
+  let text = @base.canonical(changed)
+  let entry : @core.Entry = { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(text), sources: [], stale: false }
+  assert_true(refuses(() => @core.validate_record(entry, text)))
+  // Flipping episodic without recomputing the hash is refused too.
+  let promoted = json_override(json_override(raw, "episodic", true.to_json()),
+    "promoted_at", "2026-11-21T09:40:00Z".to_json())
+  let promoted_text = @base.canonical(promoted)
+  let promoted_entry : @core.Entry = { id: path, path, kind: "state", format: "json",
+    sha256: @base.hex_hash(promoted_text), sources: [], stale: false }
+  assert_true(refuses(() => @core.validate_record(promoted_entry, promoted_text)))
+}
+
+test "companion metadata bounds are refused" {
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  let base : Json = { "op": "memory-submit", "workspace": test_ws(), "kind": "fact",
+    "scope": "project", "text": "边界检查", "conditions": [], "sources": [],
+    "at": "2026-11-21T10:00:00Z", "key": "bounds" }
+  let invalid : Array[Json] = [
+    json_override(base, "importance", Json::number(1.5)),
+    json_override(base, "importance", Json::number(-0.1)),
+    json_override(base, "emotion", { "valence": 2.0, "arousal": 0.0, "dominance": 0.0 }),
+    json_override(base, "emotion", { "valence": 0.0, "arousal": 0.0 }),
+    json_override(base, "emotion", { "valence": 0.0, "arousal": 0.0, "dominance": 0.0, "extra": 1 }),
+    json_override(base, "emotion", { "valence": 0.0, "arousal": 0.0, "dominance": 0.0,
+      "label": "a\nb" }),
+  ]
+  for request in invalid {
+    assert_true(refuses(() => ignore(memory_submit(store, @vault.load(store), request))))
+  }
+  // Even a hand-written record whose note_hash is self-consistent is refused:
+  // the record validator, not only the request parser, enforces the bounds.
+  let (valid_store, _broken, files) = crashing(-1)
+  ignore(initialize(valid_store, "研究陶瓷"))
+  memory_open_workspace(valid_store)
+  let note = memory_submit(valid_store, @vault.load(valid_store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "fact", "scope": "project", "text": "边界基线",
+    "conditions": [], "sources": [], "at": "2026-11-21T10:10:00Z", "key": "ok" })
+  let path = memory_path(test_ws(), @base.text(@base.field(note, "id")))
+  let raw = @base.parse(files[path])
+  let tampered : Array[Json] = [
+    json_override(raw, "importance", Json::number(1.5)),
+  ]
+  for row in tampered {
+    let digest = @core.memory_note_hash(test_ws(), "project", "", "fact", "边界基线", [], [],
+      [], Json::number(1.5), Json::null(), false)
+    let id = @core.memory_note_id("ok", digest)
+    let rewritten = json_override(json_override(row, "note_hash", digest.to_json()),
+      "id", id.to_json())
+    let text = @base.canonical(rewritten)
+    let entry : @core.Entry = { id: memory_path(test_ws(), id), path: memory_path(test_ws(), id),
+      kind: "state", format: "json", sha256: @base.hex_hash(text), sources: [], stale: false }
+    assert_true(refuses(() => @core.validate_record(entry, text)))
+  }
+  let emotion_row = json_override(raw, "emotion", { "valence": 2.0, "arousal": 0.0, "dominance": 0.0 })
+  let digest = @core.memory_note_hash(test_ws(), "project", "", "fact", "边界基线", [], [],
+    [], Json::null(), { "valence": 2.0, "arousal": 0.0, "dominance": 0.0 }, false)
+  let id = @core.memory_note_id("ok", digest)
+  let emotion_written = json_override(json_override(emotion_row, "note_hash", digest.to_json()),
+    "id", id.to_json())
+  let emotion_text = @base.canonical(emotion_written)
+  let emotion_entry : @core.Entry = { id: memory_path(test_ws(), id),
+    path: memory_path(test_ws(), id), kind: "state", format: "json",
+    sha256: @base.hex_hash(emotion_text), sources: [], stale: false }
+  assert_true(refuses(() => @core.validate_record(emotion_entry, emotion_text)))
+}
+
+test "memory use increments a replay-safe usage count" {
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  let note = memory_submit(store, @vault.load(store), { "op": "memory-submit",
+    "workspace": test_ws(), "kind": "fact", "scope": "project", "text": "计数检查",
+    "conditions": [], "sources": [], "at": "2026-11-21T11:00:00Z", "key": "count" })
+  let id = @base.text(@base.field(note, "id"))
+  ignore(memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(),
+    "ids": [id], "at": "2026-11-21T11:10:00Z" }))
+  ignore(memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(),
+    "ids": [id], "at": "2026-11-21T11:20:00Z" }))
+  let used = @base.field(memory_read(store, @vault.load(store),
+    { "workspace": test_ws(), "id": id }), "record")
+  assert_eq(@base.field(used, "use_count"), Json::number(2.0))
+  let replay = memory_use(store, @vault.load(store), { "op": "memory-use", "workspace": test_ws(),
+    "ids": [id], "at": "2026-11-21T11:20:00Z" })
+  assert_eq(@base.field(replay, "replayed"), true.to_json())
+  let still = @base.field(memory_read(store, @vault.load(store),
+    { "workspace": test_ws(), "id": id }), "record")
+  assert_eq(@base.field(still, "use_count"), Json::number(2.0))
 }

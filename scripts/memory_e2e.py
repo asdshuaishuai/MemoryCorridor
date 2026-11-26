@@ -663,8 +663,8 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     # touches nothing.
     exported = call(root, "memory-export", workspace=ws)
     assert exported["notes"] >= 1 and exported["session_notes"] == 0, exported
-    assert (root / "index/projects.json").is_file()
-    exported_files = sorted((root / "index/memory" / ws).glob("*.md"))
+    assert (root / ".corridor/memory/projects.json").is_file()
+    exported_files = sorted((root / ".corridor/memory" / ws).glob("*.md"))
     assert len(exported_files) == exported["notes"], exported
     assert exported["notes"] and "conditions" in exported_files[0].read_text(encoding="utf-8")
     again = call(root, "memory-export", workspace=ws)

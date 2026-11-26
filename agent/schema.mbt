@@ -15,7 +15,7 @@ pub fn input_schema(t : Tool) -> Json {
       else { match name {
         "limit" | "budget" | "hops" | "start" | "end" | "step" | "seed" => "integer"
         "cosine_floor" | "salience" | "valence" | "outcome" => "number"
-        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" | "params" | "body" => "object"
+        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" | "params" | "body" | "emotion" => "object"
         _ => "string"
       } }
     properties[name] = if ty == "array" {
@@ -55,7 +55,7 @@ pub fn input_schema(t : Tool) -> Json {
     } else { { "type": ty } }
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
       "start", "end", "query", "page", "ids", "cosine_floor", "policy",
-      "params", "enabled", "subject", "outcome", "due_after_seconds", "min_opportunities",
+      "params", "enabled", "subject", "outcome", "due_after_seconds", "min_opportunities", "importance", "emotion",
       "max_open_rounds", "session"].contains(name) &&
       !(name == "workspace" && ["status", "stats", "inbox", "memory-export"].contains(t.name)) &&
       !(name == "context_token" && t.name != "draft-submit") &&

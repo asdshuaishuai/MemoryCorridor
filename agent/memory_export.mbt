@@ -45,6 +45,17 @@ fn memory_export_markdown(note : MemoryNote, entries : Array[@core.Entry]) -> St
   line("sources", note.sources.to_json()) +
   line("source_hashes", note.source_hashes.to_json()) +
   line("pinned", note.pinned.to_json()) +
+  line("importance", match note.importance {
+    None => Json::null()
+    Some(value) => value.to_json()
+  }) +
+  line("emotion", memory_emotion_json(note.emotion)) +
+  line("episodic", note.episodic.to_json()) +
+  line("promoted_at", match note.promoted_at {
+    None => Json::null()
+    Some(value) => value.to_json()
+  }) +
+  line("use_count", note.use_count.to_json()) +
   line("created_at", note.created_at.to_json()) +
   line("updated_at", note.updated_at.to_json()) +
   line("valid", (invalid.is_empty() && drifted.is_empty()).to_json()) +
@@ -83,17 +94,17 @@ pub fn memory_export(
       let note = memory_from_json(@base.parse(@vault.required(store, entry.path)))
       if note.scope == "session" { session_notes += 1 }
       if note.status != "active" || note.scope != "project" { continue }
-      let path = "index/memory/" + workspace + "/" + note.id + ".md"
+      let path = ".corridor/memory/" + workspace + "/" + note.id + ".md"
       expected[path] = memory_export_markdown(note, entries)
       owners[path] = workspace
       notes += 1
     }
   }
-  // `index/projects.json` always lists every registered workspace, even when a
+  // `.corridor/memory/projects.json` always lists every registered workspace, even when a
   // single workspace was requested: it is the assistant's map of the vault.
-  let projects_path = "index/projects.json"
+  let projects_path = ".corridor/memory/projects.json"
   let projects_text = memory_export_projects_text(workspaces)
-  (store.mkdirs)("index")
+  (store.mkdirs)(".corridor/memory")
   let mut written = 0
   let mut unchanged = 0
   match (store.read)(projects_path) {
@@ -109,7 +120,7 @@ pub fn memory_export(
         (store.write)(path, content); written += 1
       }
       None => {
-        (store.mkdirs)("index/memory/" + owners[path])
+        (store.mkdirs)(".corridor/memory/" + owners[path])
         (store.write)(path, content)
         written += 1
       }
@@ -120,23 +131,23 @@ pub fn memory_export(
   // cannot erase another's view.
   let mut removed = 0
   let directories : Array[String] = match target {
-    None => ["index/memory"]
-    Some(workspace) => ["index/memory/" + workspace]
+    None => [".corridor/memory"]
+    Some(workspace) => [".corridor/memory/" + workspace]
   }
   for directory in directories {
     let existing = try { (store.files)(directory) } catch { _ => [] }
     for path in existing {
-      if expected.contains(path) { continue }
+      if expected.contains(path) || path == ".corridor/memory/projects.json" { continue }
       match target {
         None => ()
-        Some(workspace) => if !path.has_prefix("index/memory/" + workspace + "/") { continue }
+        Some(workspace) => if !path.has_prefix(".corridor/memory/" + workspace + "/") { continue }
       }
       (store.remove)(path)
       removed += 1
     }
   }
   {
-    "directory": "index".to_json(),
+    "directory": ".corridor/memory".to_json(),
     "projects": projects_path.to_json(),
     "workspaces": workspaces.length().to_json(),
     "notes": notes.to_json(),
