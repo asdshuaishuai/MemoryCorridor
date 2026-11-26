@@ -27,6 +27,8 @@ with tempfile.TemporaryDirectory(prefix='corridor-embedding-') as work:
 
     space = {'id': 'model-content-v1:recipe-v1', 'dimensions': 2}
     call('init')
+    call('provider-register', provider='manual-embed', kind='embedding', space=space,
+         capabilities=['embed'], at='2026-10-16T00:00:00Z')
     empty = call('embedding-plan', space=space)
     assert empty['items'] == [] and empty['remaining'] == 0
     (vault/'raw/input.md').write_text('Evidence for all pages.\n')
@@ -75,6 +77,20 @@ with tempfile.TemporaryDirectory(prefix='corridor-embedding-') as work:
     call('embedding-submit', space=space, items=[wire_item])
     wire_search = call('search', query='', query_vector={'space': space, 'values_b64': wire})
     assert wire_search['vector_status'] == 'brute_force' and wire_search['hits'][0]['id'] == 'concepts/z'
+    # The chunk-level system lane consumes the same provider vector: page hits
+    # map to the page's first chunk and keep the host ranking. This is covered
+    # without an OS embedding model so Linux CI exercises it too.
+    retrieved = call('retrieve', query='nomatch', limit=5, provider='manual-embed',
+                     query_vector={'space': space, 'values': [1, 0]})
+    lanes = retrieved['lanes']
+    assert lanes['vector'] == 'system' and lanes['reason'] == 'provider_vectors', retrieved
+    assert lanes['vector_space'] == space, retrieved
+    assert retrieved['hits'][0]['page'] == 'concepts/a', retrieved
+    assert retrieved['hits'][0]['chunk'] == 'concepts/a#0', retrieved
+    assert retrieved['hits'][0]['lanes']['vector_rank'] == 1, retrieved
+    call('retrieve', query='nomatch', provider=None,
+         query_vector={'space': space, 'values': [1, 0]},
+         error='retrieve_provider_required')
     call('search', query='', query_vector={'space': space, 'values': [1, 0], 'values_b64': wire}, error='vector_values_encoding_exclusive')
     external = call('search', query='', vector_candidates={
         'space': space, 'hits': [{'id': 'concepts/z', 'score': 0.99}]})
@@ -95,6 +111,11 @@ with tempfile.TemporaryDirectory(prefix='corridor-embedding-') as work:
     call('refresh')
     updated = call('embedding-plan', space=space)['items'][0]
     assert updated['page'] == first['page'] and updated['sha256'] != first['sha256']
+    # The stale page vector is excluded from the system lane until resubmitted.
+    stale_retrieved = call('retrieve', query='nomatch', limit=5, provider='manual-embed',
+                           query_vector={'space': space, 'values': [1, 0]})
+    assert stale_retrieved['lanes']['vector'] == 'system', stale_retrieved
+    assert 'concepts/a' not in [hit['page'] for hit in stale_retrieved['hits']], stale_retrieved
     baseline = (vault/'index.mbt.md').read_bytes()
     call('embedding-submit', space=space, items=[item], error='vector_content_version_mismatch')
     assert (vault/'index.mbt.md').read_bytes() == baseline

@@ -41,4 +41,4 @@
 
 ## 5. 验证
 
-`retrieval_wbtest.mbt` 覆盖唯一标识、制品自洽拒绝、旁车哈希、向量路召回文本路漏掉的截断标识符、宿主页排序替换算法路与命名空间过滤；`retrieval_e2e.py` 覆盖块级 retrieve/命名空间/非法前缀；`os_embed_e2e.py` 在 macOS 上验证 `NLEmbedding` 适配器驱动 `search` 与 `retrieve` 的 system 路、内容版本失效，非 macOS 显式 SKIP；`e2e.py`、`interop_e2e.py` 守住知识基线与 OKF；全部由 `./scripts/verify.sh` 执行。
+`retrieval_wbtest.mbt` 覆盖唯一标识、制品自洽拒绝、旁车哈希、向量路召回文本路漏掉的截断标识符、宿主页排序替换算法路与命名空间过滤；`retrieval_e2e.py` 覆盖块级 retrieve/命名空间/非法前缀；`embedding_e2e.py` 用手工 2 维 provider 向量在平台无关路径覆盖 `retrieve` 的 system 路、首块映射与旧向量排除（Linux CI 也执行）；`os_embed_e2e.py` 在 macOS 上验证真实 `NLEmbedding` 适配器驱动同一路径，非 macOS 显式 SKIP；`e2e.py`、`interop_e2e.py` 守住知识基线与 OKF；全部由 `./scripts/verify.sh` 执行。
