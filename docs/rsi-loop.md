@@ -24,7 +24,8 @@
 | 可描述的状态 | 目录指纹（每笔提交绑定 baseline）；页面内容版本锁；向量/来源版本 |
 | 确定性评估器 | `dream-plan`：八项 metrics（lint 错误/警告、冗余页、未覆盖来源、漂移页、稀疏主题、缺失向量）+ 排序机会集 + 跨 limit 稳定 `report_hash` |
 | 保留门禁 | `dream-close(retained)`：lint 错误与未覆盖来源相对轮次基线不得回退（`dream_compat_lint_regression` / `dream_compat_evidence_loss`） |
-| 轮次账本 | `state/dreams/<id>.json`（指纹/策略/机会哈希/前后 delta）+ `dream-list`；事件 `dream-open`/`dream-close` 身份绑定 |
+| 轮次账本 | `state/dreams/<id>.json`（指纹/策略/机会哈希/前后 delta）+ `dream-list`；事件 `dream-open`/`dream-close` 身份绑定。工作区轮次额外冻结记忆 metrics，工单队列含 memory_* 机会 |
+| 做梦笔记 | `state/dream-notes/<id>.json`：`dream-note-submit/list/resolve`；输入页面/记忆哈希 + claims 证据绑定，applied 必须指向真实页面/记忆，笔记只提案 |
 
 这半场是「静」的：引擎测量、记账、守门；**不生成任何改写**——改写属于外部驱动。
 

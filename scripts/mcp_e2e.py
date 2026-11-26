@@ -143,7 +143,7 @@ with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
         # and prune candidates without a seed, so it must answer through the
         # transport with the same shape it has natively.
         seeded = call("tools/call", {"name": "corridor_memory_candidates",
-            "arguments": {"vault": work, "workspace": ws}})["result"]
+            "arguments": {"vault": work, "workspace": ws, "now": "2026-11-26T00:00:00Z"}})["result"]
         assert not seeded["isError"], seeded
         for field in ["merge", "prune", "counts", "fingerprint"]:
             assert field in seeded["structuredContent"]["result"], field

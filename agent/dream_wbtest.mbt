@@ -13,21 +13,21 @@ fn json_int(value : Json, key : String) -> Int raise @base.Fault {
 test "dream id binds baseline, policy, space and time" {
   let policy : Json = { "cosine_floor": 0.995 }
   let space : Json = { "id": "s", "dimensions": 2 }
-  let id = dream_id("a".repeat(64), policy, space, "2026-11-11T00:00:00Z")
+  let id = dream_id("a".repeat(64), policy, space, Json::null(), "2026-11-11T00:00:00Z")
   assert_eq(id.length(), 64)
   assert_true(dream_hash_ok(id))
-  assert_true(dream_id("b".repeat(64), policy, space, "2026-11-11T00:00:00Z") != id)
+  assert_true(dream_id("b".repeat(64), policy, space, Json::null(), "2026-11-11T00:00:00Z") != id)
   let other_policy : Json = { "cosine_floor": 0.92 }
-  assert_true(dream_id("a".repeat(64), other_policy, space, "2026-11-11T00:00:00Z") != id)
+  assert_true(dream_id("a".repeat(64), other_policy, space, Json::null(), "2026-11-11T00:00:00Z") != id)
   let other_space : Json = { "id": "t", "dimensions": 2 }
-  assert_true(dream_id("a".repeat(64), policy, other_space, "2026-11-11T00:00:00Z") != id)
-  assert_true(dream_id("a".repeat(64), policy, space, "2026-11-11T00:00:01Z") != id)
+  assert_true(dream_id("a".repeat(64), policy, other_space, Json::null(), "2026-11-11T00:00:00Z") != id)
+  assert_true(dream_id("a".repeat(64), policy, space, Json::null(), "2026-11-11T00:00:01Z") != id)
   // canonical policy ordering is key-insensitive: same policy, different
   // insertion order, same round identity.
   let reordered : Json = { "note": "x", "cosine_floor": 0.995 }
   let direct : Json = { "cosine_floor": 0.995, "note": "x" }
-  assert_eq(dream_id("a".repeat(64), reordered, space, "2026-11-11T00:00:00Z"),
-            dream_id("a".repeat(64), direct, space, "2026-11-11T00:00:00Z"))
+  assert_eq(dream_id("a".repeat(64), reordered, space, Json::null(), "2026-11-11T00:00:00Z"),
+            dream_id("a".repeat(64), direct, space, Json::null(), "2026-11-11T00:00:00Z"))
 }
 
 test "dream hash guard accepts only 64 lowercase hex chars" {

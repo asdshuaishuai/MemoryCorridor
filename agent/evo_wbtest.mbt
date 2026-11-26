@@ -186,7 +186,7 @@ fn evo_test_window(count : Int, valence : Double) -> Array[Json] {
 test "evo directory and record paths reach their own validation branch" {
   let directories = @core.state_directories()
   assert_true(directories.contains("state/evo"))
-  assert_eq(directories.length(), 16)
+  assert_eq(directories.length(), 17)
   let code_of = (path : String) => try {
     @core.validate_record(evo_test_entry(path), "{}")
     "accepted"

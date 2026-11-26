@@ -6,7 +6,7 @@ pub fn state_directories() -> Array[String] {
   ["state/orders", "state/events", "state/reviews", "state/research",
    "state/suggestions", "state/overview", "state/evidence", "state/memory",
    "state/impacts", "state/providers", "state/provider-jobs", "state/extractions",
-   "state/dreams", "state/dream-work", "state/workspaces", "state/evo"]
+   "state/dreams", "state/dream-work", "state/dream-notes", "state/workspaces", "state/evo"]
 }
 
 // Sidecar text is host-supplied (OCR, PDF text) and could be arbitrarily long.
@@ -51,14 +51,33 @@ fn extraction_body(value : String) -> Unit raise @base.Fault {
 pub fn memory_note_hash(
   workspace : String, scope : String, session : String, kind : String, text : String,
   conditions : Array[String], sources : Array[String], source_hashes : Array[String],
-  importance : Json, emotion : Json, episodic : Bool,
+  importance : Json, emotion : Json, episodic : Bool, layer : String,
 ) -> String {
-  @base.hex_hash("memory-note-v4\n" + workspace + "\n" + scope + "\n" + session + "\n" +
+  @base.hex_hash("memory-note-v5\n" + workspace + "\n" + scope + "\n" + session + "\n" +
     kind + "\n" + text + "\n" +
     @base.canonical(conditions.to_json()) + "\n" + @base.canonical(sources.to_json()) +
     "\n" + @base.canonical(source_hashes.to_json()) + "\n" +
     @base.canonical(importance) + "\n" + @base.canonical(emotion) + "\n" +
-    (if episodic { "episodic" } else { "plain" }))
+    (if episodic { "episodic" } else { "plain" }) + "\n" + layer)
+}
+
+// A note's layer records what the host decided the judgment became: an ordinary
+// judgment, a conversation summary, a promoted episode, or durable profile
+// knowledge. It is part of the identity, so promotion writes a new record rather
+// than mutating history in place.
+fn memory_layer(value : String) -> Unit raise @base.Fault {
+  if !["judgment", "session_summary", "episode", "profile"].contains(value) {
+    @base.fail("memory_layer_invalid")
+  }
+}
+
+fn memory_layer_scope(layer : String, scope : String) -> Unit raise @base.Fault {
+  if layer == "session_summary" && scope != "session" {
+    @base.fail("memory_layer_scope_invalid")
+  }
+  if (layer == "profile" || layer == "episode") && scope != "project" {
+    @base.fail("memory_layer_scope_invalid")
+  }
 }
 
 // Optional companion-memory metadata: importance is a host-supplied 0..1
@@ -249,7 +268,7 @@ fn memory_nullable_hash(value : Json, field : String, id : String) -> String? ra
 }
 
 fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
-  if @base.field(value, "version") != Json::number(3.0) { @base.fail("memory_version_unsupported") }
+  if @base.field(value, "version") != Json::number(4.0) { @base.fail("memory_version_unsupported") }
   let kind = @base.text(@base.field(value, "kind"))
   if !["preference", "decision", "constraint", "fact", "goal"].contains(kind) {
     @base.fail("memory_kind_invalid")
@@ -268,6 +287,13 @@ fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
   if session != "" && (session.length() > 128 || session.contains("\n") || session.contains("\r")) {
     @base.fail("memory_session_invalid")
   }
+  // The layer has to agree with the scope and with the episodic marker:
+  // a summary only makes sense inside one session, while episodes and profile
+  // knowledge are durable workspace commitments. `episode` and `episodic` are
+  // two spellings of the same promotion, so they can never disagree.
+  let layer = @base.text(@base.field(value, "layer"))
+  memory_layer(layer)
+  memory_layer_scope(layer, scope)
   let text = @base.text(@base.field(value, "text"))
   if text.is_empty() || text.length() > 4096 || text.contains("\r") { @base.fail("memory_text_invalid") }
   let conditions = @base.strings(@base.field(value, "conditions"))
@@ -320,12 +346,13 @@ fn memory_record(value : Json, id : String) -> Unit raise @base.Fault {
   memory_nullable_time(promoted_at, "promoted_at")
   if episodic && promoted_at == Json::null() { @base.fail("memory_promoted_at_required") }
   if !episodic && promoted_at != Json::null() { @base.fail("memory_promoted_at_unexpected") }
+  if (layer == "episode") != episodic { @base.fail("memory_layer_episodic_mismatch") }
   ignore(match @base.field(value, "use_count") {
     Number(n, ..) if n >= 0.0 && n <= 4294967295.0 && n == n.to_int().to_double() => ()
     _ => @base.fail("memory_use_count_invalid")
   })
   if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources,
-    source_hashes, importance, emotion, episodic) {
+    source_hashes, importance, emotion, episodic, layer) {
     @base.fail("memory_note_hash_mismatch")
   }
   if id != memory_note_id(key, note_hash) { @base.fail("memory_record_identity_mismatch") }
@@ -359,6 +386,156 @@ fn analysis(value : Json) -> Unit raise @base.Fault {
 fn dream_metric_names() -> Array[String] {
   ["pages", "stale_pages", "lint_errors", "lint_warnings",
    "redundant_pages", "uncovered_sources", "sparse_topics", "missing_vectors"]
+}
+
+fn dream_memory_metric_names() -> Array[String] {
+  ["active", "session", "conflicted", "invalid", "drifted", "episodes", "profiles", "prune"]
+}
+
+fn dream_memory_metrics_shape(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, dream_memory_metric_names())
+  for field in dream_memory_metric_names() { dream_metric(@base.field(value, field), field) }
+}
+
+fn dream_memory_delta_shape(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, dream_memory_metric_names())
+  for field in dream_memory_metric_names() {
+    match @base.field(value, field) {
+      Number(n, ..) if n >= -1000000000.0 && n <= 1000000000.0 && n == n.to_int().to_double() => ()
+      _ => raise @base.Fault("dream_memory_delta_invalid: " + field)
+    }
+  }
+}
+
+// Dream notes are proposals distilled during a dream round. They are ledger
+// entries, never a second knowledge store: applying one goes through the normal
+// commit or memory-* path, and the note only records that the host did so.
+pub fn dream_note_content_hash(
+  workspace : Json, round : Json, kind : String, title : String, body : String,
+  inputs : Json, claims : Json,
+) -> String {
+  @base.hex_hash("dream-note-content-v1\n" + @base.canonical(workspace) + "\n" +
+    @base.canonical(round) + "\n" + kind + "\n" + title + "\n" + body + "\n" +
+    @base.canonical(inputs) + "\n" + @base.canonical(claims))
+}
+
+pub fn dream_note_id(content_hash : String) -> String {
+  @base.hex_hash("dream-note-v1\n" + content_hash)
+}
+
+fn dream_note_inputs(value : Json) -> Map[String, Bool] raise @base.Fault {
+  @base.keys(value, ["pages", "notes"])
+  let seen : Map[String, Bool] = Map([])
+  let pages = @base.array(@base.field(value, "pages"))
+  if pages.length() > 64 { @base.fail("dream_note_inputs_invalid") }
+  for row in pages {
+    @base.keys(row, ["id", "hash"])
+    let id = @base.text(@base.field(row, "id"))
+    @base.path(id)
+    if !id.has_prefix("wiki/") { @base.fail("dream_note_page_invalid") }
+    if seen.contains(id) { @base.fail("dream_note_input_duplicate") }
+    if !valid_hash(@base.text(@base.field(row, "hash"))) { @base.fail("dream_note_input_hash_invalid") }
+    seen[id] = true
+  }
+  let notes = @base.array(@base.field(value, "notes"))
+  if notes.length() > 128 { @base.fail("dream_note_inputs_invalid") }
+  for row in notes {
+    @base.keys(row, ["id", "hash"])
+    let id = @base.text(@base.field(row, "id"))
+    if !valid_hash(id) { @base.fail("dream_note_note_invalid") }
+    if seen.contains(id) { @base.fail("dream_note_input_duplicate") }
+    if !valid_hash(@base.text(@base.field(row, "hash"))) { @base.fail("dream_note_input_hash_invalid") }
+    seen[id] = true
+  }
+  seen
+}
+
+fn dream_note_claims(value : Json, inputs : Map[String, Bool]) -> Unit raise @base.Fault {
+  let claims = @base.array(value)
+  if claims.length() > 64 { @base.fail("dream_note_claims_invalid") }
+  for claim in claims {
+    @base.keys(claim, ["text", "evidence"])
+    let text = @base.text(@base.field(claim, "text"))
+    if text.is_empty() || text.length() > 2048 || text.contains("\r") {
+      @base.fail("dream_note_claim_text_invalid")
+    }
+    let evidence = @base.strings(@base.field(claim, "evidence"))
+    if evidence.length() > 16 { @base.fail("dream_note_evidence_invalid") }
+    for id in evidence {
+      if !inputs.contains(id) { @base.fail("dream_note_evidence_unbound: " + id) }
+    }
+  }
+}
+
+fn dream_note_target(value : Json) -> Unit raise @base.Fault {
+  @base.keys(value, ["kind", "id", "hash"])
+  let kind = @base.text(@base.field(value, "kind"))
+  if !["page", "memory"].contains(kind) { @base.fail("dream_note_target_kind_invalid") }
+  let id = @base.text(@base.field(value, "id"))
+  if kind == "page" {
+    @base.path(id)
+    if !id.has_prefix("wiki/") { @base.fail("dream_note_target_id_invalid") }
+  } else if !valid_hash(id) {
+    @base.fail("dream_note_target_id_invalid")
+  }
+  if !valid_hash(@base.text(@base.field(value, "hash"))) { @base.fail("dream_note_target_hash_invalid") }
+}
+
+fn dream_note_record(value : Json, id : String) -> Unit raise @base.Fault {
+  @base.keys(value, ["version", "id", "workspace", "round", "at", "kind", "title", "body",
+    "inputs", "claims", "status", "target", "resolved_at", "content_hash"])
+  if @base.field(value, "version") != Json::number(1.0) {
+    @base.fail("dream_note_version_unsupported")
+  }
+  if !valid_hash(id) || @base.text(@base.field(value, "id")) != id {
+    @base.fail("dream_note_id_invalid")
+  }
+  let workspace = @base.field(value, "workspace")
+  let round = @base.field(value, "round")
+  for field in ["workspace", "round"] {
+    let row = if field == "workspace" { workspace } else { round }
+    if row != Json::null() && !valid_hash(@base.text(row)) { @base.fail("dream_note_" + field + "_invalid") }
+  }
+  event_time(@base.text(@base.field(value, "at")))
+  let kind = @base.text(@base.field(value, "kind"))
+  if !["insight", "consolidation", "episode_candidate", "profile_candidate", "session_summary"].contains(kind) {
+    @base.fail("dream_note_kind_invalid")
+  }
+  let title = @base.text(@base.field(value, "title"))
+  if title.is_empty() || title.length() > 256 || title.contains("\n") || title.contains("\r") {
+    @base.fail("dream_note_title_invalid")
+  }
+  let body = @base.text(@base.field(value, "body"))
+  if body.is_empty() || body.length() > 8192 || body.contains("\r") {
+    @base.fail("dream_note_body_invalid")
+  }
+  let inputs = @base.field(value, "inputs")
+  let input_ids = dream_note_inputs(inputs)
+  let claims = @base.field(value, "claims")
+  dream_note_claims(claims, input_ids)
+  let status = @base.text(@base.field(value, "status"))
+  if !["proposed", "retained", "rejected", "applied"].contains(status) {
+    @base.fail("dream_note_status_invalid")
+  }
+  let target = @base.field(value, "target")
+  let resolved = @base.field(value, "resolved_at")
+  if status == "proposed" {
+    if target != Json::null() || resolved != Json::null() { @base.fail("dream_note_proposed_state_invalid") }
+  } else {
+    event_time(@base.text(resolved))
+    if status == "applied" {
+      if target == Json::null() { @base.fail("dream_note_target_required") }
+      dream_note_target(target)
+    } else if target != Json::null() {
+      @base.fail("dream_note_target_unexpected")
+    }
+  }
+  let content_hash = @base.text(@base.field(value, "content_hash"))
+  if !valid_hash(content_hash) { @base.fail("dream_note_content_hash_invalid") }
+  if content_hash != dream_note_content_hash(workspace, round, kind, title, body, inputs, claims) {
+    @base.fail("dream_note_content_hash_mismatch")
+  }
+  if id != dream_note_id(content_hash) { @base.fail("dream_note_identity_mismatch") }
 }
 
 fn dream_metric(value : Json, field : String) -> Unit raise @base.Fault {
@@ -1521,7 +1698,7 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     @base.keys(value, ["version", "id", "workspace", "scope", "session", "kind", "text",
       "conditions", "sources", "source_hashes", "status", "key", "created_at", "updated_at",
       "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash",
-      "importance", "emotion", "episodic", "promoted_at", "use_count"])
+      "importance", "emotion", "episodic", "promoted_at", "use_count", "layer"])
     let id = string("id")
     let workspace = string("workspace")
     if !valid_hash(id) || !valid_hash(workspace) ||
@@ -1702,7 +1879,8 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(string("updated_at"))
     } else {
     @base.keys(value, ["id", "at", "baseline", "knowledge", "policy", "space", "metrics",
-      "opportunities_hash", "status", "closed_at", "decision", "note", "outcome"])
+      "opportunities_hash", "status", "closed_at", "decision", "note", "outcome",
+      "workspace", "memory_metrics"])
     let id = string("id")
     let baseline = string("baseline")
     if !valid_hash(id) || !valid_hash(baseline) || !valid_hash(string("knowledge")) {
@@ -1714,6 +1892,15 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     dream_policy(@base.field(value, "policy"))
     dream_space_shape(@base.field(value, "space"))
     dream_metrics_shape(@base.field(value, "metrics"))
+    let workspace = @base.field(value, "workspace")
+    let memory_metrics = @base.field(value, "memory_metrics")
+    if workspace == Json::null() {
+      if memory_metrics != Json::null() { @base.fail("dream_memory_metrics_unexpected") }
+    } else {
+      if !valid_hash(@base.text(workspace)) { @base.fail("dream_workspace_invalid") }
+      if memory_metrics == Json::null() { @base.fail("dream_memory_metrics_required") }
+      dream_memory_metrics_shape(memory_metrics)
+    }
     let status = string("status")
     if !["open", "retained", "rejected"].contains(status) { @base.fail("dream_status_invalid") }
     let closed = @base.field(value, "closed_at")
@@ -1728,9 +1915,13 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       event_time(@base.text(closed))
       if @base.text(decision) != status { @base.fail("dream_decision_status_mismatch") }
       if outcome is Object(_) {
-        @base.keys(outcome, ["metrics", "delta", "drivers"])
+        @base.keys(outcome, ["metrics", "delta", "drivers", "memory", "memory_delta"])
         dream_metrics_shape(@base.field(outcome, "metrics"))
         dream_delta(@base.field(outcome, "delta"))
+        let memory = optional_record_field(outcome, "memory").unwrap_or(Json::null())
+        let memory_delta = optional_record_field(outcome, "memory_delta").unwrap_or(Json::null())
+        if memory != Json::null() { dream_memory_metrics_shape(memory) }
+        if memory_delta != Json::null() { dream_memory_delta_shape(memory_delta) }
         let drivers = @base.strings(@base.field(outcome, "drivers"))
         if drivers.length() > 32 { @base.fail("dream_drivers_invalid") }
         for driver in drivers {
@@ -1747,6 +1938,12 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       }
     }
   }
+  } else if entry.path.has_prefix("state/dream-notes/") {
+    let id = string("id")
+    if !valid_hash(id) || entry.path != "state/dream-notes/" + id + ".json" {
+      @base.fail("dream_note_identity_invalid")
+    }
+    dream_note_record(value, id)
   } else if entry.path.has_prefix("state/dream-work/") {
     @base.keys(value, ["id", "round", "baseline", "kind", "subject", "priority", "status",
       "driver", "lease_until", "created_at", "closed_at", "result", "error"])
@@ -1758,7 +1955,9 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
     }
     if entry.path != "state/dream-work/" + id + ".json" { @base.fail("dream_work_identity_invalid") }
     let kind = string("kind")
-    if !["lint", "uncovered_source", "stale_page", "sparse_topic", "missing_vector"].contains(kind) {
+    if !["lint", "uncovered_source", "stale_page", "sparse_topic", "missing_vector",
+      "memory_merge", "memory_prune", "memory_conflict", "memory_source_stale",
+      "memory_promote"].contains(kind) {
       @base.fail("dream_work_kind_invalid")
     }
     let subject = string("subject")
@@ -1829,10 +2028,11 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       "provider-register", "provider-unregister", "refresh", "review-resolve",
       "research-topic", "research-completed", "research-cancelled", "overview-suggest",
       "overview-apply", "ingest", "forget", "memory-submit", "memory-supersede",
-      "memory-archive", "memory-restore", "memory-pin", "memory-use",
+      "memory-promote", "memory-archive", "memory-restore", "memory-pin", "memory-use",
       "impact-open", "impact-resolve", "extraction-submit",
       "dream-open", "dream-close", "dream-work-open", "dream-work-claim",
-      "dream-work-complete", "dream-work-fail", "dream-policy", "evo-saturation",
+      "dream-work-complete", "dream-work-fail", "dream-policy",
+      "dream-note-submit", "dream-note-resolve", "evo-saturation",
       "evo-proactive-open", "evo-proactive-complete", "evo-proactive-fail",
       "evo-proactive-ack", "evo-proactive-reclaim", "evo-proactive-followup",
       "evo-thread-open", "evo-thread-append", "evo-thread-close",
@@ -2119,6 +2319,44 @@ pub fn validate_record(entry : Entry, text : String) -> Unit raise @base.Fault {
       }
       let expected = "state/events/memory-supersede-" + replaced + "-" + memory + ".json"
       if entry.path != expected { @base.fail("memory_event_identity_invalid") }
+    } else if op == "memory-promote" {
+      // Promotion is a supersede with a different name: the old note is
+      // replaced by an episode, so the event binds both ids and the new hash.
+      @base.keys(value, ["op", "memory", "at", "key", "note_hash", "supersedes"])
+      let memory = string("memory")
+      event_hash(memory, "memory_event_id_invalid")
+      event_time(string("at"))
+      let key = string("key")
+      if key.is_empty() || key.length() > 256 || key.contains("\n") || key.contains("\r") {
+        @base.fail("memory_event_key_invalid")
+      }
+      event_hash(string("note_hash"), "memory_event_note_hash_invalid")
+      let replaced = match memory_nullable_hash(@base.field(value, "supersedes"), "supersedes", memory) {
+        None => raise @base.Fault("memory_event_previous_invalid")
+        Some(value) => value
+      }
+      let expected = "state/events/memory-promote-" + replaced + "-" + memory + ".json"
+      if entry.path != expected { @base.fail("memory_event_identity_invalid") }
+    } else if op == "dream-note-submit" {
+      @base.keys(value, ["op", "dream_note", "at"])
+      let id = string("dream_note")
+      event_hash(id, "dream_note_event_id_invalid")
+      event_time(string("at"))
+      let expected = "state/events/dream-note-submit-" + id + "-" +
+        @base.hex_hash(string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_note_event_identity_invalid") }
+    } else if op == "dream-note-resolve" {
+      @base.keys(value, ["op", "dream_note", "status", "at"])
+      let id = string("dream_note")
+      event_hash(id, "dream_note_event_id_invalid")
+      event_time(string("at"))
+      let status = string("status")
+      if !["retained", "rejected", "applied"].contains(status) {
+        @base.fail("dream_note_event_status_invalid")
+      }
+      let expected = "state/events/dream-note-resolve-" + id + "-" +
+        @base.hex_hash(status + "\n" + string("at")) + ".json"
+      if entry.path != expected { @base.fail("dream_note_event_identity_invalid") }
     } else if op == "memory-archive" || op == "memory-restore" {
       @base.keys(value, ["op", "memory", "at"])
       let memory = string("memory")

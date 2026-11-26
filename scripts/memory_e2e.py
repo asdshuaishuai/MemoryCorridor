@@ -596,7 +596,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
                    at="2026-11-01T09:15:00Z", key="cand-pinned")["id"]
     call(root, "memory-pin", workspace=ws, id=keep_id, pinned=True, at="2026-11-01T09:20:00Z")
 
-    candidates = call(root, "memory-candidates", workspace=ws)
+    candidates = call(root, "memory-candidates", workspace=ws, now="2027-11-01T00:00:00Z")
     assert "execution" not in candidates, "a read op must not claim a host action"
     # Earlier blocks already created a near-duplicate pair, so filter to the keys
     # this block owns rather than assuming it is the only group.
@@ -620,7 +620,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     assert not (mine & set(prune)), prune
     assert candidates["counts"]["pinned"] >= 1
     # The same vault state always yields the same candidates.
-    assert call(root, "memory-candidates", workspace=ws) == candidates
+    assert call(root, "memory-candidates", workspace=ws, now="2027-11-01T00:00:00Z") == candidates
 
     # Both surfaces must agree: the seedless view and the seeded prefetch name
     # the same duplicate and keeper for the same pair.
@@ -642,7 +642,7 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
         (root / "exports/candidates.mcpack").read_bytes())
     assert call(round, "unpack", file="imports/candidates.mcpack")["vault_fingerprint"] == \
         call(root, "status", workspace=ws)["fingerprint"]
-    assert call(round, "memory-candidates", workspace=ws) == candidates
+    assert call(round, "memory-candidates", workspace=ws, now="2027-11-01T00:00:00Z") == candidates
     call(round, "rebuild")
     call(round, "verify")
     # Memory notes are catalog state, so a deterministic pack survives a round trip.
@@ -658,13 +658,31 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-memory-") as temp:
     call(target, "rebuild")
     call(target, "verify")
 
+    # M2/M3: weighted ranking needs an explicit clock, and a high-importance
+    # judgment can be promoted to an auditable episode through a supersede.
+    strong = call(root, "memory-submit", kind="decision", scope="project",
+                  workspace=ws, text="提升检查：确认釉色与胎质关联",
+                  conditions=["提升检查"], sources=[],
+                  importance=0.8, at="2026-11-01T10:00:00Z", key="promote")
+    promoted = call(root, "memory-promote", workspace=ws, id=strong["id"],
+                    at="2026-11-01T10:05:00Z")
+    assert promoted["record"]["layer"] == "episode" and promoted["record"]["episodic"]
+    weighted = call(root, "memory-prefetch", workspace=ws, query="提升检查",
+                    rank="weighted", now="2026-11-26T00:00:00Z")
+    assert weighted["rank"] == "weighted" and weighted["notes"]
+    assert weighted["notes"][0]["id"] == promoted["record"]["id"]
+    assert weighted["notes"][0]["tier"] == "core"
+    assert "score_components" in weighted["notes"][0]
+    call(root, "memory-prefetch", workspace=ws, query="提升检查",
+         rank="weighted", error="memory_now_required")
+
     # The assistant export is derived and rebuildable: it lists the workspace in
     # projects.json, writes active project notes as Markdown, and a second run
     # touches nothing.
     exported = call(root, "memory-export", workspace=ws)
     assert exported["notes"] >= 1 and exported["session_notes"] == 0, exported
-    assert (root / ".corridor/memory/projects.json").is_file()
-    exported_files = sorted((root / ".corridor/memory" / ws).glob("*.md"))
+    assert (root / "workspaces/projects.json").is_file()
+    exported_files = sorted((root / "workspaces" / ws / "memory").glob("*.md"))
     assert len(exported_files) == exported["notes"], exported
     assert exported["notes"] and "conditions" in exported_files[0].read_text(encoding="utf-8")
     again = call(root, "memory-export", workspace=ws)

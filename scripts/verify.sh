@@ -13,6 +13,7 @@ python3 scripts/page_lifecycle_e2e.py
 python3 scripts/source_deletion_e2e.py
 python3 scripts/evidence_source_e2e.py
 python3 scripts/memory_e2e.py
+python3 scripts/workspace_layer_e2e.py
 python3 scripts/impact_e2e.py
 python3 scripts/inbox_e2e.py
 python3 scripts/topics_e2e.py

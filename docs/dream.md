@@ -9,7 +9,7 @@
 | 来源 | 核心机制 | 本工程落点 |
 | --- | --- | --- |
 | [Dream-RSI](https://arxiv.org/abs/2609.14858) | 把历史发现树当 replay simulator，在模拟器里低成本「做梦」评估探索策略，再上线并扩充模拟器 | `dream-plan`：只读地在**已实现的知识状态**上汇总确定性改进机会与指标；宿主无需付出在线试错成本就能看到「哪里值得改」 |
-| [RSI-Anything](https://arxiv.org/abs/2610.13912) | 更新后的策略-模型对要过组件/兼容性检查才保留 | `dream-close` 的 `retained` 门禁：当前 `lint_errors` 与 `uncovered_sources` 相对轮次基线不得增加，否则 `dream_compat_lint_regression` / `dream_compat_evidence_loss` |
+| [RSI-Anything](https://arxiv.org/abs/2610.13912) | 更新后的策略-模型对要过组件/兼容性检查才保留 | `dream-close` 的 `retained` 门禁：当前 `lint_errors` 与 `uncovered_sources` 相对轮次基线不得增加，否则 `dream_compat_lint_regression` / `dream_compat_evidence_loss`；绑定工作区的轮次还要求 `conflicted/invalid/drifted/prune` 不增加 |
 | [Harness²](https://arxiv.org/abs/2610.14224) | 任务级 propose/probe/compose + 跨任务经验抽取的持续改进 harness | `state/dreams` 轮次账本 + `dream-list`：每轮绑定指纹、策略、机会哈希与前后 metrics 差值（`outcome.delta`），供跨轮经验汇总 |
 
 三篇仅参考**思想**；未复制任何代码或提示词（净室约束）。
@@ -22,6 +22,7 @@
 {
   "id": "…64 hex…", "at": "2026-11-11T01:00:00Z",
   "baseline": "…目录指纹…", "policy": {"cosine_floor": 0.995}, "space": null,
+  "workspace": null, "memory_metrics": null,
   "metrics": {"pages": 2, "stale_pages": 0, "lint_errors": 0, "lint_warnings": 0,
               "redundant_pages": 0, "uncovered_sources": 1, "sparse_topics": 0,
               "missing_vectors": 0},
@@ -31,6 +32,11 @@
 ```
 
 状态机只有 `open → retained | rejected`；关闭后不可重开（同参重放除外）。
+绑定 `workspace` 时，`memory_metrics` 冻结该工作区的 `active/session/conflicted/invalid/drifted/episodes/profiles/prune`（其中债务类指标只统计 `project` 笔记，会话级债务单独计数、不参与 retained 门禁，因为轮次没有可用的 session id）；`dream-work-open` 会把 `memory_merge/memory_prune/memory_conflict/memory_source_stale/memory_promote` 机会加入同一工单队列；记忆应用仍由宿主调用 `memory-*`。
+
+## 梦境笔记（state/dream-notes）
+
+`dream-note-submit` 把一轮梦提炼出的 `insight`/`consolidation`/`episode_candidate`/`profile_candidate`/`session_summary` 写成内容寻址记录：输入页面/记忆在提交时冻结为 `{id,hash}`，`claims[].evidence` 必须引用这些输入；`id` 由内容哈希派生，同内容重放、不写第二条。`dream-note-list` 按 workspace/round/status 过滤；`dream-note-resolve` 只能把 `proposed` 处理为 `retained`/`rejected`/`applied`，`applied` 必须带页面或活动记忆的匹配 hash，漂移即拒绝。笔记只是提案账本：知识应用走 `commit`，记忆应用走 `memory-submit/supersede/promote`，引擎绝不从笔记直接写 `wiki/` 或 `state/memory`。
 事件成对写入 `state/events/dream-open-*` / `state/events/dream-close-*`，路径
 绑定记录身份，与其它持久工单同一套目录/事务/pack 规则。
 

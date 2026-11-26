@@ -1697,6 +1697,106 @@ MUTATIONS = [
     None => ()
   }''',
      "evo followup e2e", "evo_followup_e2e.py"),
+
+    ("the note hash must bind the layer",
+     "core/records.mbt",
+     '''    (if episodic { "episodic" } else { "plain" }) + "\\n" + layer)''',
+     '''    (if episodic { "episodic" } else { "plain" }))''',
+     "memory layer is identity-bearing and constrained by scope"),
+
+    ("a session summary may not be a project note",
+     "core/records.mbt",
+     '''  if layer == "session_summary" && scope != "session" {
+    @base.fail("memory_layer_scope_invalid")
+  }''',
+     '''  if false {
+    @base.fail("memory_layer_scope_invalid")
+  }''',
+     "memory record layer rules are enforced without trusting the request"),
+
+    ("episode and episodic must agree",
+     "core/records.mbt",
+     '''  if (layer == "episode") != episodic { @base.fail("memory_layer_episodic_mismatch") }''',
+     '''  if false { @base.fail("memory_layer_episodic_mismatch") }''',
+     "memory record layer rules are enforced without trusting the request"),
+
+    ("weighted ranking must actually weight importance",
+     "agent/memory.mbt",
+     '''  let score = 0.35 * relevance + 0.30 * strength + 0.35 * importance''',
+     '''  let score = 0.35 * relevance + 0.30 * strength + 0.0 * importance''',
+     "weighted prefetch balances relevance, strength and importance"),
+
+    ("weighted ranking must require an explicit clock",
+     "agent/memory.mbt",
+     '''  if rank == "weighted" && now is None {
+    @base.fail("memory_now_required: weighted ranking needs an explicit now")
+  }''',
+     '''  if false {
+    @base.fail("memory_now_required: weighted ranking needs an explicit now")
+  }''',
+     "weighted prefetch balances relevance, strength and importance"),
+
+    ("prune candidates must require an explicit clock",
+     "agent/memory.mbt",
+     '''  let now = match optional(request, "now") {
+    None => raise @base.Fault("memory_now_required: candidates need an explicit now")''',
+     '''  let now = match optional(request, "now") {
+    None => "2026-11-26T00:00:00Z"''',
+     "memory candidates never proposes a pinned or already-settled note"),
+
+    ("core notes must be protected from prune candidates",
+     "agent/memory.mbt",
+     '''  if note.pinned || importance >= 0.8 || note.layer == "episode" {''',
+     '''  if note.pinned || importance >= 1.1 || note.layer == "episode" {''',
+     "three-tier decay protects core and slows important notes"),
+
+    ("normal notes need a real decay threshold",
+     "agent/memory.mbt",
+     '''    let threshold = if tier == "important" { 0.15 } else { 0.25 }''',
+     '''    let threshold = if tier == "important" { 0.15 } else { 0.0 }''',
+     "three-tier decay protects core and slows important notes"),
+
+    ("episodic promotion needs the documented threshold",
+     "agent/memory.mbt",
+     '''  if importance < 0.7 && intensity < 0.7 {''',
+     '''  if importance < 0.99 && intensity < 0.99 {''',
+     "episodic promotion writes a new core record and preserves history"),
+
+    ("dream claims may not cite undeclared inputs",
+     "core/records.mbt",
+     '''      if !inputs.contains(id) { @base.fail("dream_note_evidence_unbound: " + id) }''',
+     '''      if false { @base.fail("dream_note_evidence_unbound: " + id) }''',
+     "dream note submit binds inputs, replays, and resolves through an applied target"),
+
+    ("an applied dream target must still match its memory hash",
+     "agent/dream_notes.mbt",
+     '''    if note.note_hash != hash { @base.fail("dream_note_target_drift: " + id) }''',
+     '''    if false { @base.fail("dream_note_target_drift: " + id) }''',
+     "dream note submit binds inputs, replays, and resolves through an applied target"),
+
+    ("workspace rounds must gate memory debt on retention",
+     "agent/dream.mbt",
+     '''      (Some(before), Some(after)) => dream_memory_compatible(before, after)''',
+     '''      (Some(_before), Some(_after)) => ()''',
+     "a workspace dream round carries memory metrics and gates retention"),
+
+    ("workspace wiki selection must read the namespace",
+     "agent/workspace_wiki.mbt",
+     '''    if prefix != "" && entry.sources.any(source => source.has_prefix(prefix)) {
+      selected[entry.id] = true
+    }''',
+     '''    if false && entry.sources.any(source => source.has_prefix(prefix)) {
+      selected[entry.id] = true
+    }''',
+     "workspace layer isolation, projection, idempotence and deletion recovery passed",
+     "workspace_layer_e2e.py"),
+
+    ("memory export must not erase the workspace wiki",
+     "agent/memory_export.mbt",
+     '''    directories.push("workspaces/" + workspace + "/memory")''',
+     '''    directories.push("workspaces/" + workspace)''',
+     "workspace layer isolation, projection, idempotence and deletion recovery passed",
+     "workspace_layer_e2e.py"),
 ]
 
 

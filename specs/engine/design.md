@@ -6,6 +6,8 @@
 2. **知识页只经 llm_wiki 两步工单产生。** `scan/plan → context → analysis-submit → 宿主 staged 页 → commit`；LLM 在宿主侧执行，引擎零模型、只校验后落盘。检索、记忆、导出都不能生成或改写 `wiki/` 页面。
 3. **OKF 是互操作基线，不是存储格式。** 页面 frontmatter 保持 OKF 风格 + `sources[]`；`import`/`export` 双向可用，`pack` 明确不是 OKF。任何新增导出面必须说明它是否 OKF，不能含糊并存。
 4. **检索是派生层。** 分块、向量、RRF、缓存与增量核对只读知识页与目录；缓存损坏可重建，检索命中不升级为知识。详见 [检索子系统](../docs/retrieval.md)。
+5. **记忆与知识权威分离。** 记忆本体只在 `state/memory/`，工作区 `workspaces/<id>/memory` 是 `memory-export` 的派生投影；梦境笔记在 `state/dream-notes/`，只是提案。记忆/梦境不写 `wiki/`，不改变目录指纹。
+6. **工作区投影是派生分层。** `workspaces/<id>/wiki`、`claims/`、`manifest.json` 与 `workspaces/index.mbt.md` 由只读 `workspace-wiki-plan` + 宿主脚本生成；`workspaces/` 不进入全局目录、检索、`pack` 或 commit 来源。删除后全局 `verify` 仍绿，投影可按需重建。
 
 回归门：`scripts/e2e.py`（两步摄入）与 `scripts/interop_e2e.py`（OKF 往返）保持绿；任一失效视为偏离基线，不得合并。
 

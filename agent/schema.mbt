@@ -10,17 +10,19 @@ pub fn input_schema(t : Tool) -> Json {
   let required : Array[String] = if t.name == "session-open" { ["vault"] } else { [] }
   for name in t.fields {
     let ty = if ["pages", "items", "queries", "capabilities", "sources", "conditions",
-      "kinds", "ids"].contains(name) { "array" }
+      "kinds", "ids", "claims"].contains(name) { "array" }
       else if name == "archived" || name == "pinned" || name == "enabled" { "boolean" }
       else { match name {
         "limit" | "budget" | "hops" | "start" | "end" | "step" | "seed" => "integer"
         "cosine_floor" | "salience" | "valence" | "outcome" => "number"
-        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" | "params" | "body" | "emotion" => "object"
+        "analysis" | "space" | "query_vector" | "vector_candidates" | "request" | "result" | "policy" | "params" | "body" | "emotion" | "inputs" | "target" => "object"
         _ => "string"
       } }
     properties[name] = if ty == "array" {
       { "type": ty, "items": if ["queries", "capabilities", "sources", "conditions",
-        "kinds", "ids"].contains(name) { { "type": "string" } } else { { "type": "object" } } }
+        "kinds", "ids"].contains(name) ||
+        (t.name == "workspace-wiki-plan" && name == "pages") { { "type": "string" } }
+        else { { "type": "object" } } }
     } else if ty == "integer" {
       if t.name == "evo-init" && name == "seed" {
         { "type": ty, "minimum": 0, "maximum": 4294967295.0 }
@@ -39,6 +41,7 @@ pub fn input_schema(t : Tool) -> Json {
         ("dream-policy", "min_opportunities") => (0, 500)
         ("dream-policy", "max_open_rounds") => (1, 8)
         ("memory-prefetch", "limit") => (1, 50)
+        ("workspace-wiki-plan", "limit") => (1, 500)
         ("read-source", "start") => (0, 16777216)
         ("read-source", "end") => (0, 16777216)
         ("evo-observe", "step") => (1, 2147483647)
@@ -56,7 +59,15 @@ pub fn input_schema(t : Tool) -> Json {
     if !["purpose", "view", "bundle", "limit", "budget", "hops", "query_vector", "vector_candidates", "provider", "seed", "key", "dedup", "spread", "conditions", "archived", "kinds",
       "start", "end", "query", "page", "ids", "cosine_floor", "policy",
       "params", "enabled", "subject", "outcome", "due_after_seconds", "min_opportunities", "importance", "emotion",
-      "max_open_rounds", "session"].contains(name) &&
+      "max_open_rounds", "session", "layer", "rank", "target",
+      "inputs", "claims", "namespace"].contains(name) &&
+      !(name == "round" && ["dream-note-submit", "dream-note-list"].contains(t.name)) &&
+      !(name == "pages" && t.name == "workspace-wiki-plan") &&
+      !(name == "status" && t.name == "dream-note-list") &&
+      !(name == "now" && t.name == "memory-prefetch") &&
+      !(name == "workspace" && ["dream-plan", "dream-open", "dream-note-submit",
+        "dream-note-list"].contains(t.name)) &&
+      !(name == "at" && t.name == "dream-plan") &&
       !(name == "workspace" && ["status", "stats", "inbox", "memory-export"].contains(t.name)) &&
       !(name == "context_token" && t.name != "draft-submit") &&
       !(name == "at" && t.name == "evo-policy") &&

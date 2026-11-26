@@ -218,15 +218,44 @@ fn dream_opportunities(
 
 pub fn dream_plan(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  @base.keys(request, ["op", "vault", "request_id", "space", "limit"])
+  @base.keys(request, ["op", "vault", "request_id", "space", "limit", "workspace", "at"])
   let space = dream_space(request)
   let limit = integer(request, "limit", 50, 1, 500)
+  let workspace = dream_note_workspace(store, request)
+  let at = match optional(request, "at") {
+    None | Some(Null) => None
+    Some(value) => {
+      let text = @base.text(value)
+      if @base.utc_epoch(text) is None { @base.fail("dream_time_invalid") }
+      Some(text)
+    }
+  }
+  if workspace is Some(_) && at is None {
+    @base.fail("dream_time_required: a workspace plan needs an explicit at")
+  }
   let metrics = dream_metrics(store, entries, space)
-  let all = dream_opportunities(store, entries, space)
+  let knowledge = dream_opportunities(store, entries, space)
+  let memory_metrics = match (workspace, at) {
+    (Some(value), Some(now)) => Some(dream_memory_metrics(store, entries, value, now))
+    _ => None
+  }
+  let memory_opportunities = match (workspace, at) {
+    (Some(value), Some(now)) => dream_memory_opportunities(store, entries, value, now)
+    _ => []
+  }
+  let all = knowledge + memory_opportunities
   let listed = all[:Int::min(limit, all.length())]
   {
     "space": dream_space_json(space),
+    "workspace": dream_note_workspace_json(workspace),
     "metrics": dream_metrics_json(metrics),
+    "memory": match memory_metrics {
+      None => Json::null()
+      Some(value) => {
+        "metrics": value,
+        "opportunities": memory_opportunities.to_json(),
+      }
+    },
     "opportunities": listed.to_json(),
     "remaining": all.length() - listed.length(),
     "report_hash": @base.hex_hash(@base.canonical(all.to_json())),
@@ -244,15 +273,17 @@ fn dream_path(id : String) -> String {
   "state/dreams/" + id + ".json"
 }
 
-fn dream_id(baseline : String, policy : Json, space : Json, at : String) -> String {
-  @base.hex_hash("dream-v1\n" + baseline + "\n" + @base.canonical(policy) + "\n" + @base.canonical(space) + "\n" + at)
+fn dream_id(baseline : String, policy : Json, space : Json, workspace : Json, at : String) -> String {
+  @base.hex_hash("dream-v2\n" + baseline + "\n" + @base.canonical(policy) + "\n" +
+    @base.canonical(space) + "\n" + @base.canonical(workspace) + "\n" + at)
 }
 
 pub fn dream_open(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @vault.verify(store, entries)
-  @base.keys(request, ["op", "vault", "request_id", "baseline", "policy", "space", "at"])
+  @base.keys(request, ["op", "vault", "request_id", "baseline", "policy", "space", "workspace", "at"])
   let baseline = @base.text(@base.field(request, "baseline"))
   let space = dream_space(request)
+  let workspace = dream_note_workspace(store, request)
   let policy = match optional(request, "policy") {
     None => {
       let empty : Map[String, Json] = Map([])
@@ -264,8 +295,9 @@ pub fn dream_open(store : @vault.Storage, entries : Array[@core.Entry], request 
   let at = @base.text(@base.field(request, "at"))
   dream_time(at)
   let space_json = dream_space_json(space)
+  let workspace_json = dream_note_workspace_json(workspace)
   let knowledge = dream_knowledge_fingerprint(entries)
-  let id = dream_id(baseline, policy, space_json, at)
+  let id = dream_id(baseline, policy, space_json, workspace_json, at)
   let path = dream_path(id)
   // Replay is checked BEFORE the baseline comparison: opening a round writes a
   // state record and therefore moves the vault fingerprint, so the original
@@ -280,7 +312,16 @@ pub fn dream_open(store : @vault.Storage, entries : Array[@core.Entry], request 
   }
   if baseline != @vault.fingerprint(entries) { @base.fail("dream_stale_baseline") }
   let metrics = dream_metrics(store, entries, space)
-  let all = dream_opportunities(store, entries, space)
+  let knowledge_opportunities = dream_opportunities(store, entries, space)
+  let memory_metrics = match workspace {
+    None => None
+    Some(value) => Some(dream_memory_metrics(store, entries, value, at))
+  }
+  let memory_opportunities = match workspace {
+    None => []
+    Some(value) => dream_memory_opportunities(store, entries, value, at)
+  }
+  let all = knowledge_opportunities + memory_opportunities
   let record : Json = {
     "id": id,
     "at": at,
@@ -290,6 +331,11 @@ pub fn dream_open(store : @vault.Storage, entries : Array[@core.Entry], request 
     "space": dream_space_json(space),
     "metrics": dream_metrics_json(metrics),
     "opportunities_hash": @base.hex_hash(@base.canonical(all.to_json())),
+    "workspace": workspace_json,
+    "memory_metrics": match memory_metrics {
+      None => Json::null()
+      Some(value) => value
+    },
     "status": "open",
     "closed_at": Json::null(),
     "decision": Json::null(),
@@ -349,12 +395,34 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
   let base_metrics = @base.field(record, "metrics")
   let record_space = dream_space_from(@base.field(record, "space"))
   let current = dream_metrics(store, entries, record_space)
+  let round_workspace = match optional(record, "workspace") {
+    Some(String(value)) => Some(value)
+    _ => None
+  }
+  let base_memory = match optional(record, "memory_metrics") {
+    Some(Json::Null) => None
+    Some(value) => Some(value)
+    None => None
+  }
+  // Compare memory debt on the round's own clock. Recomputing decay at close
+  // time would turn the passage of time into a retention failure; new notes are
+  // still visible as conflicts/invalid/drifted state changes.
+  let round_at = @base.text(@base.field(record, "at"))
+  let current_memory = match round_workspace {
+    None => None
+    Some(value) => Some(dream_memory_metrics(store, entries, value, round_at))
+  }
   // Compatibility checks (RSI-Anything): retention may not regress lint or
-  // lose evidence coverage relative to the round's baseline snapshot.
+  // lose evidence coverage relative to the round's baseline snapshot. A
+  // workspace round carries the same rule for memory decay/debt.
   if decision == "retained" {
     if current.lint_errors > dream_json_int(base_metrics, "lint_errors") { @base.fail("dream_compat_lint_regression") }
     if current.uncovered_sources > dream_json_int(base_metrics, "uncovered_sources") {
       @base.fail("dream_compat_evidence_loss")
+    }
+    match (base_memory, current_memory) {
+      (Some(before), Some(after)) => dream_memory_compatible(before, after)
+      _ => ()
     }
     // RSI: unattended work is not consent. A round with open/claimed tasks or
     // unanswered judgments can be rejected but never retained as done.
@@ -386,6 +454,14 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
     "sparse_topics": current.sparse_topics - dream_json_int(base_metrics, "sparse_topics"),
     "missing_vectors": current.missing_vectors - dream_json_int(base_metrics, "missing_vectors"),
   }
+  let memory_outcome = match current_memory {
+    None => Json::null()
+    Some(value) => value
+  }
+  let memory_delta = match (base_memory, current_memory) {
+    (Some(before), Some(after)) => dream_memory_delta(before, after)
+    _ => Json::null()
+  }
   let updated : Json = {
     "id": id,
     "at": @base.text(@base.field(record, "at")),
@@ -395,11 +471,14 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
     "space": @base.field(record, "space"),
     "metrics": base_metrics,
     "opportunities_hash": @base.text(@base.field(record, "opportunities_hash")),
+    "workspace": @base.field(record, "workspace"),
+    "memory_metrics": @base.field(record, "memory_metrics"),
     "status": decision,
     "closed_at": at,
     "decision": decision,
     "note": note,
     "outcome": { "metrics": dream_metrics_json(current), "delta": delta,
+      "memory": memory_outcome, "memory_delta": memory_delta,
       "drivers": drivers.to_json() },
   }
   let content = @base.canonical(updated)
@@ -417,7 +496,9 @@ pub fn dream_close(store : @vault.Storage, entries : Array[@core.Entry], request
       sha256: @base.hex_hash(event_content), sources: [], stale: false })
   @vault.commit(store, @vault.fingerprint(entries), next, changes)
   { "id": id, "status": decision, "replayed": false,
-    "outcome": { "metrics": dream_metrics_json(current), "delta": delta, "drivers": drivers.to_json() } }
+    "outcome": { "metrics": dream_metrics_json(current), "delta": delta,
+      "memory": memory_outcome, "memory_delta": memory_delta,
+      "drivers": drivers.to_json() } }
 }
 
 pub fn dream_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json raise @base.Fault {
@@ -447,6 +528,8 @@ pub fn dream_list(store : @vault.Storage, entries : Array[@core.Entry]) -> Json 
       "status": status,
       "baseline": @base.text(@base.field(record, "baseline")),
       "metrics": @base.field(record, "metrics"),
+      "workspace": @base.field(record, "workspace"),
+      "memory_metrics": @base.field(record, "memory_metrics"),
       "decision": @base.field(record, "decision"),
       "closed_at": @base.field(record, "closed_at"),
       "outcome": @base.field(record, "outcome"),
@@ -505,9 +588,15 @@ fn dream_kind_priority(kind : String) -> Int {
   match kind {
     "lint" => 1
     "uncovered_source" => 2
+    "memory_conflict" => 2
+    "memory_source_stale" => 2
     "stale_page" => 3
+    "memory_merge" => 3
     "sparse_topic" => 4
-    _ => 5
+    "memory_promote" => 4
+    "missing_vector" => 5
+    "memory_prune" => 6
+    _ => 9
   }
 }
 
@@ -604,6 +693,10 @@ pub fn dream_work_open(store : @vault.Storage, entries : Array[@core.Entry], req
     @base.fail("dream_stale_baseline")
   }
   let space = dream_space_from(@base.field(round_row, "space"))
+  let round_workspace = match optional(round_row, "workspace") {
+    Some(String(value)) => Some(value)
+    _ => None
+  }
   let rows = dream_work_rows(store, entries)
   let existing : Map[String, Bool] = Map([])
   let mut pending = 0
@@ -613,7 +706,22 @@ pub fn dream_work_open(store : @vault.Storage, entries : Array[@core.Entry], req
     if status == "pending" || status == "claimed" { pending = pending + 1 }
   }
   if pending >= DREAM_WORK_MAX_PENDING { @base.fail("dream_work_backpressure") }
-  let opportunities = dream_opportunities(store, entries, space)
+  let mut opportunities = dream_opportunities(store, entries, space)
+  match round_workspace {
+    None => ()
+    Some(value) => {
+      let memory = dream_memory_opportunities(store, entries, value,
+        dream_row_text(round_row, "at"))
+      opportunities = opportunities + memory
+      let keyed : Array[(Int, String, Json)] = []
+      for item in opportunities {
+        keyed.push((dream_kind_priority(@base.text(@base.field(item, "kind"))),
+          @base.text(@base.field(item, "id")), item))
+      }
+      keyed.sort_by((a, b) => if a.0 != b.0 { a.0 - b.0 } else { @base.compare(a.1, b.1) })
+      opportunities = keyed.map(row => row.2)
+    }
+  }
   let changes : Array[@vault.Change] = []
   let mut next = entries
   let created : Array[String] = []
@@ -1100,6 +1208,27 @@ pub fn dream_retro_op(store : @vault.Storage, entries : Array[@core.Entry]) -> J
       if status == "failed" { dream_retro_inc(driver_failed, driver) }
     }
   }
+  let mut note_total = 0
+  let mut note_proposed = 0
+  let mut note_retained = 0
+  let mut note_rejected = 0
+  let mut note_applied = 0
+  let note_kinds : Map[String, Int] = Map([])
+  for row in dream_note_rows(store, entries) {
+    note_total = note_total + 1
+    let status = dream_row_text(row, "status")
+    if status == "proposed" { note_proposed = note_proposed + 1 }
+    if status == "retained" { note_retained = note_retained + 1 }
+    if status == "rejected" { note_rejected = note_rejected + 1 }
+    if status == "applied" { note_applied = note_applied + 1 }
+    dream_retro_inc(note_kinds, dream_row_text(row, "kind"))
+  }
+  let note_kind_names = note_kinds.keys().to_array()
+  note_kind_names.sort_by(@base.compare)
+  let note_kind_rows : Array[Json] = []
+  for name in note_kind_names {
+    note_kind_rows.push({ "kind": name, "count": note_kinds.get(name).unwrap_or(0) })
+  }
   let driver_names = driver_seen.keys().to_array()
   driver_names.sort_by(@base.compare)
   let drivers : Array[Json] = []
@@ -1136,6 +1265,9 @@ pub fn dream_retro_op(store : @vault.Storage, entries : Array[@core.Entry]) -> J
     "work": { "total": work_total, "pending": work_pending, "claimed": work_claimed,
       "done": work_done, "failed": work_failed },
     "work_by_kind": kinds.to_json(),
+    "dream_notes": { "total": note_total, "proposed": note_proposed,
+      "retained": note_retained, "rejected": note_rejected, "applied": note_applied },
+    "dream_notes_by_kind": note_kind_rows.to_json(),
     "last": if last_id == "" { Json::null() } else {
       { "id": last_id, "closed_at": last_closed, "decision": last_decision,
         "delta": last_delta, "drivers": last_drivers }
@@ -1155,6 +1287,9 @@ pub fn dream(store : @vault.Storage, entries : Array[@core.Entry], request : Jso
     "dream-work-complete" => dream_work_complete(store, entries, request)
     "dream-work-fail" => dream_work_fail(store, entries, request)
     "dream-work-list" => dream_work_list(store, entries)
+    "dream-note-submit" => dream_note_submit(store, entries, request)
+    "dream-note-list" => dream_note_list(store, entries, request)
+    "dream-note-resolve" => dream_note_resolve(store, entries, request)
     "dream-policy" => dream_policy_op(store, entries, request)
     "dream-due" => dream_due_op(store, entries, request)
     "dream-retro" => dream_retro_op(store, entries)

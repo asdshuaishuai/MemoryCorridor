@@ -202,6 +202,28 @@ def main():
         reopened = call("dream-due", at="2026-11-12T00:00:07Z")
         assert reopened["due"] is True, reopened
 
+        # 10. dream notes (续八十二): proposals with content-addressed replay and
+        # an explicit terminal decision. Applying one is still a separate host
+        # action, so `applied` without a target must be refused.
+        note_req = dict(kind="insight", title="釉色与胎质",
+                        body="把两条记录放在一起，断代线索更稳定。",
+                        inputs={"pages": [], "notes": []}, claims=[],
+                        at="2026-11-12T00:00:08Z")
+        note = call("dream-note-submit", **note_req)
+        assert note["status"] == "proposed", note
+        replay_note = call("dream-note-submit", **note_req)
+        assert replay_note["replayed"] is True and replay_note["id"] == note["id"]
+        listed_notes = call("dream-note-list")
+        assert listed_notes["counts"]["total"] >= 1, listed_notes
+        call("dream-note-resolve", id=note["id"], status="applied",
+             at="2026-11-12T00:00:09Z", error="dream_note_target_required")
+        resolved = call("dream-note-resolve", id=note["id"], status="retained",
+                        at="2026-11-12T00:00:09Z")
+        assert resolved["status"] == "retained", resolved
+        call("dream-note-resolve", id=note["id"], status="rejected",
+             at="2026-11-12T00:00:10Z", error="dream_note_terminal")
+        assert call("dream-retro")["dream_notes"]["retained"] >= 1
+
     print("dream e2e: deterministic dream plan, fingerprint-bound rounds, "
           "compatibility-gated retention and tamper branches passed")
     return 0

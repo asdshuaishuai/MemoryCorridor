@@ -4,8 +4,9 @@
 // publishes a read-only view for global assistants (Siri, OpenClaw-style
 // agents). This is derived data: every file is rebuilt from the authoritative
 // `state/workspaces/` and `state/memory/` records, never read back by the
-// engine, and never part of the catalog fingerprint. Deleting `index/` loses
-// nothing; running `memory-export` again restores it.
+// engine, and never part of the catalog fingerprint. The export lives in the
+// workspace layer (`workspaces/<id>/memory`), beside the derived workspace
+// wiki, and deleting it loses nothing; `memory-export` restores it.
 //
 // Only active project-scope notes are exported. Session notes are intentionally
 // counted but not written: their content belongs to one conversation and would
@@ -40,6 +41,7 @@ fn memory_export_markdown(note : MemoryNote, entries : Array[@core.Entry]) -> St
   line("workspace", note.workspace.to_json()) +
   line("kind", note.kind.to_json()) +
   line("scope", note.scope.to_json()) +
+  line("layer", note.layer.to_json()) +
   line("status", note.status.to_json()) +
   line("conditions", note.conditions.to_json()) +
   line("sources", note.sources.to_json()) +
@@ -94,17 +96,18 @@ pub fn memory_export(
       let note = memory_from_json(@base.parse(@vault.required(store, entry.path)))
       if note.scope == "session" { session_notes += 1 }
       if note.status != "active" || note.scope != "project" { continue }
-      let path = ".corridor/memory/" + workspace + "/" + note.id + ".md"
+      let path = "workspaces/" + workspace + "/memory/" + note.id + ".md"
       expected[path] = memory_export_markdown(note, entries)
       owners[path] = workspace
       notes += 1
     }
   }
-  // `.corridor/memory/projects.json` always lists every registered workspace, even when a
-  // single workspace was requested: it is the assistant's map of the vault.
-  let projects_path = ".corridor/memory/projects.json"
+  // `workspaces/projects.json` always lists every registered workspace, even
+  // when a single workspace was requested: it is the assistant's map of the
+  // vault. It is not a catalog entry.
+  let projects_path = "workspaces/projects.json"
   let projects_text = memory_export_projects_text(workspaces)
-  (store.mkdirs)(".corridor/memory")
+  (store.mkdirs)("workspaces")
   let mut written = 0
   let mut unchanged = 0
   match (store.read)(projects_path) {
@@ -120,7 +123,7 @@ pub fn memory_export(
         (store.write)(path, content); written += 1
       }
       None => {
-        (store.mkdirs)(".corridor/memory/" + owners[path])
+        (store.mkdirs)("workspaces/" + owners[path] + "/memory")
         (store.write)(path, content)
         written += 1
       }
@@ -130,24 +133,25 @@ pub fn memory_export(
   // workspace-scoped export only reconciles its own directory so one workspace
   // cannot erase another's view.
   let mut removed = 0
-  let directories : Array[String] = match target {
-    None => [".corridor/memory"]
-    Some(workspace) => [".corridor/memory/" + workspace]
+  // Reconcile only each workspace's `memory/` directory. The sibling derived
+  // wiki, claims and `workspaces/index.mbt.md` belong to the host generator and
+  // must never be erased by a memory export.
+  let directories : Array[String] = []
+  for row in workspaces {
+    let workspace = @base.text(@base.field(row, "id"))
+    if target is Some(only) && only != workspace { continue }
+    directories.push("workspaces/" + workspace + "/memory")
   }
   for directory in directories {
     let existing = try { (store.files)(directory) } catch { _ => [] }
     for path in existing {
-      if expected.contains(path) || path == ".corridor/memory/projects.json" { continue }
-      match target {
-        None => ()
-        Some(workspace) => if !path.has_prefix(".corridor/memory/" + workspace + "/") { continue }
-      }
+      if expected.contains(path) { continue }
       (store.remove)(path)
       removed += 1
     }
   }
   {
-    "directory": ".corridor/memory".to_json(),
+    "directory": "workspaces".to_json(),
     "projects": projects_path.to_json(),
     "workspaces": workspaces.length().to_json(),
     "notes": notes.to_json(),

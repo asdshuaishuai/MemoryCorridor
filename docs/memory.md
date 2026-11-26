@@ -7,7 +7,7 @@ MemoryCorridor 的核心不调用模型，也不推断「什么值得记住」�
 | A5 | MemoryCorridor |
 | --- | --- |
 | `MEMORY.md` 概览层，会话开始时进入上下文 | `purpose.md`（目标）与 `wiki/overview.md`（综述），由 `memory-prefetch` 的 `overview` 字段始终返回 |
-| 详细笔记保存具体事实与适用条件 | `state/memory/<工作区ID>/<笔记ID>.json` 记忆笔记（记录 v3），`conditions` 是身份的一部分；`note_hash` v4 同时绑定工作区/可见范围/会话与 `importance`/`emotion`/`episodic` |
+| 详细笔记保存具体事实与适用条件 | `state/memory/<工作区ID>/<笔记ID>.json` 记忆笔记（记录 v4），`conditions` 是身份的一部分；`note_hash` v5 同时绑定工作区/可见范围/会话、`layer` 与 `importance`/`emotion`/`episodic` |
 | Workspace Memory / User Memory | 工作区级：`workspace` 必填且须 `workspace-open` 登记，`scope:"project"` 长期可见、`scope:"session"` 仅同一会话可见；跨 vault 的用户级记忆需要独立机制，未实现即拒绝 |
 | Memory Prefetch：BM25 找候选，预取 Agent 再筛选 | `memory-prefetch` 只做候选排序与有界装配，`selection:"host_required"`；种子可以是 `query` 或某个知识页（用其 title+body 确定性派生），对应「结合当前对话筛选」 |
 | 交互结束后由提取 Agent 决定保留什么 | `memory-submit` 由外部 Agent 调用；引擎校验、去重、落库 |
@@ -29,12 +29,19 @@ MemoryCorridor 的核心不调用模型，也不推断「什么值得记住」�
 
 | 切片 | 状态 | 内容 |
 | --- | --- | --- |
-| M1 元数据与身份 | 已交付（续八十） | 记录 v3 / `note_hash` v4：可选 `importance`（0..1）、`emotion`（valence/arousal/dominance 各 −1..1 + 可选标签）、`episodic`/`promoted_at`；`use_count` 由 `memory-use` 累加；supersede 继承未覆盖元数据。只存宿主提供的值，不推断情感。 |
-| M2 加权预取 | 未实现 | `memory-prefetch rank=weighted`，显式 `now`；相关性 0.35 + 强度 0.30 + 重要性 0.35，返回分项；默认仍 BM25。 |
-| M4 衰减建议 | 未实现 | `memory-candidates` 的 prune 按加权分数排序并报告分项；仍只建议，不自动删除。 |
-| M3 情景提升 | 未实现 | `memory-promote` 按已存 importance/情感峰值确定性提升并写事件，supersede 保留旧记录。 |
+| M1 元数据与身份 | 已交付（续八十） | 记录 v4 / `note_hash` v5：可选 `importance`（0..1）、`emotion`（valence/arousal/dominance 各 −1..1 + 可选标签）、`episodic`/`promoted_at`、`layer`（judgment/session_summary/episode/profile）；`use_count` 由 `memory-use` 累加；supersede 继承未覆盖元数据。只存宿主提供的值，不推断情感。 |
+| M2 加权预取 | 已交付（续八十二） | `memory-prefetch rank=weighted`，必须显式 `now`；相关性 0.35 + 强度 0.30 + 重要性 0.35，返回 `score_components` 与 `tier`；默认仍 BM25。 |
+| M4 衰减建议 | 已交付（续八十二） | `memory-candidates` 必须显式 `now`；core 层（pinned/importance≥0.8/episode）永不提名，important 层慢衰减，normal 层快衰减；prune 返回 `tier/decay/strength/score/age_days` 与 `never_used/decayed`，仍只建议，不自动删除。 |
+| M3 情景提升 | 已交付（续八十二） | `memory-promote`：importance≥0.7 或情感强度≥0.7 才通过；supersede 生成 `layer=episode`/`episodic=true` 的新记录并写 `memory-promote` 事件，旧记录保留；已提升记录拒绝重放。 |
 
-L1 原始对话缓冲与 L2 摘要生成留在宿主（引擎零模型）；L2 摘要可作为 `scope=session` 笔记存入。L4 用户模型由宿主维护，稳定的偏好/目标可作为 `project` 笔记。`memory-export` 输出到 `.corridor/memory/`，是派生的助理视图，不是知识页、不是 OKF，也不是第二份权威。
+L1 原始对话缓冲与 L2 摘要生成留在宿主（引擎零模型）；L2 摘要可作为 `scope=session` 且 `layer=session_summary` 的笔记存入。L4 用户模型由宿主维护，稳定的偏好/目标可作为 `project` 笔记载入 `layer=profile`。`memory-export` 输出到工作区分层 `workspaces/<工作区ID>/memory/`（附 `workspaces/projects.json`），是派生的助理视图，不是知识页、不是 OKF，也不是第二份权威。
+
+## 工作区分层与梦境 RSI
+
+- `workspaces/<id>/memory/` 是 `state/memory/` 的只读投影，由 `memory-export` 重建；`workspaces/<id>/wiki/`、`claims/`、`manifest.json` 与 `workspaces/index.mbt.md` 由宿主脚本 `scripts/workspace_wiki.py` 基于只读 `workspace-wiki-plan` 生成。它们全部是派生物，不进入全局目录、检索、`pack` 或工单来源。
+- 全局知识库仍是唯一权威：工作区投影只按 `raw/<namespace>/` 来源、显式页面与一跳共享页选取，不新增页面 `workspace` 字段，也不会把派生页反向写回 `wiki/`。
+- 梦境记录写入 `state/dream-notes/<id>.json`：`dream-note-submit` 绑定输入页面/记忆哈希与 claims，`dream-note-list` 过滤，`dream-note-resolve` 只接受 retained/rejected/applied；applied 必须指向真实页面或记忆的匹配哈希。梦境只产出提案，知识应用仍走 `commit`、记忆应用仍走 `memory-*`。
+- `dream-plan`/`dream-open`/`dream-work-open` 可绑定已登记工作区：计划与轮次记录该工作区的记忆 metrics，工单队列加入 `memory_merge`/`memory_prune`/`memory_conflict`/`memory_source_stale`/`memory_promote`；`dream-close` 的 retained 兼容门拒绝冲突/失效/漂移/剪枝债务相对基线上升。
 
 ## 变化影响：Diff Engine 的承接
 
@@ -83,7 +90,7 @@ A5 的 Proposal Engine 汇集上下文变化、已完成交互和知识更新的
 仍未承接：A5 的主动候选生成——由 Proposal Agent 判断「是否值得建议」，是模型判断，按项目约束归外部宿主。除此之外，A5 中能由无模型引擎确定性完成的机制都已落地：终身上下文与预取、Diff Engine、Autodream 的冲突保留与去冗余、Proposal Engine 的筛查与 Inbox、Context 索引的主题分层、Workspace Wiki 的引用与版本历史。`quality-audit` 与 `review-resolve` 提供 HumanGate 审核债务与人工决定机制，是主动候选生成的现成承接点。
 ## 设计约束
 
-- **适用条件是一等身份。** `note_hash`（v4）绑定 `workspace/scope/session/kind/text/conditions/sources/source_hashes` 以及可选的 `importance`/`emotion`/`episodic`。同一句话在不同条件下成立就是两条笔记，修正条件会生成新记录而不是静默改写旧记录；同一句话在两个工作区也各自独立，跨工作区既不重复也不冲突。
+- **适用条件是一等身份。** `note_hash`（v5）绑定 `workspace/scope/session/kind/text/conditions/sources/source_hashes`、`layer` 以及可选的 `importance`/`emotion`/`episodic`。同一句话在不同条件下成立就是两条笔记，修正条件会生成新记录而不是静默改写旧记录；同一句话在两个工作区也各自独立，跨工作区既不重复也不冲突。
 - **修正不丢历史。** supersede 在同一事务中写新记录、把旧记录标为 `superseded` 并建立 `superseded_by`/`supersedes` 双向链。旧 JSON 永久保留，参与 pack 与审计。
 - **合并是判断，不是默认行为。** 不同 `key` 但判断相同（`kind`/`scope`/`text`/`conditions`，不含来源绑定）返回 `memory_duplicate_text` 并指出已有记录 id，由宿主决定 supersede 还是归档。冲突分组同样只看判断：两条笔记说同一件事就不是冲突，哪怕它们引用不同来源。重复判定只针对同一工作区内的 `active` 笔记——归档后的笔记仍然可恢复，不该挡住同一判断的重新提交；工作区之外的笔记对本次判定不存在。
 - **失效是读取时计算，且区分两种原因。** state 条目不能携带目录 `sources`，因此来源绑定记在 JSON 内。`forget` 后来源缺失或撤销 → `invalid_sources`；来源被整体改写并重新登记 → `drifted_sources`（与记录时的 SHA-256 不同）。后者曾经查不出来：笔记会继续自称「可核对」，而它引用的证据已经变成完全不同的内容。evidence 靠 `source_quote` 校验能抓到这种漂移，记忆层现在靠 `source_hashes` 也能。没有 `source_hashes` 的旧记录按路径判定，仍然可读。
@@ -97,7 +104,7 @@ A5 的 Proposal Engine 汇集上下文变化、已完成交互和知识更新的
 这个检查工具本身也出过两次错，都值得记下：一是 `"failed:" in output` 会匹配 `failed: 0`，导致五条 e2e 变异全是假阳性——上轮报告「全部捕获」时其实一条都没捕获；二是 e2e 用的是已编译的二进制，不重新 build 就等于测上一个版本；修正后还发现跑完变异会在二进制里留下最后一个缺陷，因此结尾统一重新 build。修正后 15/15 真正被捕获，且跑完不会给后续命令留下脏状态。还有一类坑：某个变异「抓不到」可能说明代码本来就对——`inbox_counts` 的排序在调用链里是冗余的（上游已排序），直接删掉它行为不变。这时该改的是测试：改成直接调用这个函数并故意传入未排序输入，让它真的守护自己的契约，而不是靠调用链兜底。**验证工具和被测代码一样需要被怀疑。**
 
 - **只读不挂 execution。** `execution:"host_required"` 表示「引擎记下了计划，等宿主执行」，只属于写操作。`memory-read`、`read-source` 等读操作曾误返该字段，会让通用客户端以为还欠引擎一个动作；现已移除，`read-source` 的 binary 分支用更精确的 `extraction_required` 表达「需要外部抽取」。`agent/sources_wbtest.mbt` 直接驱动这些 op 断言字段缺席（而不是只查字典），并已验证：把字段加回 `memory-read` 后测试立即失败。
-- **陪伴元数据由宿主提供，引擎不推断。** `importance`（0..1）与 `emotion`（valence/arousal/dominance + 标签）随提交写入并进入身份哈希；`memory-supersede` 未显式覆盖时继承旧值。`use_count` 是非身份的用量信号，由 `memory-use` 单调累加；情感权重与重要性如何影响排序留待 M2。
+- **陪伴元数据由宿主提供，引擎不推断。** `importance`（0..1）与 `emotion`（valence/arousal/dominance + 标签）随提交写入并进入身份哈希；`layer` 同样进入身份，`episode` 只能由 `memory-promote` 产生。`memory-supersede` 未显式覆盖时继承旧值。`use_count` 是非身份的用量信号，由 `memory-use` 单调累加。加权排序、三层衰减与情景提升分别在 M2/M4/M3 交付。
 - **预取不写入，使用由宿主显式回报。** `memory-prefetch` 是只读操作，不更新任何状态。A5 的 Autodream 要归档「长期未用于前台交互」的记忆，这需要一个引擎无法从读取行为推断的信号，因此由 `memory-use` 批量登记 `last_used_at`；`memory-list` 返回该字段，宿主据此决定归档对象，`pinned` 则保护低频但重要的记忆。
 
 ## 典型流程
@@ -119,6 +126,6 @@ A5 的 Proposal Engine 汇集上下文变化、已完成交互和知识更新的
 
 ## 验证
 
-`scripts/memory_e2e.py` 覆盖工作区登记与作用域化提交、重放、重复拒绝、supersede 链、归档与恢复、pinned 保护、来源漂移失效、冲突分组与解除、similar 合并不掩盖冲突、page 种子预取、非法 kind/scope/条件/来源、孤儿事件文件、状态指纹不变，以及 pack/unpack 往返。`agent/memory_wbtest.mbt` 覆盖身份派生、JSON 往返、记录与事件字典的拒绝路径、工作区/会话可见性（跨工作区不可见、同判断两库独立、未登记拒绝）和工具 schema 边界；`agent/transaction_safety_wbtest.mbt` 覆盖每个发布点的中断恢复与外部编辑冲突。`scripts/inbox_e2e.py` 与 `record_validation_e2e.py` 验证聚合入口只汇总给定工作区、省略时不列记忆条目。
+`scripts/memory_e2e.py` 覆盖工作区登记与作用域化提交、重放、重复拒绝、supersede 链、归档与恢复、pinned 保护、来源漂移失效、冲突分组与解除、similar 合并不掩盖冲突、page 种子预取、非法 kind/scope/条件/来源、孤儿事件文件、状态指纹不变，以及 pack/unpack 往返；`scripts/workspace_layer_e2e.py` 覆盖工作区记忆/ wiki 投影、全局检索与 pack 隔离、派生层删除后全局 verify 与重建幂等。`agent/memory_wbtest.mbt` 覆盖身份派生、JSON 往返、记录与事件字典的拒绝路径、工作区/会话可见性（跨工作区不可见、同判断两库独立、未登记拒绝）、layer 规则、加权预取、三层衰减、情景提升和工具 schema 边界；`agent/dream_notes_wbtest.mbt` 覆盖梦境笔记输入哈希、重放、applied 目标漂移、工作区轮次与记忆兼容门；`agent/transaction_safety_wbtest.mbt` 覆盖每个发布点的中断恢复与外部编辑冲突。`scripts/inbox_e2e.py` 与 `record_validation_e2e.py` 验证聚合入口只汇总给定工作区、省略时不列记忆条目。
 
-其余承接层各有自己的 e2e：`impact_e2e.py`（漂移检测、幂等重放、resolve/reopen、批量事务与 pack 往返）、`inbox_e2e.py`（汇总、去重、drift 归并、排空）、`topics_e2e.py`（语义层与材料层分离）、`page_history_e2e.py`（版本时间线与 pack 往返）、`read_source_e2e.py`（元数据、字节区间、binary 抽取、截断与 evidence 锚点核对）、`unregistered_e2e.py`（未登记文件检测）。全部由 `./scripts/verify.sh` 执行。
+分级门禁：`scripts/quick_verify.sh` 跑 `moon check/test` 与 `e2e.py`/`interop_e2e.py`/`retrieval_e2e.py`/`memory_e2e.py`/`dream_e2e.py`/`workspace_layer_e2e.py`；全量 `scripts/verify.sh`（含 249 条 mutation 与 WASM/Web 面）只在发布/夜间/CI 执行。其余承接层各有自己的 e2e：`impact_e2e.py`（漂移检测、幂等重放、resolve/reopen、批量事务与 pack 往返）、`inbox_e2e.py`（汇总、去重、drift 归并、排空）、`topics_e2e.py`（语义层与材料层分离）、`page_history_e2e.py`（版本时间线与 pack 往返）、`read_source_e2e.py`（元数据、字节区间、binary 抽取、截断与 evidence 锚点核对）、`unregistered_e2e.py`（未登记文件检测）。全部由 `./scripts/verify.sh` 执行。

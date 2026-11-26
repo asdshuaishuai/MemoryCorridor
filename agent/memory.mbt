@@ -225,6 +225,96 @@ fn memory_emotion_request(request : Json) -> MemoryEmotion? raise @base.Fault {
   }
 }
 
+fn memory_layer_request(request : Json) -> String raise @base.Fault {
+  let layer = match optional(request, "layer") {
+    None => "judgment"
+    Some(value) => @base.text(value)
+  }
+  if !["judgment", "session_summary", "episode", "profile"].contains(layer) {
+    raise @base.Fault("memory_layer_unsupported: " + layer)
+  }
+  layer
+}
+
+fn memory_layer_scope(layer : String, scope : String) -> Unit raise @base.Fault {
+  if layer == "session_summary" && scope != "session" {
+    @base.fail("memory_layer_scope_invalid")
+  }
+  if (layer == "profile" || layer == "episode") && scope != "project" {
+    @base.fail("memory_layer_scope_invalid")
+  }
+}
+
+// Retrieval strength is a deliberately simple deterministic model, not a
+// model inference: relevance is bounded BM25, usage counts foreground reports,
+// and emotion only extends the half-life (it never invents relevance).
+priv struct MemoryWeight {
+  bm25 : Double
+  relevance : Double
+  usage : Double
+  intensity : Double
+  half_life_days : Double
+  age_days : Double
+  decay : Double
+  strength : Double
+  importance : Double
+  score : Double
+  tier : String
+}
+
+fn memory_intensity(note : MemoryNote) -> Double {
+  match note.emotion {
+    None => 0.0
+    Some(value) => {
+      let valence = value.valence.abs()
+      let arousal = value.arousal.abs()
+      if valence > arousal { valence } else { arousal }
+    }
+  }
+}
+
+// Three tiers only; a note may be important without being protected. `core`
+// is never a prune candidate; the other tiers differ only in decay speed.
+fn memory_tier(note : MemoryNote) -> String {
+  let importance = note.importance.unwrap_or(0.0)
+  if note.pinned || importance >= 0.8 || note.layer == "episode" {
+    "core"
+  } else if importance >= 0.5 || memory_intensity(note) >= 0.5 {
+    "important"
+  } else {
+    "normal"
+  }
+}
+
+fn memory_weight(note : MemoryNote, bm25 : Double, now_epoch : Int) -> MemoryWeight {
+  // Absent importance is neutral for ranking so a host that supplies no
+  // companion metadata is not silently penalised; the tier classifier still
+  // treats absence as "not explicitly important".
+  let importance = note.importance.unwrap_or(0.5)
+  let intensity = memory_intensity(note)
+  let created = @base.utc_epoch(note.created_at).unwrap_or(now_epoch)
+  let age_seconds = if now_epoch > created { now_epoch - created } else { 0 }
+  let age_days = age_seconds.to_double() / 86400.0
+  let half_life_days = 30.0 * (1.0 + 3.0 * importance + 2.0 * intensity)
+  let decay = 1.0 / (1.0 + age_days / half_life_days)
+  let count = note.use_count.to_double()
+  let usage = (count + 1.0) / (count + 2.0)
+  let relevance = if bm25 > 0.0 { bm25 / (1.0 + bm25) } else { 0.0 }
+  let strength = decay * usage
+  let score = 0.35 * relevance + 0.30 * strength + 0.35 * importance
+  { bm25, relevance, usage, intensity, half_life_days, age_days, decay, strength,
+    importance, score, tier: memory_tier(note) }
+}
+
+fn memory_weight_json(weight : MemoryWeight) -> Json {
+  { "bm25": weight.bm25.to_json(), "relevance": weight.relevance.to_json(),
+    "usage": weight.usage.to_json(), "intensity": weight.intensity.to_json(),
+    "half_life_days": weight.half_life_days.to_json(),
+    "age_days": weight.age_days.to_json(), "decay": weight.decay.to_json(),
+    "strength": weight.strength.to_json(), "importance": weight.importance.to_json(),
+    "score": weight.score.to_json() }
+}
+
 pub(all) struct MemoryNote {
   id : String
   // The registered workspace this note belongs to. Notes from another
@@ -234,6 +324,10 @@ pub(all) struct MemoryNote {
   // `project` notes are visible throughout the workspace; `session` notes only
   // with the matching session id.
   scope : String
+  // `judgment` (default), `session_summary`, `episode` or `profile`. The layer
+  // is identity-bearing: promotion writes a new record instead of mutating the
+  // old one, so the pre-promotion judgment stays auditable.
+  layer : String
   session : String?
   text : String
   conditions : Array[String]
@@ -271,11 +365,12 @@ pub impl ToJson for MemoryNote with to_json(self) {
     Some(text) => text.to_json()
   }
   {
-    "version": 3,
+    "version": 4,
     "id": self.id,
     "workspace": self.workspace,
     "kind": self.kind,
     "scope": self.scope,
+    "layer": self.layer,
     "session": nullable(self.session),
     "text": self.text,
     "conditions": self.conditions.to_json(),
@@ -306,7 +401,7 @@ pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
   @base.keys(value, ["version", "id", "workspace", "kind", "scope", "session", "text",
     "conditions", "sources", "source_hashes", "status", "key", "created_at", "updated_at",
     "archived_at", "superseded_by", "supersedes", "pinned", "last_used_at", "note_hash",
-    "importance", "emotion", "episodic", "promoted_at", "use_count"])
+    "importance", "emotion", "episodic", "promoted_at", "use_count", "layer"])
   // Records written before source version pinning simply have no hashes; they
   // fall back to path-only validity and stay readable.
   let source_hashes = match optional(value, "source_hashes") {
@@ -322,7 +417,13 @@ pub fn memory_from_json(value : Json) -> MemoryNote raise @base.Fault {
   }
   {
     id: text("id"), workspace: text("workspace"), kind: text("kind"),
-    scope: text("scope"), session: nullable("session"), text: text("text"),
+    scope: text("scope"),
+    // Records written before layering existed are ordinary judgments.
+    layer: match optional(value, "layer") {
+      None => "judgment"
+      Some(other) => @base.text(other)
+    },
+    session: nullable("session"), text: text("text"),
     conditions: @base.strings(@base.field(value, "conditions")),
     sources: @base.strings(@base.field(value, "sources")),
     source_hashes,
@@ -551,6 +652,18 @@ pub fn memory_conflicts(store : @vault.Storage, entries : Array[@core.Entry], re
 pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry], request : Json) -> Json raise @base.Fault {
   @vault.verify(store, entries)
   let scope = memory_scope(store, request, false)
+  // Decay is an arithmetic claim, so it requires the same explicit clock as
+  // weighted prefetch. Reading the system time would make the recommendation
+  // unreproducible and every test time-dependent.
+  let now = match optional(request, "now") {
+    None => raise @base.Fault("memory_now_required: candidates need an explicit now")
+    Some(value) => {
+      let text = @base.text(value)
+      if @base.utc_epoch(text) is None { @base.fail("memory_now_invalid: " + text) }
+      text
+    }
+  }
+  let now_epoch = @base.utc_epoch(now).unwrap()
   let rows = memory_rows_unchecked(store, entries, scope.workspace, scope.session)
   let conflicted = memory_conflicted(rows)
   let active = rows.filter(n => n.status == "active")
@@ -601,7 +714,6 @@ pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry], r
   for note in by_id {
     if in_merge.get(note.id).unwrap_or(false) { continue }
     if note.pinned { continue }
-    if note.last_used_at is Some(_) { continue }
     // A note in an unresolved conflict is the host's to confirm, so proposing it
     // for pruning would pre-empt that decision and double up with
     // `memory-conflicts`.
@@ -610,11 +722,35 @@ pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry], r
     // deleting, and `inbox` already proposes that debt.
     if !invalid_memory_sources(note, entries).is_empty() { continue }
     if !drifted_memory_sources(note, entries).is_empty() { continue }
+    let tier = memory_tier(note)
+    // Core notes (pinned, highly important, or promoted episodes) are never
+    // pruning candidates. The other tiers differ only in how slowly they decay,
+    // so a long-idle note can still be nominated with its age visible.
+    if tier == "core" { continue }
+    let weight = memory_weight(note, 0.0, now_epoch)
+    let threshold = if tier == "important" { 0.15 } else { 0.25 }
+    if weight.strength >= threshold { continue }
+    let last_used = match note.last_used_at {
+      None => Json::null()
+      Some(value) => value.to_json()
+    }
     prune.push({ "id": note.id, "key": note.key, "kind": note.kind,
-      "scope": note.scope, "created_at": note.created_at, "last_used_at": Json::null(),
-      "pinned": false, "reason": "never_used" })
+      "scope": note.scope, "layer": note.layer,
+      "created_at": note.created_at, "last_used_at": last_used,
+      "pinned": false, "tier": tier.to_json(),
+      "importance": match note.importance {
+        None => Json::null()
+        Some(value) => value.to_json()
+      },
+      "decay": weight.decay.to_json(), "strength": weight.strength.to_json(),
+      "score": weight.score.to_json(), "age_days": weight.age_days.to_json(),
+      "reason": (if note.last_used_at is None { "never_used" } else { "decayed" }).to_json() })
   }
+  let tiers = { "core": active.filter(n => memory_tier(n) == "core").length().to_json(),
+    "important": active.filter(n => memory_tier(n) == "important").length().to_json(),
+    "normal": active.filter(n => memory_tier(n) == "normal").length().to_json() }
   { "merge": merge.to_json(), "prune": prune.to_json(),
+    "now": now.to_json(), "tiers": tiers,
     "counts": { "merge": merge.length(), "prune": prune.length(),
       "conflicted": conflicted.length(),
       "pinned": active.filter(n => n.pinned).length(),
@@ -922,7 +1058,7 @@ pub fn memory_restore(
 
 fn memory_write(
   store : @vault.Storage, entries : Array[@core.Entry], workspace : String,
-  note_scope : String, session : String?, kind : String, body : String,
+  note_scope : String, session : String?, layer : String, kind : String, body : String,
   conditions : Array[String], sources : Array[String],
   importance : Double?, emotion : MemoryEmotion?, episodic : Bool, promoted_at : String?,
   use_count : Int, at : String, key : String, previous : MemoryNote?, event_op : String,
@@ -938,7 +1074,8 @@ fn memory_write(
     Some(value) => value.to_json()
   }
   let digest = @core.memory_note_hash(workspace, note_scope, session_text, kind, body,
-    conditions, sources, source_hashes, importance_json, memory_emotion_json(emotion), episodic)
+    conditions, sources, source_hashes, importance_json, memory_emotion_json(emotion), episodic,
+    layer)
   let id = @core.memory_note_id(key, digest)
   let path = memory_path(workspace, id)
   let rows = memory_rows(store, entries, workspace, session)
@@ -978,7 +1115,7 @@ fn memory_write(
     None => ()
   }
   let record : MemoryNote = {
-    id, workspace, kind, scope: note_scope, session, text: body, conditions, sources,
+    id, workspace, kind, scope: note_scope, layer, session, text: body, conditions, sources,
     status: "active", key, created_at: at, updated_at: at, archived_at: None,
     source_hashes,
     superseded_by: None, supersedes: previous.map(p => p.id),
@@ -991,6 +1128,8 @@ fn memory_write(
   let content = @base.canonical(record.to_json())
   let event_path = if event_op == "memory-supersede" {
     "state/events/memory-supersede-" + previous.unwrap().id + "-" + id + ".json"
+  } else if event_op == "memory-promote" {
+    "state/events/memory-promote-" + previous.unwrap().id + "-" + id + ".json"
   } else {
     "state/events/memory-submit-" + id + ".json"
   }
@@ -1047,7 +1186,12 @@ pub fn memory_submit(
     n.scope == note_scope && n.session == scope.session)
   if active.length() > 1 { @base.fail("memory_key_ambiguous: " + key) }
   let previous = if active.is_empty() { None } else { Some(active[0]) }
-  memory_write(store, entries, scope.workspace, note_scope, scope.session, kind,
+  let layer = memory_layer_request(request)
+  if layer == "episode" {
+    @base.fail("memory_layer_promote_required: run memory-promote")
+  }
+  memory_layer_scope(layer, note_scope)
+  memory_write(store, entries, scope.workspace, note_scope, scope.session, layer, kind,
     @base.text(@base.field(request, "text")),
     memory_strings(request, "conditions"), memory_strings(request, "sources"),
     importance, emotion, false, None, 0,
@@ -1081,11 +1225,41 @@ pub fn memory_supersede(
     None => old.emotion
     Some(_) => memory_emotion_request(request)
   }
-  memory_write(store, entries, scope.workspace, old.scope, old.session, old.kind,
+  memory_write(store, entries, scope.workspace, old.scope, old.session, old.layer, old.kind,
     @base.text(@base.field(request, "text")),
     memory_strings(request, "conditions"), memory_strings(request, "sources"),
     importance, emotion, old.episodic, old.promoted_at, old.use_count,
     @base.text(@base.field(request, "at")), key, Some(old), "memory-supersede")
+}
+
+// M3 episodic promotion: a judgment strong enough to become an episode is
+// written as a new record, never mutated in place. The pre-promotion note stays
+// superseded (and therefore auditable), while the episode is protected as core
+// memory and becomes eligible for dream consolidation. The engine only checks
+// the host-supplied importance/affect thresholds; it does not infer salience.
+pub fn memory_promote(
+  store : @vault.Storage, entries : Array[@core.Entry], request : Json,
+) -> Json raise @base.Fault {
+  @vault.verify(store, entries)
+  let scope = memory_scope(store, request, false)
+  let id = @base.text(@base.field(request, "id"))
+  memory_id(id)
+  let old = memory_load(store, scope.workspace, id)
+  if !memory_visible(old, scope.session) { @base.fail("entry_not_found: " + id) }
+  if old.status == "superseded" { @base.fail("memory_superseded_note_refused") }
+  if old.status == "archived" { @base.fail("memory_archived_note_refused") }
+  if old.episodic || old.layer == "episode" { @base.fail("memory_already_episodic") }
+  let importance = old.importance.unwrap_or(0.0)
+  let intensity = memory_intensity(old)
+  if importance < 0.7 && intensity < 0.7 {
+    @base.fail("memory_promotion_threshold: importance or emotion intensity must reach 0.7")
+  }
+  let at = @base.text(@base.field(request, "at"))
+  memory_time(at)
+  memory_time_order(at, old)
+  memory_write(store, entries, scope.workspace, old.scope, old.session, "episode",
+    old.kind, old.text, old.conditions, old.sources, old.importance, old.emotion,
+    true, Some(at), old.use_count, at, old.key, Some(old), "memory-promote")
 }
 
 // A5-style prefetch: rank durable notes against the incoming request and hand
@@ -1135,6 +1309,36 @@ pub fn memory_prefetch(
     }
     None => 10
   }
+  // `bm25` is the historical behaviour and stays the default. `weighted`
+  // combines bounded relevance with strength and importance, but only when the
+  // host supplies the clock explicitly: scoring must never read the system
+  // time, or the same request would stop being reproducible.
+  let rank = match optional(request, "rank") {
+    None => "bm25"
+    Some(value) => {
+      let value = @base.text(value)
+      if !["bm25", "weighted"].contains(value) { @base.fail("memory_rank_unsupported: " + value) }
+      value
+    }
+  }
+  let now = match optional(request, "now") {
+    None => None
+    Some(value) => {
+      let text = @base.text(value)
+      if @base.utc_epoch(text) is None { @base.fail("memory_now_invalid: " + text) }
+      Some(text)
+    }
+  }
+  if rank == "weighted" && now is None {
+    @base.fail("memory_now_required: weighted ranking needs an explicit now")
+  }
+  if rank != "weighted" && now is Some(_) {
+    @base.fail("memory_now_unexpected: now is only used by weighted ranking")
+  }
+  let now_epoch = match now {
+    Some(value) => @base.utc_epoch(value).unwrap()
+    None => 0
+  }
   let archived = match optional(request, "archived") {
     Some(value) => @base.boolean(value)
     None => false
@@ -1164,9 +1368,28 @@ pub fn memory_prefetch(
     documents.push({ id: note.id, title: note.kind, body: haystack,
       title_terms: @index.tokens(note.kind), body_terms: @index.tokens(haystack) })
   }
-  let hits = @index.search_index(@index.build_index(documents), query, limit~)
+  // Weighted ranking has to see every lexical candidate before cutting to the
+  // requested limit; BM25 keeps its exact historical candidate window.
+  let search_limit = if rank == "weighted" { documents.length() } else { limit }
+  let hits = @index.search_index(@index.build_index(documents), query, limit=search_limit)
   let by_id : Map[String, MemoryNote] = Map([])
   for note in rows { by_id[note.id] = note }
+  let weights : Map[String, MemoryWeight] = Map([])
+  if rank == "weighted" {
+    for hit in hits {
+      match by_id.get(hit.id) {
+        None => ()
+        Some(note) => weights[hit.id] = memory_weight(note, hit.score, now_epoch)
+      }
+    }
+    hits.sort_by((a, b) => {
+      let left = weights.get(a.id).unwrap()
+      let right = weights.get(b.id).unwrap()
+      if left.score > right.score { -1 } else if left.score < right.score { 1 } else {
+        @base.compare(a.id, b.id)
+      }
+    })
+  }
   let conflicted = memory_conflicted(rows)
   let notes : Array[Json] = []
   let surfaced : Array[MemoryNote] = []
@@ -1178,6 +1401,7 @@ pub fn memory_prefetch(
     match by_id.get(hit.id) {
       None => ()
       Some(note) => {
+        if rank == "weighted" && notes.length() >= limit { break }
         let estimate = @base.estimate_tokens(note.text)
         if !notes.is_empty() && used + estimate > 4096 { truncated = true; continue }
         // A5's Autodream merges duplicate information instead of letting a
@@ -1206,7 +1430,17 @@ pub fn memory_prefetch(
         surfaced.push(note)
         match memory_view(note, entries, conflicted.get(note.id).unwrap_or(false)) {
           Object(fields) => {
-            fields["score"] = hit.score.to_json()
+            match weights.get(note.id) {
+              None => {
+                fields["score"] = hit.score.to_json()
+                fields["tier"] = memory_tier(note).to_json()
+              }
+              Some(weight) => {
+                fields["score"] = weight.score.to_json()
+                fields["tier"] = weight.tier.to_json()
+                fields["score_components"] = memory_weight_json(weight)
+              }
+            }
             fields["excerpt"] = hit.excerpt.to_json()
             notes.push(Json::object(fields))
           }
@@ -1232,6 +1466,11 @@ pub fn memory_prefetch(
   }
   {
     "query": query,
+    "rank": rank,
+    "now": match now {
+      None => Json::null()
+      Some(value) => value.to_json()
+    },
     "query_seed": match page_seed {
       None => "query".to_json()
       Some(id) => ("page:" + id).to_json()

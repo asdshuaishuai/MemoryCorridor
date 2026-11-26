@@ -8,7 +8,7 @@ budget:
   official Unix installer (the repository does not vendor the toolchain, but
   pins the version so CI matches the locally verified gate). The gate includes
   the wasm service e2e (`scripts/wasm_service_e2e.py`), which bootstraps a
-  wasmtime venv on the runner, and the 235-entry mutation gate. Budget:
+  wasmtime venv on the runner, and the 249-entry mutation gate. Budget:
   `timeout-minutes: 300`.
 - `release` independently builds the deterministic native release archive with
   `scripts/release.py`, re-checks it with `scripts/release_e2e.py`, and uploads
@@ -21,6 +21,13 @@ exhausted by the release step after the verify step had already succeeded,
 reporting the whole run as `cancelled`. A run that hits a job budget is still
 reported as `cancelled`, which `gh run watch --exit-status` wrongly treats as
 success — check `gh run view` conclusions, not the watcher exit code.
+
+Local changes use the tiered gate: `scripts/quick_verify.sh` runs `moon check
+--deny-warn`, `moon test`, the native build, and the focused e2e set
+(`e2e.py`, `interop_e2e.py`, `retrieval_e2e.py`, `memory_e2e.py`,
+`dream_e2e.py`, `workspace_layer_e2e.py`). The full `scripts/verify.sh`
+(including the mutation matrix and all WASM/Web faces) is reserved for release,
+nightly and CI; it is not the per-change default.
 
 Cross-platform delivery is the wasm service runtime's job: the engine module
 runs under any WASM runtime with a thin host (see `docs/wasm.md`), so the
