@@ -193,6 +193,37 @@ test "features share grams across a truncated identifier" {
   assert_true(dot(exact, unrelated) < 0.2)
 }
 
+test "host page vectors replace the algorithm lane" {
+  let (store, _, _, entries) = fixture()
+  let collection = build(store, entries)
+  // The query matches no text token; only the host's page ranking can produce
+  // vector-lane hits, in exactly the order the host supplied.
+  let (hits, lanes) = search_hybrid(entries, collection, "zzzz", 5,
+    system_pages=Some(["beta", "alpha"]))
+  assert_eq(lanes.text, "on")
+  assert_eq(lanes.vector, "system")
+  assert_eq(lanes.reason, "provider_vectors")
+  assert_eq(hits.length(), 2)
+  assert_eq(hits[0].page, "beta")
+  assert_eq(hits[0].vector_rank, 1)
+  assert_eq(hits[0].text_rank, 0)
+  assert_eq(hits[1].page, "alpha")
+  assert_eq(hits[1].vector_rank, 2)
+  // Namespace filtering also applies to host page ids.
+  let (filtered, filtered_lanes) = search_hybrid(entries, collection, "zzzz", 5,
+    prefix="raw/missing", system_pages=Some(["beta"]))
+  assert_eq(filtered.length(), 0)
+  assert_eq(filtered_lanes.vector, "system")
+  assert_eq(filtered_lanes.reason, "no_matching_vectors")
+  // An empty host page list is a system lane with nothing to use, not a
+  // silent fallback to the algorithm lane.
+  let (none, none_lanes) = search_hybrid(entries, collection, "zzzz", 5,
+    system_pages=Some([]))
+  assert_eq(none.length(), 0)
+  assert_eq(none_lanes.vector, "system")
+  assert_eq(none_lanes.reason, "no_matching_vectors")
+}
+
 test "the vector lane recovers a chunk the text lane misses" {
   let (store, files, _, entries) = fixture()
   // A single Latin run: BM25 keeps whole alphanumeric tokens, so the truncated

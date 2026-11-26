@@ -15,6 +15,7 @@
 - 内核：MoonRetrieve 0.6.0 分块 BM25（Apache-2.0，纯 MoonBit）。页面按 800 字符切块、80 字符重叠，块 id 为 `<页面ID>#<序号>`；块表只存哈希，不内嵌正文。
 - 缓存：`.corridor/fts.json`（制品 v5，含算法、输入指纹、页面绑定、块表与序列化 BM25）与旁车 `.corridor/fts.vectors.bin`（逐块 256 维 f32 小端，主文件用 `vectors_sha256` 钉住）。两者都是派生缓存，可整目录删除重建。
 - 向量兜底：字符 2/3 元组 + 拉丁词元的签名哈希特征，256 维、L2 归一化、精确扫描；与文本路按固定 `k=60` 的 RRF 融合，同分按块 id 定序。响应的 `lanes` 如实报告 `text:"on"`、`vector:"algo"`、`reason:"no_system_engine"`。
+- 系统向量路：`retrieve` 可选 `query_vector` + `provider`。宿主自行生成查询向量，引擎按 provider 注册校验后，把向量路切到页面级系统向量（每个命中页映射到首块 `<page>#0`，保留宿主返回的排序），`lanes` 报 `vector:"system"`、`reason:"provider_vectors"` 并回显 `vector_space`；无可用页面向量时仍报 `vector:"system"`、`reason:"no_matching_vectors"`。缺省（不传 `query_vector`）继续算法兜底，绝不静默切换。核心不调用 OS/模型，只校验与计算。
 - 接口：`retrieve` 返回块级命中与 `text_rank`/`vector_rank`；`search` 是同一内核上的页面视图（每页取最高分块）；`context` 默认 `scope=related`（引用页 + 同来源命名空间，`CONTEXT_PAGE_LIMIT=64`），显式 `scope=all` 才做整库装配，并报告 `pages_total`/`pages_omitted`。
 - 校验：分块缓存绑定页面哈希与输入指纹；制品自洽但页绑定/块号/BM25 计数/旁车长度/旁车哈希任一不符都拒绝。超过 16 MiB 单文件上限的库降级为进程内集合继续应答（`cache_rebuilt:true`），`lint` 报 `cache_invalid: file_too_large`。
 - 增量：`@platform.signature` 提供变化信号，`@vault.VerifyMemo` 在同一请求内前后采样一致时复用；WASM 面 `stat→None` 永远全量。
@@ -30,13 +31,14 @@
 
 - 不在核心里生成答案、摘要或查询改写；不默认用 LLM 改写查询；不引入交叉编码器重排。需要模型的部分留给外部调用方。
 - 不把检索命中当成知识页；不自动写入 `wiki/`、`index.mbt.md` 或 OKF 导出。
-- 不承诺系统向量（OS 引擎）已接入：当前如实为算法向量兜底，系统向量属 3 期，接入后需实测融合增益，无增益则默认关闭并保留可选。
+- 核心不生成查询向量、不链接 OS/模型框架。系统向量只经宿主适配器（见 [vector.md](vector.md)）以 `query_vector` 提供；不可用时明确回退算法路并报告原因。
 
 ## 4. 待办
 
-- 3 期：系统向量小工具（macOS `NLEmbedding` 等）与块级 `vector-submit`，测融合增益；不可用时继续算法兜底。
+- 块级系统向量（`vector-submit`）尚未加入：当前系统向量按页面映射到首块 `<page>#0`，保留宿主页级排序；块级排序留给后续，不写成已交付。
+- macOS `NLEmbedding` 适配器已作为宿主工具交付（`adapters/os-embed/`、`scripts/build_os_embed.sh`），由 `scripts/os_embed_e2e.py` 验证；其他平台继续算法兜底。
 - 分词：MoonBit jieba 因固定工具链与体积暂缓（见 `specs/engine/tasks.md` 历史账），当前 CJK n-gram 已覆盖召回；不写成已启用。
 
 ## 5. 验证
 
-`retrieval_wbtest.mbt` 覆盖唯一标识、制品自洽拒绝、旁车哈希、向量路召回文本路漏掉的截断标识符；`retrieval_e2e.py` 覆盖块级 retrieve/命名空间/非法前缀；`e2e.py`、`interop_e2e.py` 守住知识基线与 OKF；全部由 `./scripts/verify.sh` 执行。
+`retrieval_wbtest.mbt` 覆盖唯一标识、制品自洽拒绝、旁车哈希、向量路召回文本路漏掉的截断标识符、宿主页排序替换算法路与命名空间过滤；`retrieval_e2e.py` 覆盖块级 retrieve/命名空间/非法前缀；`os_embed_e2e.py` 在 macOS 上验证 `NLEmbedding` 适配器驱动 `search` 与 `retrieve` 的 system 路、内容版本失效，非 macOS 显式 SKIP；`e2e.py`、`interop_e2e.py` 守住知识基线与 OKF；全部由 `./scripts/verify.sh` 执行。

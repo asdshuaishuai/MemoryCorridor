@@ -26,6 +26,7 @@ python3 scripts/tamper_e2e.py
 python3 scripts/page_history_e2e.py
 python3 scripts/read_source_e2e.py
 python3 scripts/embedding_e2e.py
+python3 scripts/os_embed_e2e.py
 python3 scripts/dream_e2e.py
 python3 scripts/dream_work_e2e.py
 python3 scripts/dream_retro_e2e.py

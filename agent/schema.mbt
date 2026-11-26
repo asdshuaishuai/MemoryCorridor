@@ -30,6 +30,7 @@ pub fn input_schema(t : Tool) -> Json {
       let bounds = match (t.name, name) {
         ("read-log", "limit") => (0, 1000)
         ("search", "limit") => (1, 100)
+        ("retrieve", "limit") => (1, 100)
         ("search", "budget") => (1, 65536)
         ("search", "hops") => (0, 2)
         ("graph", "hops") => (0, 8)

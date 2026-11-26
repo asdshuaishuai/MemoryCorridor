@@ -11,3 +11,4 @@ vendor/reader/node_modules/
 .corridor/
 .pivot/
 .zcode/
+adapters/os-embed/os-embed

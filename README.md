@@ -13,7 +13,7 @@
 - 确定性 `.mcpack` 保存原件、正文、工单、草稿与视觉源；解包校验后发布，支持中断恢复。见 [容器格式](docs/pack-format.md)。
 - 研究目标、工单、审核和事件属于持久状态；`.corridor/` 仅缓存。撤销来源会传播失效，删除缓存不会丢人工决定。
 - `read-source` 按 id 读取已登记 raw 来源及其哈希校验状态，可用 UTF-8 字节区间精确核对 evidence 锚点。
-- 向量能力本地自持：引擎核心只存储/计算向量（`brute_force` 余弦、`embedding-submit`、混合检索、`page-redundancy` 语义冗余提名），向量的生成由宿主原生件提供——`adapters/embed-rs` 用 bge-small-zh-v1.5（Apache-2.0、int8 ONNX 23.9MB、512维）经 OCR 已引入的 ONNX Runtime 跑，零 Python；模型走 hf-mirror 钉版 fetch。见 [本地向量能力](docs/vector.md)。
+- 向量能力本地自持：引擎核心只存储/计算向量（`brute_force` 余弦、`embedding-submit`、混合检索、`page-redundancy` 语义冗余提名、`retrieve` 的宿主向 system 路），向量的生成由宿主原生件提供——`adapters/embed-rs` 用 bge-small-zh-v1.5（Apache-2.0、int8 ONNX 23.9MB、512维）经 OCR 已引入的 ONNX Runtime 跑，零 Python；macOS 另有系统 `NLEmbedding` 适配器（中文 640 维/英文 512 维），引擎核心不链接 OS 框架。模型走 hf-mirror 钉版 fetch。见 [本地向量能力](docs/vector.md)。
 - `extraction-submit` 把宿主侧（OCR、PDF 文本等，模型能力在引擎外）的抽取结果入账为 `state/extractions/<source sha256>.json` sidecar：与登记字节哈希强绑定，来源撤销或字节漂移后不再命中；同载荷重放、异载荷 `extraction_conflict`、异通道 `extraction_exists`，OOXML 走引擎自抽通道不可被外部覆盖。宿主原生适配器见 [OCR 适配器](docs/ocr.md)（Rust 单二进制 + 官方 ONNX Runtime，PP-OCRv4 mobile ≈16.2 MB 内嵌，零 Python；PDF 文本层优先、扫描版页内嵌图 OCR）。协议细节见 [编写协议](docs/protocol.md) 的 extraction sidecar 一节。
 - `page-history` 按时间列出某页的发布、归档、恢复和来源撤销历史及各版本 SHA-256，供核对旧引用。
 - `topics` 只读列出 `synthesis` 主题层页及其 wikilink 与来源，可先浏览主题再定位材料、回原文核对；来源撤销进入 `stale_sources` 而不被丢弃。

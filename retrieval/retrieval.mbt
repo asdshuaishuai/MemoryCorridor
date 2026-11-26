@@ -334,6 +334,11 @@ pub(all) struct LaneInfo {
 pub fn search_hybrid(
   entries : Array[@core.Entry], collection : Collection, query : String, limit : Int,
   prefix? : String = "", rrf_k? : Int = 60,
+  // When the host supplies provider page hits, the vector lane is page-level:
+  // each page contributes its first chunk (`<page>#0`) at the host's rank. The
+  // engine never embeds the query; the host supplies the vector and its
+  // provider registration is checked in the agent layer.
+  system_pages? : Array[String]? = None,
 ) -> (Array[ChunkHit], LaneInfo) {
   let allowed = allowed_pages(entries, prefix)
   let text_hits : Array[@MoonRetrieve.SearchResult] = []
@@ -343,13 +348,30 @@ pub fn search_hybrid(
       None => ()
     }
   }
-  let query_vector = features(query)
-  let vector_rows : Array[(String, Double)] = []
-  for i = 0; i < collection.chunks.length(); i = i + 1 {
-    let chunk = collection.chunks[i]
-    if !allowed.get(chunk.page).unwrap_or(false) { continue }
-    let score = dot(query_vector, collection.vectors[i])
-    if score > 0.0 { vector_rows.push((chunk.id, score)) }
+  let vector_rows : Array[(String, Double)] = match system_pages {
+    None => {
+      let query_vector = features(query)
+      let rows : Array[(String, Double)] = []
+      for i = 0; i < collection.chunks.length(); i = i + 1 {
+        let chunk = collection.chunks[i]
+        if !allowed.get(chunk.page).unwrap_or(false) { continue }
+        let score = dot(query_vector, collection.vectors[i])
+        if score > 0.0 { rows.push((chunk.id, score)) }
+      }
+      rows
+    }
+    Some(pages) => {
+      let rows : Array[(String, Double)] = []
+      for i = 0; i < pages.length(); i = i + 1 {
+        let page = pages[i]
+        if !allowed.get(page).unwrap_or(false) { continue }
+        let id = page + "#0"
+        if collection.by_id.contains(id) {
+          rows.push((id, 1.0 / (i + 1).to_double()))
+        }
+      }
+      rows
+    }
   }
   vector_rows.sort_by((a, b) => {
     let cmp = b.1.compare(a.1)
@@ -387,5 +409,14 @@ pub fn search_hybrid(
     hits.push({ id, page: chunk.page, score, text: texts.get(id).unwrap_or(""),
       text_rank, vector_rank })
   }
-  (hits, { text: "on", vector: "algo", reason: "no_system_engine" })
+  let (vector_lane, vector_reason) = match system_pages {
+    None => ("algo", "no_system_engine")
+    Some(_) =>
+      if vector_rows.is_empty() {
+        ("system", "no_matching_vectors")
+      } else {
+        ("system", "provider_vectors")
+      }
+  }
+  (hits, { text: "on", vector: vector_lane, reason: vector_reason })
 }

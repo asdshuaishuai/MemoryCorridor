@@ -98,8 +98,39 @@ serde_json/ndarray MIT/Apache-2.0。模型与运行时走钉版 fetch，不入 g
   4 倍，**不入分发包**；若日后需要可按 `fetch_clip.sh` 同法钉版换 heavier
   pair，引擎与 embed-rs 双塔接缝不变。
 
+## macOS 系统向量：NLEmbedding 宿主适配器
+
+除 Rust/bge 通路外，仓库提供一个**宿主侧**的 macOS 系统向量适配器，用来验证
+「OS 自带 embedding 引擎」这条路线。它不是引擎依赖：MoonBit 核心仍不导入
+`NaturalLanguage`、不链接系统框架，只接收宿主提交的向量。
+
+```sh
+scripts/build_os_embed.sh          # swiftc -O 构建并跑 --selftest；缺 swiftc 返回 2
+echo '[{"page":"…","sha256":"…","text":"…"}]' | adapters/os-embed/os-embed --language zh
+adapters/os-embed/os-embed --language en --selftest
+```
+
+- 实现：`adapters/os-embed/main.swift`，调用 `NLEmbedding.sentenceEmbedding(for:)`。
+  简体中文句向量 **640 维**、英文 **512 维**；中文/英文是不同模型与空间，维度与
+  余弦不可跨语言直接比较。适配器只接受 `zh|en`，未知参数显式失败。
+- 契约与 `embed-rs` 一致：stdin 读 `embedding-plan` 的 `items`，stdout 输出
+  `{page, sha256, values}`；随后仍走 `provider-register(embedding)` →
+  `embedding-submit` → `rebuild`，引擎照常做维度、归一化、页面内容版本与
+  provider 注册校验。二进制 `adapters/os-embed/os-embed` 不入 git。
+- 已验证：`scripts/os_embed_e2e.py` 用中文改写页与无关页验证 `search` 的语义
+  排序、`retrieve` 的 `vector:"system"`/`provider_vectors` 路、`vector_space`
+  回显与页面改写后的旧向量失效；非 macOS 或未构建适配器时显式 SKIP。
+- 限制：句向量质量与可用语言随 macOS 版本变化；不同 OS 版本/语言的分数不保证
+  可比，生产环境应固定 space id 并把系统版本纳入基线。需要跨平台一致语义时
+  继续用 `embed-rs` + 固定 bge 模型。
+- 许可：`NaturalLanguage`/`NLEmbedding` 是 Apple SDK 的系统框架，模型随系统分发，
+  本仓库不打包、不复制模型文件；使用与分发受 Apple SDK 条款约束。适配器源码
+  为本项目自研。
+
 ## 下一步
 
 轻量 ANN 不采用：此规模下 `brute_force` 精确余弦已足够且无精度损失，属规模
 取舍而非能力归属（agent 由 LLM 驱动、只负责召回，近似能力不会由它代劳）。
 redundancy 视觉线已有 `cosine_floor` 显式调档（续二十七交付）。
+macOS 系统向量适配器与 `retrieve` 的 system 路已交付；块级 `vector-submit` 仍未
+实现，页面级向量到首块 `<page>#0` 的映射是当前边界，不写成块级语义排序。

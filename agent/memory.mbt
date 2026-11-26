@@ -713,7 +713,6 @@ pub fn memory_candidates(store : @vault.Storage, entries : Array[@core.Entry], r
   }
   for note in by_id {
     if in_merge.get(note.id).unwrap_or(false) { continue }
-    if note.pinned { continue }
     // A note in an unresolved conflict is the host's to confirm, so proposing it
     // for pruning would pre-empt that decision and double up with
     // `memory-conflicts`.

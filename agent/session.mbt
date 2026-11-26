@@ -310,9 +310,10 @@ pub fn dispatch_with_catalog(
       }
     }
     "retrieve" => {
-      // Chunk-level retrieval with lane diagnostics. Phase 1 runs the BM25
-      // lane; the vector lane (system vectors first, algorithm fallback) joins
-      // in phase 3 and reports itself here instead of degrading silently.
+      // Chunk-level retrieval with lane diagnostics. The text lane is BM25.
+      // The vector lane uses host-supplied page vectors when `query_vector` is
+      // given (the host embeds the query and holds the provider registration);
+      // otherwise it falls back to the deterministic algorithm lane and says so.
       @vault.verify(store, entries)
       let mut rebuilt = false
       let collection = try cached(store, entries) catch {
@@ -330,7 +331,15 @@ pub fn dispatch_with_catalog(
       if prefix != "" && (!prefix.has_prefix("raw/") || prefix.contains("..")) {
         @base.fail("retrieve_namespace_invalid")
       }
-      let (rows, lanes) = @retrieval.search_hybrid(entries, collection, string("query"), limit, prefix=prefix)
+      let query_vector = try arg("query_vector") catch { _ => Json::null() }
+      let (system_pages, vector_space) = if query_vector == Json::null() {
+        (None, Json::null())
+      } else {
+        let (space, vector_hits) = system_page_hits(store, entries, query_vector, arg("provider"))
+        (Some(vector_hits.map(hit => hit.id)), space.to_json())
+      }
+      let (rows, lanes) = @retrieval.search_hybrid(entries, collection, string("query"), limit,
+        prefix=prefix, system_pages=system_pages)
       let hits : Array[Json] = []
       for row in rows {
         let (text, text_source) = if row.text != "" {
@@ -346,7 +355,8 @@ pub fn dispatch_with_catalog(
           "lanes": { "text_rank": row.text_rank.to_json(), "vector_rank": row.vector_rank.to_json() } })
       }
       { "hits": hits.to_json(),
-        "lanes": { "text": lanes.text, "vector": lanes.vector, "reason": lanes.reason },
+        "lanes": { "text": lanes.text, "vector": lanes.vector, "reason": lanes.reason,
+          "vector_space": vector_space },
         "fingerprint": fingerprint.to_json(), "cache_rebuilt": rebuilt.to_json() }
     }
     _ => raise @base.Fault("operation_not_implemented: " + op)

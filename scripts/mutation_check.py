@@ -19,7 +19,7 @@ MUTATIONS = [
     ("memory note hash must bind conditions and sources",
      "core/records.mbt",
      '''  if note_hash != memory_note_hash(workspace, scope, session, kind, text, conditions, sources,
-    source_hashes, importance, emotion, episodic) {
+    source_hashes, importance, emotion, episodic, layer) {
     @base.fail("memory_note_hash_mismatch")
   }''',
      '''  if false { @base.fail("memory_note_hash_mismatch") }''',
@@ -305,18 +305,18 @@ MUTATIONS = [
      "memory candidates excludes conflicted notes from merging and pruning",
      "memory_e2e.py"),
 
-    ("a pinned note must never be proposed for pruning",
+    ("pinned notes must stay in the core tier",
      "agent/memory.mbt",
-     '    if note.pinned { continue }\n    if note.last_used_at is Some(_) { continue }',
-     '    if note.last_used_at is Some(_) { continue }',
+     '  if note.pinned || importance >= 0.8 || note.layer == "episode" {',
+     '  if importance >= 0.8 || note.layer == "episode" {',
      "memory candidates never proposes a pinned or already-settled note",
      "memory_e2e.py"),
 
-    ("a used note must never be proposed for pruning",
+    ("episodes must stay in the core tier",
      "agent/memory.mbt",
-     '    if note.last_used_at is Some(_) { continue }',
-     '    if false { continue }',
-     "memory candidates never proposes a pinned or already-settled note",
+     '  if note.pinned || importance >= 0.8 || note.layer == "episode" {',
+     '  if note.pinned || importance >= 0.8 || false {',
+     "episodic promotion writes a new core record and preserves history",
      "memory_e2e.py"),
 
     ("merge participants must not also be proposed for pruning",
@@ -367,9 +367,9 @@ MUTATIONS = [
      "memory candidates groups every duplicate under one keeper"),
     ("prefetch must honour the requested candidate limit",
      "agent/memory.mbt",
-     '  let hits = @index.search_index(@index.build_index(documents), query, limit~)',
-     '  let hits = @index.search_index(@index.build_index(documents), query, limit=50)',
-     "memory notes, supersede chain",
+     '  let search_limit = if rank == "weighted" { documents.length() } else { limit }',
+     '  let search_limit = if rank == "weighted" { documents.length() } else { 1 }',
+     "prefetch honours the requested lexical limit",
      "memory_e2e.py"),
     ("graph expansion must default to and allow the documented two hops",
      "agent/explore.mbt",
@@ -1571,8 +1571,9 @@ MUTATIONS = [
      "core/records.mbt",
      '''    "\\n" + @base.canonical(source_hashes.to_json()) + "\\n" +
     @base.canonical(importance) + "\\n" + @base.canonical(emotion) + "\\n" +
-    (if episodic { "episodic" } else { "plain" }))''',
-     '''    "\\n" + @base.canonical(source_hashes.to_json()))''',
+    (if episodic { "episodic" } else { "plain" }) + "\\n" + layer)''',
+     '''    "\\n" + @base.canonical(source_hashes.to_json()) + "\\n" +
+    (if episodic { "episodic" } else { "plain" }) + "\\n" + layer)''',
      "importance and emotion are identity-bound companion metadata"),
 
     ("importance must stay inside 0..1",
@@ -1808,6 +1809,20 @@ MUTATIONS = [
      '''    directories.push("workspaces/" + workspace)''',
      "workspace layer isolation, projection, idempotence and deletion recovery passed",
      "workspace_layer_e2e.py"),
+
+    ("system page hits must map to the page's first chunk",
+     "retrieval/retrieval.mbt",
+     '''        let id = page + "#0"''',
+     '''        let id = page + "#1"''',
+     "host page vectors replace the algorithm lane"),
+
+    ("retrieve must not ignore a supplied query vector",
+     "agent/session.mbt",
+     '''      let query_vector = try arg("query_vector") catch { _ => Json::null() }
+      let (system_pages, vector_space) = if query_vector == Json::null() {''',
+     '''      let query_vector = try arg("query_vector") catch { _ => Json::null() }
+      let (system_pages, vector_space) = if true {''',
+     "os embed e2e:", "os_embed_e2e.py"),
 ]
 
 

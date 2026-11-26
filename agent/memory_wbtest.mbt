@@ -691,7 +691,7 @@ test "three-tier decay protects core and slows important notes" {
     }
     @base.text(@base.field(memory_submit(store, @vault.load(store), request), "id"))
   }
-  let core_id = submit("core", Some(Json::number(0.9)), "2025-01-01T00:00:00Z")
+  let core_id = submit("core", Some(Json::number(0.9)), "2020-01-01T00:00:00Z")
   let important_id = submit("important", Some(Json::number(0.6)), "2025-08-01T00:00:00Z")
   let normal_id = submit("normal", None, "2025-08-01T00:00:00Z")
   let candidates = memory_candidates(store, @vault.load(store), {
@@ -1149,6 +1149,25 @@ test "episodic promotion writes a new core record and preserves history" {
   assert_false(pruned.get(new_id).unwrap_or(false))
   assert_false(pruned.get(@base.text(@base.field(
     @base.field(emotional_promoted, "record"), "id"))).unwrap_or(false))
+}
+
+test "prefetch honours the requested lexical limit" {
+  let (store, _broken, _files) = crashing(-1)
+  ignore(initialize(store, "研究陶瓷"))
+  memory_open_workspace(store)
+  for index in 0..<3 {
+    ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
+      "workspace": test_ws(), "kind": "fact", "scope": "project",
+      "text": "陶瓷记录第" + index.to_string() + "条，用于核对词汇检索上限。",
+      "conditions": [], "sources": [],
+      "at": "2026-11-12T09:0" + index.to_string() + ":00Z",
+      "key": "limit-" + index.to_string() }))
+  }
+  let brief = memory_prefetch(store, @vault.load(store), {
+    "workspace": test_ws(), "query": "陶瓷", "limit": 2 })
+  // All three notes match the query; the lexical candidate window must be the
+  // caller's limit, not a hard-coded one.
+  assert_eq(@base.array(@base.field(brief, "notes")).length(), 2)
 }
 
 test "weighted prefetch balances relevance, strength and importance" {

@@ -141,6 +141,49 @@ fn keyword_rows(hits : Array[@retrieval.PageHit]) -> Array[Json] {
   rows
 }
 
+fn query_vector_values(vector_value : Json, space : @index.VectorSpace) -> Array[Double] raise @base.Fault {
+  @base.keys(vector_value, ["space", "values", "values_b64"])
+  match vector_value {
+    Object(fields) => {
+      let has_json = fields.contains("values")
+      let has_wire = fields.contains("values_b64")
+      if has_json == has_wire { @base.fail("vector_values_encoding_exclusive") }
+      if has_wire {
+        @index.values_from_base64(space, @base.text(fields["values_b64"]))
+      } else {
+        @index.vector_from_json(fields["values"])
+      }
+    }
+    _ => raise @base.Fault("expected_object")
+  }
+}
+
+// Host-supplied query vector over stored provider vectors. Used by `search`
+// and by `retrieve`'s system lane; the engine never embeds the query itself.
+pub fn system_page_hits(
+  store : @vault.Storage, entries : Array[@core.Entry], vector_value : Json, provider_value : Json,
+) -> (@index.VectorSpace, Array[@index.VectorHit]) raise @base.Fault {
+  @base.keys(vector_value, ["space", "values", "values_b64"])
+  // Unlike `search`, the chunk-level system lane always names the provider that
+  // produced the query vector: an anonymous vector would skip registration and
+  // make the lane's provenance unverifiable.
+  if provider_value == Json::null() { @base.fail("retrieve_provider_required") }
+  let space = @index.space_from_json(@base.field(vector_value, "space"))
+  require_registered_provider(store, entries, { "provider": provider_value }, "embedding", space)
+  let values = query_vector_values(vector_value, space)
+  let records : Array[@index.VectorRecord] = []
+  for entry in entries {
+    if entry.kind == "vector" {
+      let record = @index.record_from_json(@base.parse(@vault.required(store, entry.path)))
+      if record.space == space &&
+        entries.iter().any(e => @core.is_page(e) && !e.stale && e.id == record.page && e.sha256 == record.sha256) {
+        records.push(record)
+      }
+    }
+  }
+  (space, @index.search_vectors(space, values, records, 100))
+}
+
 pub fn hybrid_search(
   store : @vault.Storage, entries : Array[@core.Entry], collection : @retrieval.Collection,
   query : String, limit : Int, vector_value : Json, candidates_value : Json, provider_value : Json,
@@ -161,19 +204,7 @@ pub fn hybrid_search(
     @base.keys(vector_value, ["space", "values", "values_b64"])
     let query_space = @index.space_from_json(@base.field(vector_value, "space"))
     require_registered_provider(store, entries, { "provider": provider_value }, "embedding", query_space)
-    let values = match vector_value {
-      Object(fields) => {
-        let has_json = fields.contains("values")
-        let has_wire = fields.contains("values_b64")
-        if has_json == has_wire { @base.fail("vector_values_encoding_exclusive") }
-        if has_wire {
-          @index.values_from_base64(query_space, @base.text(fields["values_b64"]))
-        } else {
-          @index.vector_from_json(fields["values"])
-        }
-      }
-      _ => raise @base.Fault("expected_object")
-    }
+    let values = query_vector_values(vector_value, query_space)
     let records : Array[@index.VectorRecord] = []
     for entry in entries {
       if entry.kind == "vector" {
