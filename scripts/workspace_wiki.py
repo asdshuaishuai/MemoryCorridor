@@ -81,6 +81,14 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def artifact_name(page_id: str, suffix: str) -> str:
+    # Page ids are semantic (`concepts/a/b`) and may contain `__`, so a plain
+    # slash replacement could collide. A short content-derived suffix keeps
+    # names readable while making collisions impossible for practical inputs.
+    readable = page_id.replace("/", "__")[:120]
+    return f"{readable}-{digest(page_id)[:8]}{suffix}"
+
+
 def write_if_changed(path: Path, content: str) -> bool:
     if path.is_file() and path.read_text(encoding="utf-8") == content:
         return False
@@ -103,14 +111,14 @@ def generate_workspace(cli: Path, vault: Path, workspace: str,
     files = {}
     written = 0
     for row in plan["pages"]:
-        filename = row["id"].replace("/", "__") + ".md"
+        filename = artifact_name(row["id"], ".md")
         relative = f"workspaces/{workspace}/wiki/{filename}"
         content = page_document(vault, workspace, row)
         expected_wiki.add(filename)
         if write_if_changed(vault / relative, content):
             written += 1
         files[relative] = digest(content)
-        claim_name = row["id"].replace("/", "__") + ".json"
+        claim_name = artifact_name(row["id"], ".json")
         claim_text = json.dumps(claims_by_page[row["id"]], ensure_ascii=False,
                                 indent=2, sort_keys=True) + "\n"
         expected_claims.add(claim_name)

@@ -37,10 +37,10 @@
 | 工作区记忆导出 | 4 条（含 1 条 episode） |
 | wiki 总字节 | 12,602 B |
 | `workspaces/index.mbt.md` | 631 B |
-| 摄入总耗时（10 轮 scan→commit） | 2.4–2.8 s（两次运行） |
+| 摄入总耗时（10 轮 scan→commit） | 2.3–2.8 s（多次运行） |
 | workspace-wiki-plan | 21–25 ms |
-| 生成 wiki/claims/manifest/index | 71–81 ms |
-| memory-export | 23–25 ms |
+| 生成 wiki/claims/manifest/index | 65–81 ms |
+| memory-export | 22–25 ms |
 | 知识 `search` 召回@5 | 6/6 |
 | 块级 `retrieve` 召回@5 | 6/6 |
 | 记忆 BM25 召回@5 | 4/4 |

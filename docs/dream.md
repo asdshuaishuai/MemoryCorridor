@@ -32,7 +32,7 @@
 ```
 
 状态机只有 `open → retained | rejected`；关闭后不可重开（同参重放除外）。
-绑定 `workspace` 时，`memory_metrics` 冻结该工作区的 `active/session/conflicted/invalid/drifted/episodes/profiles/prune`（其中债务类指标只统计 `project` 笔记，会话级债务单独计数、不参与 retained 门禁，因为轮次没有可用的 session id）；`dream-work-open` 会把 `memory_merge/memory_prune/memory_conflict/memory_source_stale/memory_promote` 机会加入同一工单队列；记忆应用仍由宿主调用 `memory-*`。
+绑定 `workspace` 时，`memory_metrics` 冻结该工作区的 `active/session/conflicted/invalid/drifted/episodes/profiles/prune`（其中债务类指标只统计 `project` 笔记，会话级债务单独计数、不参与 retained 门禁，因为轮次没有可用的 session id）；`dream-work-open` 会把 `memory_merge/memory_prune/memory_conflict/memory_source_stale/memory_promote` 机会加入同一工单队列；记忆应用仍由宿主调用 `memory-*`；memory_* 工单的 `dream-work-complete.result` 仍只收 judgments/proposals，完成工单不代表自动应用记忆。
 
 ## 梦境笔记（state/dream-notes）
 

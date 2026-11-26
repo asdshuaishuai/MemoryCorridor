@@ -104,8 +104,8 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-workspace-layer-") as te
     # may contain more than the concept page while still excluding everything
     # outside the selected namespace.
     assert summary["pages"] >= 1, summary
-    wiki_file = vault / "workspaces" / workspace / "wiki" / "concepts__ceramics.md"
-    claim_file = vault / "workspaces" / workspace / "claims" / "concepts__ceramics.json"
+    wiki_file = next((vault / "workspaces" / workspace / "wiki").glob("concepts__ceramics-*.md"))
+    claim_file = next((vault / "workspaces" / workspace / "claims").glob("concepts__ceramics-*.json"))
     manifest_file = vault / "workspaces" / workspace / "manifest.json"
     index_file = vault / "workspaces" / "index.mbt.md"
     for path in (wiki_file, claim_file, manifest_file, index_file):
