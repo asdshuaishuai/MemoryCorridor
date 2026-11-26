@@ -25,7 +25,7 @@ success — check `gh run view` conclusions, not the watcher exit code.
 Local changes use the tiered gate: `scripts/quick_verify.sh` runs `moon check
 --deny-warn`, `moon test`, the native build, and the focused e2e set
 (`e2e.py`, `interop_e2e.py`, `retrieval_e2e.py`, `memory_e2e.py`,
-`dream_e2e.py`, `workspace_layer_e2e.py`). The full `scripts/verify.sh`
+`dream_e2e.py`, `workspace_layer_e2e.py`, `project_wiki_bench.py`). The full `scripts/verify.sh`
 (including the mutation matrix and all WASM/Web faces) is reserved for release,
 nightly and CI; it is not the per-change default.
 

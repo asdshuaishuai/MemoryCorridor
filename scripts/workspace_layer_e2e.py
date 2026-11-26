@@ -72,6 +72,28 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-workspace-layer-") as te
     assert (vault / "workspaces" / workspace / "memory").is_dir()
     assert (vault / "workspaces" / "projects.json").is_file()
 
+    # A derived workspace file can never become a page source. Scan only
+    # registers raw inputs, and the draft boundary rejects a derived path even
+    # when the batch also names the current order source.
+    guard_wiki = vault / "workspaces" / workspace / "wiki" / "guard.md"
+    guard_wiki.parent.mkdir(parents=True, exist_ok=True)
+    guard_wiki.write_text("---\ntype: concept\ntitle: derived\ntags: []\nsources: []\n---\nderived\n",
+                          encoding="utf-8")
+    (vault / "raw" / "project").mkdir(parents=True, exist_ok=True)
+    (vault / "raw" / "project" / "guard.md").write_text("guard source\n", encoding="utf-8")
+    guard_order = call(vault, "scan")["orders"][0]
+    guard_context = call(vault, "context", order=guard_order)
+    call(vault, "analysis-submit", order=guard_order,
+         context_token=guard_context["context_token"],
+         analysis={"entities": [], "concepts": ["guard"], "conflicts": [], "summary": "guard"})
+    call(vault, "draft-submit", order=guard_order,
+         context_token=guard_context["context_token"],
+         pages=[{"id": "concepts/guard", "kind": "concept", "title": "guard",
+                 "sources": ["raw/project/guard.md",
+                             f"workspaces/{workspace}/wiki/guard.md"],
+                 "tags": [], "body": "guard"}],
+         error="source")
+
     before_fingerprint = call(vault, "status")["fingerprint"]
     generated = subprocess.run(
         ["python3", "-I", str(WIKI), "--vault", str(vault),

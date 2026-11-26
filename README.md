@@ -2,7 +2,7 @@
 
 将资料整理为可追溯、可检索、持续维护的知识。核心由 MoonBit 实现，不调用模型或网络。
 
-当前已有可运行的 native 引擎、CLI/MCP、单 vault 进程会话、检索维护闭环、OKF/Markdown 互操作，以及由 `.mbt.md` 编译生成的富文本阅读页和精简本地 Web 服务。本项目只交付独立引擎与 Web 传输层，不包含桌面应用或专用桌面集成。完整分期方案见 [PROPOSAL.md](PROPOSAL.md)，逐项进度见 [tasks.md](specs/engine/tasks.md)，分期验收册（PROPOSAL §14 验收门逐条对证据）见 [acceptance](docs/acceptance.md)，全量边界见 [实现审计](specs/engine/implementation-audit.md)。新增一类持久化工单的登记位置见 [扩展指南](docs/extending.md)，A5 理念的承接方式记忆本体只在 `state/memory/`，`memory-export` 把项目级记忆投影到 `workspaces/<id>/memory/`；工作区专属 wiki、claims、manifest 与 `workspaces/index.mbt.md` 由 `workspace-wiki-plan` + `scripts/workspace_wiki.py` 派生，绝不进入全局目录或检索。见 [记忆层说明](docs/memory.md)。
+当前已有可运行的 native 引擎、CLI/MCP、单 vault 进程会话、检索维护闭环、OKF/Markdown 互操作，以及由 `.mbt.md` 编译生成的富文本阅读页和精简本地 Web 服务。本项目只交付独立引擎与 Web 传输层，不包含桌面应用或专用桌面集成。完整分期方案见 [PROPOSAL.md](PROPOSAL.md)，逐项进度见 [tasks.md](specs/engine/tasks.md)，分期验收册（PROPOSAL §14 验收门逐条对证据）见 [acceptance](docs/acceptance.md)，以本项目自身文档生成工作区 wiki 的实测见 [project-wiki](docs/project-wiki.md)，全量边界见 [实现审计](specs/engine/implementation-audit.md)。新增一类持久化工单的登记位置见 [扩展指南](docs/extending.md)，A5 理念的承接方式记忆本体只在 `state/memory/`，`memory-export` 把项目级记忆投影到 `workspaces/<id>/memory/`；工作区专属 wiki、claims、manifest 与 `workspaces/index.mbt.md` 由 `workspace-wiki-plan` + `scripts/workspace_wiki.py` 派生，绝不进入全局目录或检索。见 [记忆层说明](docs/memory.md)。
 
 - `index.mbt.md` 是可由 MoonBit 检查的目录；每个条目显式登记 `format`，正文和原件保持独立 Markdown 或其他格式。已知文本格式会进入 Agent context，图片/binary 仍明确交给外部抽取。旧六字段目录可读取并在下一次生成时迁移为显式格式；文学化解析器会扫描整份文件的 MoonBit 围栏并拒绝未闭合块。
 - `lint` 是不写入 vault 的诊断入口：目录语义、条目路径/格式/哈希、来源与正文漂移、页面 frontmatter/断链、state/vector/evidence 记录和检索缓存问题会以稳定排序的 `predicate/subject/path/detail/fix/severity` 返回；evidence 额外检查正文与精确 raw 锚点是否漂移；`verify` 仍是硬失败门禁。
