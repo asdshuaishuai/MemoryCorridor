@@ -29,8 +29,8 @@ MemoryCorridor 的核心不调用模型，也不推断「什么值得记住」�
 
 | 切片 | 状态 | 内容 |
 | --- | --- | --- |
-| M1 元数据与身份 | 已交付（续八十） | 记录 v4 / `note_hash` v5：可选 `importance`（0..1）、`emotion`（valence/arousal/dominance 各 −1..1 + 可选标签）、`episodic`/`promoted_at`、`layer`（judgment/session_summary/episode/profile）；`use_count` 由 `memory-use` 累加；supersede 继承未覆盖元数据。只存宿主提供的值，不推断情感。 |
-| M2 加权预取 | 已交付（续八十二） | `memory-prefetch rank=weighted`，必须显式 `now`；相关性 0.35 + 强度 0.30 + 重要性 0.35，返回 `score_components` 与 `tier`；默认仍 BM25。 |
+| M1 元数据与身份 | 已交付（续八十，续八十二并入 v4/v5） | 可选 `importance`（0..1）、`emotion`（valence/arousal/dominance 各 −1..1 + 可选标签）、`episodic`/`promoted_at`；`use_count` 由 `memory-use` 累加；supersede 继承未覆盖元数据。只存宿主提供的值，不推断情感。 |
+| M2 分层与加权预取 | 已交付（续八十二） | 记录 v4 / `note_hash` v5 新增身份字段 `layer`（judgment/session_summary/episode/profile，scope 与 episodic 受约束）；`memory-prefetch rank=weighted`，必须显式 `now`；相关性 0.35 + 强度 0.30 + 重要性 0.35，返回 `score_components` 与 `tier`；默认仍 BM25。 |
 | M4 衰减建议 | 已交付（续八十二） | `memory-candidates` 必须显式 `now`；core 层（pinned/importance≥0.8/episode）永不提名，important 层慢衰减，normal 层快衰减；prune 返回 `tier/decay/strength/score/age_days` 与 `never_used/decayed`，仍只建议，不自动删除。 |
 | M3 情景提升 | 已交付（续八十二） | `memory-promote`：importance≥0.7 或情感强度≥0.7 才通过；supersede 生成 `layer=episode`/`episodic=true` 的新记录并写 `memory-promote` 事件，旧记录保留；已提升记录拒绝重放。 |
 

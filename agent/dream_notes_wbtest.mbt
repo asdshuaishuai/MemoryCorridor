@@ -119,6 +119,13 @@ test "a workspace dream round carries memory metrics and gates retention" {
   let record = @base.parse(@vault.required(store, "state/dreams/" + round_id + ".json"))
   assert_eq(@base.field(record, "workspace"), test_ws().to_json())
   assert_eq(@base.field(@base.field(record, "memory_metrics"), "conflicted"), Json::number(2.0))
+  // A note cannot claim a different workspace than the round it belongs to.
+  memory_open_other(store)
+  assert_true(dream_note_refuses(() => ignore(dream_note_submit(store, @vault.load(store),
+    { "op": "dream-note-submit", "workspace": other_ws(), "round": round_id,
+      "kind": "insight", "title": "错配", "body": "工作区与轮次不一致。",
+      "inputs": { "pages": [], "notes": [] }, "claims": [],
+      "at": "2027-11-11T00:00:01Z" }))))
   // Memory tasks from that workspace enter the same queue.
   let work = dream_work_open(store, @vault.load(store), { "op": "dream-work-open",
     "round": round_id, "at": at })
