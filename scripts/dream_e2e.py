@@ -222,6 +222,18 @@ def main():
         assert resolved["status"] == "retained", resolved
         call("dream-note-resolve", id=note["id"], status="rejected",
              at="2026-11-12T00:00:10Z", error="dream_note_terminal")
+        # A page target must use the catalog entry's current SHA-256 and may be
+        # applied even though the page was not one of the note's declared inputs.
+        page = next(row for row in call("list-pages") if not row.get("stale"))
+        page_note = call("dream-note-submit", kind="consolidation",
+                         title="页面应用", body="把这轮结论应用到页面。",
+                         inputs={"pages": [page["id"]], "notes": []}, claims=[],
+                         at="2026-11-12T00:00:11Z")
+        applied_page = call("dream-note-resolve", id=page_note["id"],
+                            status="applied", at="2026-11-12T00:00:12Z",
+                            target={"kind": "page", "id": page["id"],
+                                    "hash": page["sha256"]})
+        assert applied_page["record"]["target"]["kind"] == "page", applied_page
         assert call("dream-retro")["dream_notes"]["retained"] >= 1
 
     print("dream e2e: deterministic dream plan, fingerprint-bound rounds, "

@@ -432,7 +432,6 @@ fn dream_note_inputs(value : Json) -> Map[String, Bool] raise @base.Fault {
     @base.keys(row, ["id", "hash"])
     let id = @base.text(@base.field(row, "id"))
     @base.path(id)
-    if !id.has_prefix("wiki/") { @base.fail("dream_note_page_invalid") }
     if seen.contains(id) { @base.fail("dream_note_input_duplicate") }
     if !valid_hash(@base.text(@base.field(row, "hash"))) { @base.fail("dream_note_input_hash_invalid") }
     seen[id] = true
@@ -473,8 +472,10 @@ fn dream_note_target(value : Json) -> Unit raise @base.Fault {
   if !["page", "memory"].contains(kind) { @base.fail("dream_note_target_kind_invalid") }
   let id = @base.text(@base.field(value, "id"))
   if kind == "page" {
+    // Catalog page ids are semantic ids (`concepts/x`), not file paths; the
+    // agent layer checks that the id resolves to a live page entry. Core only
+    // enforces that the value is a safe path-like token.
     @base.path(id)
-    if !id.has_prefix("wiki/") { @base.fail("dream_note_target_id_invalid") }
   } else if !valid_hash(id) {
     @base.fail("dream_note_target_id_invalid")
   }

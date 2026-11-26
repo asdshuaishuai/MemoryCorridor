@@ -1774,6 +1774,17 @@ MUTATIONS = [
      '''    if false { @base.fail("dream_note_target_drift: " + id) }''',
      "dream note submit binds inputs, replays, and resolves through an applied target"),
 
+    ("dream note page ids are catalog ids, not wiki file paths",
+     "core/records.mbt",
+     '''    let id = @base.text(@base.field(row, "id"))
+    @base.path(id)
+    if seen.contains(id) { @base.fail("dream_note_input_duplicate") }''',
+     '''    let id = @base.text(@base.field(row, "id"))
+    @base.path(id)
+    if !id.has_prefix("wiki/") { @base.fail("dream_note_page_invalid") }
+    if seen.contains(id) { @base.fail("dream_note_input_duplicate") }''',
+     "dream e2e:", "dream_e2e.py"),
+
     ("workspace rounds must gate memory debt on retention",
      "agent/dream.mbt",
      '''      (Some(before), Some(after)) => dream_memory_compatible(before, after)''',
