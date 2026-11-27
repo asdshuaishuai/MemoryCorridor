@@ -12,6 +12,8 @@ import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
 EXE = REPO / "_build/native/debug/build/cli/cli.exe"
+# The binary-source case asserts the manual extraction contract.
+os.environ["MEMORYCORRIDOR_OCR"] = "off"
 CHECKS = []
 
 

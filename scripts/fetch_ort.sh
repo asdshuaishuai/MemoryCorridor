@@ -1,9 +1,9 @@
 #!/bin/sh
-# Fetch the official ONNX Runtime dylib used by adapters/ocr-rs (load-dynamic).
-# The 43 MB Microsoft build is redistributed under MIT; it is NOT vendored in
-# git (too heavy) - this script pins it by checksum instead. Models live in
-# adapters/ocr-rs/models (Apache-2.0) and are embedded into the binary at
-# compile time.
+# Fetch the official ONNX Runtime dylib used as a build input by
+# adapters/ocr-rs. The 43 MB Microsoft build is redistributed under MIT; it is
+# NOT vendored in git (too heavy) - this script pins it by checksum instead.
+# build.rs embeds this dylib into the adapter binary; models live in
+# adapters/ocr-rs/models (Apache-2.0) and are also embedded at compile time.
 set -eu
 VERSION=1.31.1
 SHA256_ARM64="2e1344a1926ee50eb25b38153cb6992c3567515aef0e677a1a520a1798896d6f"

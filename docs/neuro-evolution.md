@@ -193,7 +193,7 @@ fitness = w_stab·stability + w_resp·responsiveness + w_grow·growth
 - 与 SoulFlow 线：快环的情感/冲动输出可作为冲动 outbox 的来源。续三十三实现主动式
   outbox：`enabled=true` 时，情感/冲动状态可自主发起一次 LLM 调用——引擎只写结构化
   请求（`evo-proactive-open`），由宿主驱动（`scripts/evo_agent_driver.py`）认领、调用
-  OpenAI 兼容端点并把 `{text,model}` 回写（`evo-proactive-complete`）。引擎零模型/零网络；
+  OpenAI 兼容端点并把 `{text,model}` 回写（`evo-proactive-complete`）。核心零模型/零网络；
   关闭开关后所有 `evo-proactive-*` 立即 `evo_disabled`，循环停止。请求带 1 条背压、
   8 观察步冷却与 driver+lease 归属；**evo 仍不写入任何其它子系统状态**。
 - 与 RSI 线：慢环的评估窗口与回归检测复用 dream 轮次的账本思路，但两者独立验收；

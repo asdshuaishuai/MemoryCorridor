@@ -16,3 +16,10 @@ highlight.js (BSD-3-Clause), Prettier (MIT), and their dependencies.
 Exact versions/integrity: vendor/reader/package-lock.json and provenance.json.
 Full notices: licenses/ and the dependency-notices JSON in generated HTML.
 Third-party source and generated embeddings are excluded from owned source ratios.
+
+OCR/PDF adapter (optional native payload): PP-OCRv4 mobile det/rec/cls models
+and dictionary, Apache-2.0. ONNX Runtime (official libonnxruntime), MIT.
+License texts: licenses/ppocr-Apache-2.0.txt and
+licenses/onnxruntime-MIT.txt. The default build embeds the models and the
+official runtime dylib into the adapter; a non-embedded build ships the
+runtime beside the adapter.

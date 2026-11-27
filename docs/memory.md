@@ -34,7 +34,7 @@ MemoryCorridor 的核心不调用模型，也不推断「什么值得记住」�
 | M4 衰减建议 | 已交付（续八十二） | `memory-candidates` 必须显式 `now`；core 层（pinned/importance≥0.8/episode）永不提名，important 层慢衰减，normal 层快衰减；prune 返回 `tier/decay/strength/score/age_days` 与 `never_used/decayed`，仍只建议，不自动删除。 |
 | M3 情景提升 | 已交付（续八十二） | `memory-promote`：importance≥0.7 或情感强度≥0.7 才通过；supersede 生成 `layer=episode`/`episodic=true` 的新记录并写 `memory-promote` 事件，旧记录保留；已提升记录拒绝重放。 |
 
-L1 原始对话缓冲与 L2 摘要生成留在宿主（引擎零模型）；L2 摘要可作为 `scope=session` 且 `layer=session_summary` 的笔记存入。L4 用户模型由宿主维护，稳定的偏好/目标可作为 `project` 笔记载入 `layer=profile`。`memory-export` 输出到工作区分层 `workspaces/<工作区ID>/memory/`（附 `workspaces/projects.json`），是派生的助理视图，不是知识页、不是 OKF，也不是第二份权威。
+L1 原始对话缓冲与 L2 摘要生成留在宿主（核心零模型）；L2 摘要可作为 `scope=session` 且 `layer=session_summary` 的笔记存入。L4 用户模型由宿主维护，稳定的偏好/目标可作为 `project` 笔记载入 `layer=profile`。`memory-export` 输出到工作区分层 `workspaces/<工作区ID>/memory/`（附 `workspaces/projects.json`），是派生的助理视图，不是知识页、不是 OKF，也不是第二份权威。
 
 ## 工作区分层与梦境 RSI
 
@@ -103,7 +103,7 @@ A5 的 Proposal Engine 汇集上下文变化、已完成交互和知识更新的
 
 这个检查工具本身也出过两次错，都值得记下：一是 `"failed:" in output` 会匹配 `failed: 0`，导致五条 e2e 变异全是假阳性——上轮报告「全部捕获」时其实一条都没捕获；二是 e2e 用的是已编译的二进制，不重新 build 就等于测上一个版本；修正后还发现跑完变异会在二进制里留下最后一个缺陷，因此结尾统一重新 build。修正后 15/15 真正被捕获，且跑完不会给后续命令留下脏状态。还有一类坑：某个变异「抓不到」可能说明代码本来就对——`inbox_counts` 的排序在调用链里是冗余的（上游已排序），直接删掉它行为不变。这时该改的是测试：改成直接调用这个函数并故意传入未排序输入，让它真的守护自己的契约，而不是靠调用链兜底。**验证工具和被测代码一样需要被怀疑。**
 
-- **只读不挂 execution。** `execution:"host_required"` 表示「引擎记下了计划，等宿主执行」，只属于写操作。`memory-read`、`read-source` 等读操作曾误返该字段，会让通用客户端以为还欠引擎一个动作；现已移除，`read-source` 的 binary 分支用更精确的 `extraction_required` 表达「需要外部抽取」。`agent/sources_wbtest.mbt` 直接驱动这些 op 断言字段缺席（而不是只查字典），并已验证：把字段加回 `memory-read` 后测试立即失败。
+- **只读不挂 execution。** `execution:"host_required"` 表示「引擎记下了计划，等宿主执行」，只属于写操作。`memory-read`、`read-source` 等读操作曾误返该字段，会让通用客户端以为还欠引擎一个动作；现已移除，`read-source` 的 binary 分支用更精确的 `extraction_required` 表达「需要抽取」（native 宿主可自动 OCR/PDF，未配置时由外部完成）。`agent/sources_wbtest.mbt` 直接驱动这些 op 断言字段缺席（而不是只查字典），并已验证：把字段加回 `memory-read` 后测试立即失败。
 - **陪伴元数据由宿主提供，引擎不推断。** `importance`（0..1）与 `emotion`（valence/arousal/dominance + 标签）随提交写入并进入身份哈希；`layer` 同样进入身份，`episode` 只能由 `memory-promote` 产生。`memory-supersede` 未显式覆盖时继承旧值。`use_count` 是非身份的用量信号，由 `memory-use` 单调累加。加权排序、三层衰减与情景提升分别在 M2/M4/M3 交付。
 - **预取不写入，使用由宿主显式回报。** `memory-prefetch` 是只读操作，不更新任何状态。A5 的 Autodream 要归档「长期未用于前台交互」的记忆，这需要一个引擎无法从读取行为推断的信号，因此由 `memory-use` 批量登记 `last_used_at`；`memory-list` 返回该字段，宿主据此决定归档对象，`pinned` 则保护低频但重要的记忆。
 

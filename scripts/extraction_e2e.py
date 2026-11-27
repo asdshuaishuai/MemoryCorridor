@@ -19,6 +19,7 @@ proves the new state directory survives the pack whitelist.
 """
 import hashlib
 import json
+import os
 import re
 import struct
 import subprocess
@@ -29,6 +30,9 @@ from io import BytesIO
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+# This suite pins the manual sidecar path; a locally installed adapter must not
+# turn its minimal PNG into an automatic OCR source.
+os.environ["MEMORYCORRIDOR_OCR"] = "off"
 EXE = REPO / "_build/native/debug/build/cli/cli.exe"
 CHECKS = []
 

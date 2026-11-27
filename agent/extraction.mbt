@@ -1,11 +1,11 @@
 // Host-side extraction sidecars.
 //
-// OCR and PDF text extraction are model abilities that live outside the engine
-// (AGENTS.md: MoonBit core must not call a model or the network). This module is
-// the intake channel for those results: the host runs its own extractor, then
-// submits the text here. A sidecar is bound to the exact registered bytes it was
-// extracted from, so it stops applying the moment those bytes change or the
-// source is revoked. Nothing in this file calls out to a model.
+// OCR and PDF text extraction are model abilities outside the engine core
+// (AGENTS.md: base → agent must not call a model or the network). The native
+// host may run a local adapter and book its result here; this module only
+// validates and records, and never calls a model itself. A sidecar is bound to
+// the exact registered bytes it was extracted from, so it stops applying the
+// moment those bytes change or the source is revoked.
 
 // The sidecar for a given source digest, but only through the catalog: a
 // host-dropped file at that path is not a registered entry and must never be

@@ -69,6 +69,7 @@ python3 scripts/quality_eval.py
 python3 scripts/multidomain_eval.py
 python3 scripts/model_quality_eval.py
 python3 scripts/office_e2e.py
+python3 scripts/ocr_native_e2e.py
 python3 scripts/extraction_e2e.py
 python3 scripts/htmldoc_e2e.py
 python3 scripts/ocr_e2e.py

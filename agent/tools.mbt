@@ -14,7 +14,7 @@ pub fn tools() -> Array[Tool] {
     { name: "scan", description: "登记 raw 变更，创建分析工单并传播来源失效", fields: [] },
     { name: "refresh", description: "重检并登记人类外部页面修改及来源变更；成功后重建缓存", fields: [] },
     { name: "plan", description: "列出可继续执行的持久化工单", fields: [] },
-    { name: "context", description: "读取工单、来源与既有页面；默认只展开引用该来源或同一命名空间的前 64 页全文（scope=related），scope=all 展开全部页面；返回 pages_total/pages_omitted 与完整页面哈希；OOXML 原件附确定性抽取文本与 extraction 标记，其余非文本格式仍报 extraction_required", fields: ["order", "scope"] },
+    { name: "context", description: "读取工单、来源与既有页面；默认只展开引用该来源或同一命名空间的前 64 页全文（scope=related），scope=all 展开全部页面；返回 pages_total/pages_omitted 与完整页面哈希；OOXML/HTML 原件附确定性抽取文本与 extraction 标记；图片/PDF 在 native 宿主配置 OCR 适配器时自动入账并直接返回 source_text，未配置或 WASM 面仍报 extraction_required", fields: ["order", "scope"] },
     { name: "analysis-submit", description: "提交结构化分析，进入页面生成阶段；可用上下文 token 拒绝迟到结果", fields: ["order", "analysis", "context_token"] },
     { name: "draft-submit", description: "验证结构化页面并写入内容寻址 staging；不发布知识", fields: ["order", "context_token", "pages"] },
     { name: "commit", description: "校验 staging 草稿并编译发布索引", fields: ["order", "pages", "at", "context_token"] },

@@ -2,6 +2,7 @@
 """Independent ZIP reader/writer, byte-level mutations and actual on-disk restore."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -12,6 +13,8 @@ import zlib
 
 REPO = Path(__file__).resolve().parents[1]
 EXE = REPO / "_build/native/debug/build/cli/cli.exe"
+# Keep binary fixtures on the explicit/manual extraction path.
+os.environ["MEMORYCORRIDOR_OCR"] = "off"
 CHECKS = []
 
 

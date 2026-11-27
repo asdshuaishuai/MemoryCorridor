@@ -28,3 +28,4 @@ python3 scripts/memory_e2e.py
 python3 scripts/dream_e2e.py
 python3 scripts/workspace_layer_e2e.py
 python3 scripts/project_wiki_bench.py
+python3 scripts/ocr_native_e2e.py

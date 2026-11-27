@@ -85,7 +85,7 @@
               （dream-close delta / commit / 检索）
 ```
 
-- **引擎（MoonBit）**：纯状态与提交计划；零模型、零网络、零时钟、零线程。
+- **核心（base → agent）**：纯状态与提交计划；零模型、零网络、零时钟、零线程（native OCR 适配器不在核心）。
 - **宿主 daemon（Python 参考实现）**：tick、调度、外部 LLM、投递、渲染适配。
 - **关闭开关**：`evo-policy enabled=false` 时，evo 周期与主动输出全部停止；
   daemon 退出或空转，不产生副作用。

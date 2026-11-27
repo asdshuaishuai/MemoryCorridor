@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Wire the macOS NLEmbedding host adapter into the real vector pipeline.
 
-The engine still does not import an OS framework. This script drives the same
-provider seam as embed-rs: provider-register -> embedding-plan -> os-embed ->
+The engine still does not import an OS framework. This script drives the host
+provider seam: provider-register -> embedding-plan -> os-embed ->
 embedding-submit -> rebuild -> search(query_vector). It skips cleanly when the
 adapter is not built or the platform is not macOS.
 

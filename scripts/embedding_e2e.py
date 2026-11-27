@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# A pseudo-PNG fixture must exercise the manual path, never an installed OCR.
+os.environ['MEMORYCORRIDOR_OCR'] = 'off'
 EXE = ROOT / '_build/native/debug/build/cli/cli.exe'
 
 with tempfile.TemporaryDirectory(prefix='corridor-embedding-') as work:

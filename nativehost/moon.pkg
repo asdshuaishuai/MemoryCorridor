@@ -6,4 +6,4 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/ref",
 }
-options(targets: { "host.mbt": ["native"] })
+options(targets: { "host.mbt": ["native"], "ocr.mbt": ["native"] })

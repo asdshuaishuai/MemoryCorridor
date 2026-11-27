@@ -6,13 +6,26 @@ archive contains the native binaries (CLI, MCP and the loopback web server),
 the `watch.py` adapter, a fixed selection of documents (`README.md`,
 `docs/protocol.md`, `docs/web.md`, `docs/visual-mbtmd.md`, `docs/pack-format.md`,
 `docs/wasm.md`, `docs/release.md`, `docs/ci.md`, `docs/memory.md`,
-`docs/extending.md`), and the project `LICENSE` and `NOTICE` — not the whole
+`docs/extending.md`, `docs/ocr.md`), and the project `LICENSE` and `NOTICE` — not the whole
 `docs/` tree. The tree ships documentation only: the verification and e2e
 scripts that those documents reference (`scripts/verify.sh`,
 `scripts/mutation_check.py`, `scripts/*_e2e.py`) live in the source repository,
 not in this archive. `manifest.json` records the target, platform,
 architecture, size, and SHA-256 of every payload file (the manifest describes itself by the archive checksum);
 the adjacent `.sha256` file covers the archive itself.
+
+## Native OCR payload (optional)
+
+When `adapters/ocr-rs/target/release/ocr-adapter` exists, the archive also
+carries `bin/ocr-adapter`. An embedded build (~61 MB) already contains the
+official MIT-licensed ONNX Runtime and the PP-OCRv4 mobile models, so no
+external runtime file is shipped. A non-embedded build (~18 MB) ships
+`libonnxruntime.dylib` (or the platform `.so`/`.dll`) beside it. Native CLI/MCP
+find the sibling automatically, so `scan`/`refresh` can dispatch OCR for
+imported PDF/image files without a manual adapter step. A host without the
+payload keeps the previous `extraction_required:true` fallback and may still
+use `extraction-submit`. License texts: `licenses/onnxruntime-MIT.txt`,
+`licenses/ppocr-Apache-2.0.txt`.
 
 The package is built for the host where the command runs. Cross-compilation is
 not implied: a Linux package requires a MoonBit toolchain and native compiler
@@ -40,8 +53,9 @@ complete MemoryCorridor service that needs neither Python nor a preinstalled was
 CLI. `libwasmedge` (~176 MB) is deliberately NOT folded into the tarball: it is an
 Apache-2.0 product of its own with its own channel, and `fetch_wasmedge.sh` pins it
 by checksum (darwin arm64 + linux x86_64 verified; other arches fail loudly rather
-than shipping an unpinned blob). This mirrors the OCR decision to keep the runtime
-library as a pinned fetch rather than vendoring it.
+than shipping an unpinned blob). Unlike the optional OCR runtime payload, which
+is copied from an already-built local artifact, `libwasmedge` remains a pinned
+fetch rather than a vendored blob.
 Windows packaging was removed with the Windows platform branches when the
 project moved to WASM-runtime delivery (`docs/wasm.md`); each archive's
 manifest records its own platform and architecture.

@@ -18,6 +18,10 @@ extern "c" fn unlock_native() -> Int = "mc_unlock"
 extern "c" fn check_native(path : Bytes) -> Int = "mc_check"
 #borrow(path, buf)
 extern "c" fn signature_native(path : Bytes, buf : Bytes, cap : Int) -> Int = "mc_signature"
+#borrow(source, buf)
+extern "c" fn ocr_native(source : Bytes, buf : Bytes, cap : Int, timeout_ms : Int) -> Int = "mc_ocr"
+#borrow(buf)
+extern "c" fn now_utc_native(buf : Bytes, cap : Int) -> Int = "mc_now_utc"
 
 fn cstr(value : String) -> Bytes raise @base.Fault {
   if value.contains_char('\u0000') { @base.fail("nul_in_path") }
@@ -128,4 +132,30 @@ pub fn check(path : String) -> Unit raise @base.Fault {
   if check_native(cstr(path)) != 0 {
     @base.fail("moon_check_failed: inspect stderr; install matching MoonBit toolchain")
   }
+}
+
+/// Host-side OCR adapter invocation. The native host resolves an installed
+/// adapter, runs it under the vault root with fixed argv, and returns
+/// `(status, stdout)`. Status 0 means success; negative values are the C
+/// helper's closed fallback classes (unavailable, timeout, overflow, exit,
+/// signal, internal). The engine core never reaches this function.
+pub fn ocr(source : String) -> (Int, String) raise @base.Fault {
+  @base.path(source)
+  let buffer = Bytes::new(2097152)
+  let size = ocr_native(cstr(source), buffer, buffer.length(), 120000)
+  if size < 0 { return (size, "") }
+  let output = try @utf8.decode(buffer[:size]) catch {
+    _ => raise @base.Fault("ocr_invalid_utf8")
+  }
+  (0, output)
+}
+
+/// Host wall clock for the sidecar's `submitted_at`. An explicit
+/// MEMORYCORRIDOR_OCR_AT override keeps tests and reproducible runs
+/// deterministic; normal hosts get UTC.
+pub fn now_utc() -> String raise @base.Fault {
+  let buffer = Bytes::new(64)
+  let size = now_utc_native(buffer, buffer.length())
+  if size <= 0 { @base.fail("clock_unavailable") }
+  try @utf8.decode(buffer[:size]) catch { _ => raise @base.Fault("clock_invalid") }
 }

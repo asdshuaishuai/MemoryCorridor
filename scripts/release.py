@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ["README.md", "LICENSE", "NOTICE", "docs/protocol.md", "docs/web.md",
+DOCS = ["README.md", "LICENSE", "NOTICE", "docs/protocol.md", "docs/ocr.md", "docs/web.md",
         "docs/visual-mbtmd.md", "docs/pack-format.md", "docs/wasm.md", "docs/release.md",
         "docs/ci.md", "docs/memory.md", "docs/extending.md"]
 
@@ -112,6 +112,25 @@ def main():
         # WasmEdge artifacts) stays deterministic instead of hard-failing.
         copy_optional(stage, "_build/wasm/debug/build/wasipure/wasipure.wasm", "wasm/wasipure.wasm")
         copy_optional(stage, "_build/wedge/corridor-wedge", "bin/corridor-wedge")
+        # Native OCR is optional payload: only ship a complete pair. The
+        # adapter embeds the models; the runtime stays a separate licensed
+        # library next to it, exactly where the adapter looks first.
+        ocr_adapter = ROOT / "adapters/ocr-rs/target/release/ocr-adapter"
+        ocr_runtime = next((ROOT / "adapters/ocr-rs/runtime" / name for name in
+                            ("libonnxruntime.dylib", "libonnxruntime.so", "onnxruntime.dll")
+                            if (ROOT / "adapters/ocr-rs/runtime" / name).is_file()), None)
+        # An adapter built with the runtime embedded is ~61 MB (models 15 MB +
+        # runtime 43 MB). Only copy the external dylib for a non-embedded
+        # build; otherwise the release would carry the runtime twice.
+        ocr_embedded = ocr_adapter.is_file() and ocr_adapter.stat().st_size > 40 * 1024 * 1024
+        if ocr_adapter.is_file() and (ocr_embedded or ocr_runtime is not None):
+            copy_optional(stage, str(ocr_adapter.relative_to(ROOT)), "bin/ocr-adapter")
+            if ocr_runtime is not None and not ocr_embedded:
+                copy_optional(stage, str(ocr_runtime.relative_to(ROOT)), "bin/" + ocr_runtime.name)
+        # NOTICE names these two files regardless of whether this host built
+        # the optional payload, so keep the license texts in every archive.
+        for license_name in ("onnxruntime-MIT.txt", "ppocr-Apache-2.0.txt"):
+            copy_optional(stage, "licenses/" + license_name, "licenses/" + license_name)
         copy_file(stage, "scripts/fetch_wasmedge.sh", "scripts/fetch_wasmedge.sh")
         copy_file(stage, "scripts/build_wedge_host.sh", "scripts/build_wedge_host.sh")
         for executable in (stage / "bin").iterdir():

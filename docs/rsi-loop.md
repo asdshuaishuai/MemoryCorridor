@@ -70,7 +70,7 @@ dream-work-list                              # 队列视图（含背压计数/�
 
 ## 三·六、宿主自治驱动（续三十四已交付）
 
-`scripts/rsi_agent_driver.py` 把上述契约串成可运行的一圈，引擎仍零模型调用：
+`scripts/rsi_agent_driver.py` 把上述契约串成可运行的一圈，核心仍零模型调用：
 
 1. 有 open 轮次则处理它；否则 `dream-due`，只在到期时 `dream-plan` →
    `dream-open`（baseline 取 plan 的精确指纹）。
@@ -87,7 +87,7 @@ dream-work-list                              # 队列视图（含背压计数/�
 
 边界：驱动只写 `state/dreams` 与 `state/dream-work` 的记录，**绝不写知识页**；页面
 提案仍由宿主暂存并经既有 commit 流应用。驱动是宿主适配层，不进入 MoonBit 核心，
-也不改变「引擎不调用模型」的分层。
+也不改变「核心不调用模型」的分层。
 
 staged 提案的正式应用（续六十已交付）：`scripts/rsi_apply_proposal.py` 是**人工**的
 应用工具——人选择一份 `staging/dream-work/<task>.md` 草稿与使其成立的 raw 来源，

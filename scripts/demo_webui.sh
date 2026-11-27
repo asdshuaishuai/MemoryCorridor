@@ -149,9 +149,7 @@ cat <<EOF
     "$CLI_BIN" <<< '{"op":"page-redundancy","vault":"'$VAULT'","space":{"id":"demo-v1","dimensions":2},"cosine_floor":0.995}'   # 调高档: 0.9676 对消失（续二十七）
     "$CLI_BIN" <<< '{"op":"search","vault":"'$VAULT'","query":"青瓷","limit":5}' | python3 -m json.tool
     "$CLI_BIN" <<< '{"op":"lint","vault":"'$VAULT'"}'   # 冗余 warning 谓词
-  多模态（需 fetch_clip.sh + cargo build adapters/embed-rs，可选）:
-    往 $VAULT/raw 放一张 .png 并写页面引用它，再用 demo provider 换
-    capabilities=["embed","embed-multimodal"] 注册后 embedding-plan 会发图片任务。
+  外部向量由宿主提供；仓库不附带模型适配器，OS 引擎可由 adapters/os-embed/os-embed --probe 检测。
 EOF
 
 wait $SERVER

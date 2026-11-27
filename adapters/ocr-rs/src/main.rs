@@ -1,6 +1,8 @@
 // Native host OCR / PDF text adapter for the MemoryCorridor extraction
-// sidecar channel. One static binary (ONNX Runtime linked in, PP-OCRv4 mobile
-// models and the 6623-char dictionary embedded), no Python runtime.
+// sidecar channel. One self-contained binary (PP-OCRv4 mobile models, the
+// 6623-char dictionary, and the official ONNX Runtime dylib embedded), no
+// Python runtime. If built without runtime/, it falls back to an external
+// ORT_DYLIB_PATH or sibling dylib.
 //
 // Pipeline mirrors RapidOCR/PaddleOCR:
 //   det: resize (min side >= 736, rounded to x32), ImageNet normalize on BGR,
@@ -28,7 +30,12 @@ pub extern "C" fn __isPlatformVersionAtLeast(_p: u32, _major: u32, _minor: u32, 
 }
 use image::{GenericImageView, ImageReader};
 use ort::session::Session;
+use std::fs;
+use std::io::Write;
+use std::path::PathBuf;
 use std::process::exit;
+
+include!(concat!(env!("OUT_DIR"), "/embedded_ort.rs"));
 
 const DET_MODEL: &[u8] = include_bytes!("../models/ch_PP-OCRv4_det_infer.onnx");
 const REC_MODEL: &[u8] = include_bytes!("../models/ch_PP-OCRv4_rec_infer.onnx");
@@ -57,12 +64,74 @@ struct Box2 {
 
 // ---------------- ORT runtime (load-dynamic) -----------------------------
 
-// The ONNX Runtime is a plain C dylib loaded at start. Resolution order:
-// $ORT_DYLIB_PATH, then libonnxruntime.dylib next to this executable. This
-// deliberately avoids ort-sys' static "download-binaries" build, which
-// mis-executes the PP-OCRv4 recognition graph on macOS/arm64 (det fine, rec
-// collapses to one token) while the official dylib is correct.
+// The ONNX Runtime is a plain C dylib loaded at start. An embedded build
+// writes its bytes to a private temp file and dlopens that first; otherwise
+// resolution is $ORT_DYLIB_PATH, then libonnxruntime.dylib next to this
+// executable. This deliberately avoids ort-sys' static "download-binaries"
+// build, which mis-executes the PP-OCRv4 recognition graph on macOS/arm64
+// (det fine, rec collapses to one token) while the official dylib is correct.
+fn embedded_runtime_path(bytes: &[u8]) -> Result<PathBuf, String> {
+    let suffix = if cfg!(target_os = "windows") {
+        "dll"
+    } else if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    let directory = std::env::temp_dir();
+    for attempt in 0..64 {
+        let path = directory.join(format!(
+            "memorycorridor-ort-{}-{}.{}",
+            std::process::id(),
+            attempt,
+            suffix
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("writing embedded ORT: {error}"));
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("creating embedded ORT temp file: {error}")),
+        }
+    }
+    Err("creating embedded ORT temp file: no unused name".to_string())
+}
+
+fn embedded_environment(bytes: &[u8]) -> Result<ort::environment::Environment, String> {
+    let path = embedded_runtime_path(bytes)?;
+    let result = ort::init_from(&path)
+        .map_err(|e| format!("loading embedded ORT {}: {e}", path.display()))?
+        .build()
+        .map_err(|e| e.to_string());
+    // On Unix the mapped dylib remains valid after unlink. Windows keeps the
+    // temp file until process exit because a loaded DLL cannot be deleted.
+    #[cfg(unix)]
+    {
+        let _ = fs::remove_file(&path);
+    }
+    result
+}
+
 fn ort_environment() -> Result<ort::environment::Environment, String> {
+    if let Some(bytes) = EMBEDDED_ORT {
+        match embedded_environment(bytes) {
+            Ok(environment) => return Ok(environment),
+            Err(error) => {
+                eprintln!("embedded ONNX Runtime unavailable ({error}); trying external runtime")
+            }
+        }
+    }
     if let Ok(p) = std::env::var("ORT_DYLIB_PATH") {
         if !p.is_empty() {
             if !std::path::Path::new(&p).exists() {

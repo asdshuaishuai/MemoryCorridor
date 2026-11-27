@@ -15,6 +15,8 @@ import subprocess
 import sys
 
 REPO = Path(__file__).resolve().parents[1]
+# Keep the fixture independent from any locally installed OCR adapter.
+os.environ["MEMORYCORRIDOR_OCR"] = "off"
 arguments = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
 with_map = "--with-map" in sys.argv[1:]
 ROOT = Path(arguments[0] if arguments else '/tmp/corridor-rich-reading').resolve()

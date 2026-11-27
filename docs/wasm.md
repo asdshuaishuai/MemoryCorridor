@@ -2,7 +2,7 @@
 
 WASM 宿主持久化回执若包含 revision、format 或 sha256 字段，会被逐项核对本次快照封套；错误回执会拒绝发布并保留旧内存快照。
 
-模块有两个面。**纯计算面**（`execute()`，wasm 与 wasm-gc 双目标）保持零宿主导入：目录/页面/视觉声明解析、基于宿主快照的自包含 HTML 渲染、关键词与暴力向量检索、UTF-8 预算上下文装配、页面快照图查询（`graph`/`neighbors`/`path`/`weighted-path`/`insights`）；它不具备磁盘事务，任何需要 vault 的操作不在该面。**服务面**（`service_execute()`，仅 wasm 目标）通过 8 个 `corridor-host` 宿主导入承载**全引擎**：与 native CLI 相同的 139 个 op（含 commit、memory、impact、inbox、evidence、extraction、dream、evo 的完整工单与事务语义）经 `@agent.dispatch_with_catalog` 在 WASM 运行时内执行，由 `hosts/wasm-host.py` 这样的薄宿主提供文件系统、flock 锁与 `moon check` 子进程。`tools` 在两个面都返回全引擎工具字典。
+模块有两个面。**纯计算面**（`execute()`，wasm 与 wasm-gc 双目标）保持零宿主导入：目录/页面/视觉声明解析、基于宿主快照的自包含 HTML 渲染、关键词与暴力向量检索、UTF-8 预算上下文装配、页面快照图查询（`graph`/`neighbors`/`path`/`weighted-path`/`insights`）；它不具备磁盘事务，任何需要 vault 的操作不在该面；OCR/PDF 自动抽取同样不在该面（native-only，见 `docs/ocr.md`）。**服务面**（`service_execute()`，仅 wasm 目标）通过 8 个 `corridor-host` 宿主导入承载**全引擎**：与 native CLI 相同的 139 个 op（含 commit、memory、impact、inbox、evidence、extraction、dream、evo 的完整工单与事务语义；`context` 不自动 OCR，仍报 `extraction_required`）经 `@agent.dispatch_with_catalog` 在 WASM 运行时内执行，由 `hosts/wasm-host.py` 这样的薄宿主提供文件系统、flock 锁与 `moon check` 子进程。`tools` 在两个面都返回全引擎工具字典。
 
 ```sh
 moon build --target wasm wasm
@@ -59,7 +59,7 @@ wasipure 边界场景经它全绿。这给出「引擎自带运行时」的分�
 
 WASM 页面解析与 native 一致接受 `[[page#标题]]` 标题锚点；锚点只用于渲染路由，图依赖仍按页面 id 建立。
 
-`view` 接收 `{text}` 并解析 `views/*.mbt.md` 的受限声明。`render-view` 接收 `{text,pages,sources,fingerprint}`：`pages` 为 `{entry,text}`，`sources` 为 `{entry,text,image}`，WASM 会重新解析声明、页面 frontmatter/wikilink、来源绑定和文本 SHA-256，再调用与 native 相同的 MoonBit HTML renderer。图片的 `image` 必须是与目录格式匹配的 data URL；WASM 解码后重新计算图片字节 SHA-256，binary/image 的展示正文由引擎生成，不信任宿主传入文本。返回 `html`、页面/来源数量和声明指纹。WASM 不读取文件、不联网、不执行脚本。渲染操作不写入快照，宿主如需发布仍须使用自己的原子持久化边界。
+`view` 接收 `{text}` 并解析 `views/*.mbt.md` 的受限声明。`render-view` 接收 `{text,pages,sources,fingerprint}`：`pages` 为 `{entry,text}`，`sources` 为 `{entry,text,image}`，WASM 会重新解析声明、页面 frontmatter/wikilink、来源绑定和文本 SHA-256，再调用与 native 相同的 MoonBit HTML renderer。图片的 `image` 必须是与目录格式匹配的 data URL；WASM 解码后重新计算图片字节 SHA-256，binary/image 的展示正文由引擎生成，不信任宿主传入文本。返回 `html`、页面/来源数量和声明指纹。WASM 不读取文件、不联网、不执行脚本；OCR 适配器只在 native 宿主运行。渲染操作不写入快照，宿主如需发布仍须使用自己的原子持久化边界。
 
 纯检索的 `excerpt` 与 native 关键词/混合检索共用查询段落定位，最多 360 UTF-8 字节且不拆 Unicode 字符；已在两个目标核对长页后段命中与 emoji 字节边界。带来源、重复引用和预算的完整上下文装配仍是 native 协议能力，未新增 WASM 会话操作。
 

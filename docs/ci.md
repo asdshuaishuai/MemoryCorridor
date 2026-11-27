@@ -27,7 +27,7 @@ Local changes use the tiered gate: `scripts/quick_verify.sh` runs `moon check
 (`e2e.py`, `interop_e2e.py`, `retrieval_e2e.py`, `embedding_e2e.py`,
 `os_embed_e2e.py`, `os_embed_probe_e2e.py`, `vector_engine_e2e.py`,
 `memory_e2e.py`, `dream_e2e.py`, `workspace_layer_e2e.py`,
-`project_wiki_bench.py`). The full `scripts/verify.sh`
+`project_wiki_bench.py`, `ocr_native_e2e.py`). The full `scripts/verify.sh`
 (including the mutation matrix and all WASM/Web faces) is reserved for release,
 nightly and CI; it is not the per-change default.
 
@@ -45,7 +45,7 @@ checked-in Swift source, and restores the original; a custom `OS_EMBED_BIN`
 skips that check. `os_embed_probe_e2e.py` guards the Swift adapter's imports
 and probe tokens and bans fetch tokens in the gate files; `vector_engine_e2e.py`
 guards the helper and its own source against network tokens and does the same
-gate check. None of these paths downloads a model or touches the network.
+gate check. None of these paths downloads a model or touches the network. `ocr_native_e2e.py` uses a stub adapter and runs on Linux and macOS; the real `ocr_e2e.py` is optional and SKIPs unless a locally built adapter and ONNX Runtime are present (it never fetches them).
 
 Cross-platform delivery is the wasm service runtime's job: the engine module
 runs under any WASM runtime with a thin host (see `docs/wasm.md`), so the

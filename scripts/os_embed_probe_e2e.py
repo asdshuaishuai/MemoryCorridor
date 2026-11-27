@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract and reference-flow test for the host-side `os-embed --probe` verdict.
+"""Contract and reference-flow test for the host-side `adapters/os-embed/os-embed --probe` verdict.
 
 This is deliberately not a shipped host: hosts/ contains no probe consumer. It
 (1) validates the versioned verdict with a stub adapter, (2) proves that an

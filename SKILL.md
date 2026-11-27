@@ -1,6 +1,6 @@
 # MemoryCorridor Agent 使用指南
 
-面向外部 Agent/宿主的操作指南：如何驱动 MemoryCorridor 引擎完成摄入、检索与维护。所有操作名、字段与边界均以 [协议与工单](docs/protocol.md) 为准；本文件只是入口摘要。引擎由 MoonBit 实现，**不调用模型或网络**：分析、总结、向量生成和联网检索都由外部调用方完成，引擎只做校验、记账与确定性检索（CLI/MCP 接收数据，不接收可执行回调）。
+面向外部 Agent/宿主的操作指南：如何驱动 MemoryCorridor 引擎完成摄入、检索与维护。所有操作名、字段与边界均以 [协议与工单](docs/protocol.md) 为准；本文件只是入口摘要。引擎由 MoonBit 实现，`base → agent` **不调用模型或网络**：分析、总结、向量生成和联网检索都由外部调用方完成，引擎只做校验、记账与确定性检索（CLI/MCP 接收数据，不接收可执行回调）。唯一例外是 native 宿主在 `context` 抽取阶段调用本地 OCR 适配器（WASM 不提供）。
 
 ## 连接与会话
 
@@ -24,10 +24,10 @@
 ## 检索与读取
 
 - `search` 是主入口：`budget` 1..65536、`limit` 1..100、`hops` 0..2、`dedup` 默认 `exact`（可 `similar` 合并分词序列相同的排版变体，双侧 ≥64 UTF-8 字节）、`spread` 默认 `ranked`（可 `even` 均分预算）。命中按图边权（互链 3.0、共同来源 4.0）除以跳跃距离补入上下文候选；`hits` 本身仍是关键词/向量排名。可选 `query_vector` 或 `vector_candidates` 参与融合，两者互斥。
-- `retrieve` 是块级视图：返回 `<页面ID>#<块序号>` 命中与 `text_rank`/`vector_rank`。可选 `namespace=raw/<仓库>`；可选 `query_vector` + `provider` 把向量路切到宿主系统向量，响应 `lanes.vector:"system"` 并回显 `vector_space`；不传则如实回退 `vector:"algo"`/`reason:"no_system_engine"`。macOS 可用 `scripts/build_os_embed.sh` 构建 `NLEmbedding` 适配器（中文 640 维/英文 512 维），由 `scripts/os_embed_e2e.py` 验证；核心不调用 OS 框架。宿主可先跑 `adapters/os-embed/os-embed --probe`（或 `python3 -I scripts/vector_engine.py probe|ensure|query-text|register`）：只有 `available:true` 才由宿主显式注册 provider 并提交向量；`available:false` 是干净回退（退出 0、vault 零写、不合成查询向量），不是错误。算法向量始终是默认与兜底；该路径不引入新向量模型、不下载模型、不联网，`embed-rs`/bge 只是可选旧参考实现，不是必装或默认。
+- `retrieve` 是块级视图：返回 `<页面ID>#<块序号>` 命中与 `text_rank`/`vector_rank`。可选 `namespace=raw/<仓库>`；可选 `query_vector` + `provider` 把向量路切到宿主系统向量，响应 `lanes.vector:"system"` 并回显 `vector_space`；不传则如实回退 `vector:"algo"`/`reason:"no_system_engine"`。macOS 可用 `scripts/build_os_embed.sh` 构建 `NLEmbedding` 适配器（中文 640 维/英文 512 维），由 `scripts/os_embed_e2e.py` 验证；核心不调用 OS 框架。宿主可先跑 `adapters/os-embed/os-embed --probe`（或 `python3 -I scripts/vector_engine.py probe|ensure|query-text|register`）：只有 `available:true` 才由宿主显式注册 provider 并提交向量；`available:false` 是干净回退（退出 0、vault 零写、不合成查询向量），不是错误。算法向量始终是默认与兜底；该路径不引入新向量模型、不下载模型、不联网，仓库也不附带模型向量适配器。
 - 响应的 `used` 精确等于所有块 `text` 的 UTF-8 字节数；`estimated_tokens`/`truncated` 是启发式成本参考，不是特定模型的 tokenizer 值，预算语义始终是 UTF-8 字节。`excerpt` 最多 360 UTF-8 字节。
 - 正文区间一律是**解析后 `Page.body` 的 UTF-8 字节半开区间**（`offset_unit:"body_utf8_bytes"`），不是 frontmatter、UTF-16 或原文件字节位置；按区间截取即可重建引用文本。
-- 读取面：`read-page` 按页 id 读正文与证据、`read-source` 按 id 读 raw 原件、`page-history` 看页面版本时间线、`topics` 只读浏览 `synthesis` 主题层、`tree`/`graph`/`neighbors`/`path`/`weighted-path`/`insights` 探索图。`read-source` 可选 `start`/`end`（0..16777216，与 evidence 锚点同约定）精确核对字节；整篇读取按 65536 字节截断并置 `truncated`；binary/image 只报告体积并置 `extraction_required`，抽取由宿主负责：宿主跑完 OCR/PDF 抽取后用 `extraction-submit`（`source/kind/extractor/version/text/at`）入账，`context` 即返回该正文与 `extraction:{kind,extractor,version,bound_sha256,source_sha256}`；sidecar 与登记字节哈希强绑定，来源撤销或字节漂移后不再命中，OOXML 走引擎自抽通道不可被外部覆盖（`extraction_override`）。
+- 读取面：`read-page` 按页 id 读正文与证据、`read-source` 按 id 读 raw 原件、`page-history` 看页面版本时间线、`topics` 只读浏览 `synthesis` 主题层、`tree`/`graph`/`neighbors`/`path`/`weighted-path`/`insights` 探索图。`read-source` 可选 `start`/`end`（0..16777216，与 evidence 锚点同约定）精确核对字节；整篇读取按 65536 字节截断并置 `truncated`；binary/image 只报告体积并置 `extraction_required`，`read-source` 不触发 OCR。`scan`/`refresh` 在 native 宿主发现同目录 `ocr-adapter` 或 `MEMORYCORRIDOR_OCR_BIN` 时，会按导入的 PDF/图片工单自动跑 OCR/PDF 抽取、校验登记字节哈希并经既有 `extraction-submit` 入账；随后 `context` 直接返回正文与 `extraction:{kind,extractor,version,bound_sha256,source_sha256}`（context 对未成功导入的工单仍会兜底重试）。无适配器或失败时回退为 `extraction_required:true`，宿主仍可手工 `extraction-submit`。sidecar 与登记字节哈希强绑定，来源撤销或字节漂移后不再命中，OOXML 走引擎自抽通道不可被外部覆盖（`extraction_override`）。
 - 证据：`evidence-submit` 提交 1..128 项 `{source,body_start,body_end,quote}`，必须满足 `utf8_slice(body,start,end)==quote`；可选 `source_start/source_end/source_quote` 进一步核验 raw 原文区间。相同内容重试返回 `replayed`；来源撤销或漂移后记录保留但显式 `valid:false`。
 
 ## 终身记忆与宿主判断边界
@@ -69,6 +69,6 @@ MCP 工具名对应 `corridor_memory_prefetch`、`corridor_workspace_wiki_plan`�
 
 ## 明确的边界
 
-- 引擎没有内嵌任何模型：语义总结、向量、冲突取舍、"是否值得建议" 都是宿主/模型的判断，引擎只提供候选、校验和账本。
+- 核心不内嵌任何模型：语义总结、向量、冲突取舍、"是否值得建议" 都是宿主/模型的判断，引擎只提供候选、校验和账本。唯一例外是 native OCR 适配器内嵌 PP-OCRv4 与 ONNX Runtime；WASM 与 `base→agent` 不加载。
 - WASM 入口只依赖纯核心，只执行纯函数 op：目录/页面/视图解析、关键词与向量检索、上下文装配、`graph` 系图查询和视觉渲染，以及 UTF-8 快照会话（配宿主编译回调，事务在实例内串行执行）；memory/impact/inbox 等需要 vault 磁盘或持久工单的操作都不在此面，宿主应改用 CLI/MCP。详见 [WASM 边界](docs/wasm.md)；完整操作面在 native CLI/MCP。
 - 引擎交付独立服务与 Web 传输层；跨 vault 用户级记忆未实现（`scope` 仅 `project`/`session`），实现进度见 [tasks.md](specs/engine/tasks.md)。

@@ -11,6 +11,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
+#include <poll.h>
+#include <signal.h>
+#include <time.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 static int root_fd = -1, lock_fd = -1;
 int mc_root(const char *path) {
   if (root_fd >= 0) close(root_fd);
@@ -141,4 +148,110 @@ int mc_check(const char *path) {
     execlp("moon","moon","check","--deny-warn","--target-dir",".corridor/compiler",path,(char*)NULL); _exit(127); }
   int status; while(waitpid(pid,&status,0)<0) { if(errno!=EINTR) return -1; }
   return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+// Resolve the OCR adapter without consulting PATH or the vault. A configured
+// path must be absolute; otherwise the only accepted location is the native
+// host's own directory (the release package layout). Returning -2 means "not
+// configured/disabled" and is a normal fallback, not a failed request.
+static int mc_ocr_bin(char *dst, size_t cap) {
+  const char *disabled = getenv("MEMORYCORRIDOR_OCR");
+  if (disabled && (!strcmp(disabled, "off") || !strcmp(disabled, "0"))) return -2;
+  const char *configured = getenv("MEMORYCORRIDOR_OCR_BIN");
+  if (configured && configured[0]) {
+    if (configured[0] != '/' || strlen(configured) >= cap) return -1;
+    if (access(configured, X_OK) != 0) return -2;
+    snprintf(dst, cap, "%s", configured);
+    return 0;
+  }
+  char exe[PATH_MAX], resolved[PATH_MAX];
+#if defined(__APPLE__)
+  uint32_t size = sizeof(exe);
+  if (_NSGetExecutablePath(exe, &size) != 0) return -1;
+#else
+  ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+  if (n <= 0 || n >= (ssize_t)sizeof(exe) - 1) return -1;
+  exe[n] = '\0';
+#endif
+  const char *base = realpath(exe, resolved) ? resolved : exe;
+  char *slash = strrchr(base, '/');
+  if (!slash) return -1;
+  *slash = '\0';
+  int n = snprintf(dst, cap, "%s/ocr-adapter", base);
+  if (n <= 0 || n >= (int)cap) return -1;
+  return access(dst, X_OK) == 0 ? 0 : -2;
+}
+
+static long long mc_monotonic_ms(void) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+  return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+// Run the adapter under the vault root with a fixed argv, bounded stdout and a
+// hard timeout. The child never sees a shell, PATH lookup, or stdin. Values:
+// >=0 bytes written; -1 internal/spawn; -2 adapter unavailable; -3 timeout;
+// -4 output overflow; -5 non-zero exit; -6 signal.
+int mc_ocr(const char *source, unsigned char *buf, int cap, int timeout_ms) {
+  if (!source || !source[0] || source[0] == '/' || dot_segment(source)) return -1;
+  char bin[PATH_MAX];
+  int available = mc_ocr_bin(bin, sizeof(bin));
+  if (available != 0) return available;
+  int fds[2];
+  if (pipe(fds) != 0) return -1;
+  pid_t pid = fork();
+  if (pid < 0) { close(fds[0]); close(fds[1]); return -1; }
+  if (pid == 0) {
+    if (fchdir(root_fd) != 0) _exit(126);
+    if (root_fd >= 0) close(root_fd);
+    if (lock_fd >= 0) close(lock_fd);
+    int devnull = open("/dev/null", O_RDONLY);
+    if (devnull >= 0) { dup2(devnull, 0); close(devnull); }
+    dup2(fds[1], 1);
+    close(fds[0]);
+    close(fds[1]);
+    char *argv[] = { bin, (char *)source, "--json", (char *)NULL };
+    execv(bin, argv);
+    _exit(127);
+  }
+  close(fds[1]);
+  int used = 0, timed_out = 0, overflow = 0;
+  long long deadline = mc_monotonic_ms() + (timeout_ms > 0 ? timeout_ms : 120000);
+  for (;;) {
+    long long remaining = deadline - mc_monotonic_ms();
+    if (remaining <= 0) { timed_out = 1; break; }
+    struct pollfd pfd = { fds[0], POLLIN, 0 };
+    int ready = poll(&pfd, 1, (int)remaining);
+    if (ready < 0) { if (errno == EINTR) continue; break; }
+    if (ready == 0) { timed_out = 1; break; }
+    ssize_t got = read(fds[0], buf + used, (size_t)(cap - used));
+    if (got < 0) { if (errno == EINTR) continue; break; }
+    if (got == 0) break;
+    used += (int)got;
+    // The output budget is a hard ceiling; do not probe the pipe again, or a
+    // child that wrote exactly `cap` bytes without exiting could block us.
+    if (used == cap) { overflow = 1; break; }
+  }
+  close(fds[0]);
+  if (timed_out || overflow) kill(pid, SIGKILL);
+  int status = 0;
+  while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) return -1; }
+  if (timed_out) return -3;
+  if (overflow) return -4;
+  if (!WIFEXITED(status)) return -6;
+  if (WEXITSTATUS(status) != 0) return -5;
+  return used;
+}
+
+int mc_now_utc(char *buf, int cap) {
+  const char *override = getenv("MEMORYCORRIDOR_OCR_AT");
+  if (override && override[0]) {
+    int n = snprintf(buf, (size_t)cap, "%s", override);
+    return n > 0 && n < cap ? n : -1;
+  }
+  time_t now = time(NULL);
+  struct tm tm;
+  if (!gmtime_r(&now, &tm)) return -1;
+  size_t n = strftime(buf, (size_t)cap, "%Y-%m-%dT%H:%M:%SZ", &tm);
+  return n > 0 ? (int)n : -1;
 }

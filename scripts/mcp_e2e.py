@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Actual JSON-RPC process lifecycle and dictionary parity, without an SDK shim."""
 import json
+import os
 from pathlib import Path
 import select
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# The explicit extraction-submit probe below is the manual path.
+os.environ["MEMORYCORRIDOR_OCR"] = "off"
 with tempfile.TemporaryDirectory(prefix="corridor-mcp-") as work:
     with tempfile.TemporaryFile(mode="w+") as log:
         p = subprocess.Popen([str(ROOT / "_build/native/debug/build/mcp/mcp.exe")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)

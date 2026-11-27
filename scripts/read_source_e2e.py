@@ -2,12 +2,15 @@
 """Verify read-source: registered metadata, digest verification, byte ranges for
 evidence anchors, binary extraction, revoked sources and bounded reads."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = ROOT / "_build/native/debug/build/cli/cli.exe"
+# Keep binary fixtures on the explicit/manual extraction path.
+os.environ["MEMORYCORRIDOR_OCR"] = "off"
 
 
 def call(root, op, error=None, **fields):

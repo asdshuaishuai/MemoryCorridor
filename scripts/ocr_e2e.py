@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""End-to-end acceptance for the native Rust OCR/PDF adapter feeding the
-engine's extraction sidecar (docs/ocr.md).
+"""End-to-end acceptance for direct native OCR/PDF intake (docs/ocr.md).
 
-The adapter under test is adapters/ocr-rs: one native binary (ONNX Runtime
-loaded dynamically via libonnxruntime, PP-OCRv4 mobile models embedded),
-zero Python in the delivery. This test is a dev-time harness: it only needs
-Python to *manufacture* CJK raster fixtures with a system font. When the
-binary, the runtime dylib or the fixture toolchain is missing it SKIPS with
-an explicit message (exit 0) instead of downloading models - the engine
-sidecar accounting itself is fully gated hermetically by extraction_e2e.py
-in verify.sh.
+The adapter under test is adapters/ocr-rs: one self-contained binary (PP-OCRv4
+mobile models and the official ONNX Runtime dylib embedded by build.rs), zero
+Python in the delivery. This test is a dev-time harness: it only needs Python
+to *manufacture* CJK fixtures with a system font. A non-embedded build without
+the runtime dylib, or a missing fixture toolchain, SKIPS with an explicit
+message (exit 0) instead of downloading models. The digest/sidecar/fallback
+contracts are gated hermetically by ocr_native_e2e.py and extraction_e2e.py.
+
+The native host is now the caller: scan/refresh schedules OCR by imported
+PDF/image source, books the sidecar, and context serves source_text.
 
 Run:
-  cd adapters/ocr-rs && cargo build --release          # needs models/ (in git)
-  scripts/fetch_ort.sh                                 # runtime dylib (MIT, pinned)
+  scripts/fetch_ort.sh                                 # runtime build input
+  cd adapters/ocr-rs && cargo build --release          # build.rs embeds it
   OCR_BIN=adapters/ocr-rs/target/release/ocr-adapter python3 scripts/ocr_e2e.py
   # fixture renderer (dev-only): FIXTURE_PYTHON=/tmp/ocr-venv/bin/python (pillow+fpdf2)
 """
@@ -29,6 +30,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "_build/native/debug/build/cli/cli.exe"
 OCR_BIN = Path(os.environ["OCR_BIN"]) if os.environ.get("OCR_BIN") else None
+RUNTIME = Path(os.environ.get("ORT_DYLIB_PATH") or
+               REPO / "adapters/ocr-rs/runtime/libonnxruntime.dylib")
 FIXTURE_PYTHON = os.environ.get("FIXTURE_PYTHON") or shutil.which("python3")
 DOC = ["龙泉窑青瓷以粉青与梅子青著称",
        "哥窑以开片釉闻名紫口铁足为辨识特征",
@@ -104,10 +107,18 @@ def main():
     if OCR_BIN is None or not Path(OCR_BIN).exists():
         print("SKIP ocr_e2e: set OCR_BIN to the native adapter "
               "(cd adapters/ocr-rs && cargo build --release). Engine sidecar "
-              "accounting is still gated by extraction_e2e.py in verify.sh.")
+              "accounting is still gated by ocr_native_e2e.py and "
+              "extraction_e2e.py in verify.sh.")
         return 0
-    os.environ.setdefault(
-        "ORT_DYLIB_PATH", str(REPO / "adapters/ocr-rs/runtime/libonnxruntime.dylib"))
+    embedded_runtime = Path(OCR_BIN).stat().st_size > 40 * 1024 * 1024
+    if not RUNTIME.is_file() and not embedded_runtime:
+        print("SKIP ocr_e2e: ONNX Runtime is neither embedded in the adapter "
+              "nor present at %s (run scripts/fetch_ort.sh)" % RUNTIME)
+        return 0
+    if RUNTIME.is_file():
+        os.environ["ORT_DYLIB_PATH"] = str(RUNTIME)
+    os.environ["MEMORYCORRIDOR_OCR_BIN"] = str(Path(OCR_BIN).resolve())
+    os.environ["MEMORYCORRIDOR_OCR_AT"] = "2026-11-02T09:00:00Z"
     with tempfile.TemporaryDirectory(prefix="corridor-ocr-") as work:
         samples = Path(work) / "samples"; samples.mkdir()
         if not make_fixtures(samples):
@@ -119,28 +130,25 @@ def main():
         (root / "raw/板.png").write_bytes((samples / "plate.png").read_bytes())
         (root / "raw/扫描件.pdf").write_bytes((samples / "scan.pdf").read_bytes())
         (root / "raw/文本层.pdf").write_bytes((samples / "textlayer.pdf").read_bytes())
+        (root / "raw/颠倒.png").write_bytes((samples / "plate_upside.png").read_bytes())
         ok(root, "scan")
+        sidecars = list((root / "state/extractions").glob("*.json"))
+        assert len(sidecars) == 4, (len(sidecars), sidecars)
+        check("scan schedules OCR/PDF by imported PDF/image sources")
         orders = {o["source"]: o["id"] for o in ok(root, "plan")}
-        assert set(orders) == {"raw/板.png", "raw/扫描件.pdf", "raw/文本层.pdf"}, orders
+        assert set(orders) == {"raw/板.png", "raw/扫描件.pdf", "raw/文本层.pdf", "raw/颠倒.png"}, orders
 
         extracted = {}
+        fixtures = {"raw/板.png": "plate.png", "raw/扫描件.pdf": "scan.pdf",
+                    "raw/文本层.pdf": "textlayer.pdf", "raw/颠倒.png": "plate_upside.png"}
         for src in orders:
-            fixture = {"raw/板.png": "plate.png", "raw/扫描件.pdf": "scan.pdf",
-                       "raw/文本层.pdf": "textlayer.pdf"}[src]
-            extracted[src] = adapter_text(samples / fixture)
-        for src in ("raw/板.png", "raw/扫描件.pdf"):
+            extracted[src] = adapter_text(samples / fixtures[src])
+        for src in ("raw/板.png", "raw/扫描件.pdf", "raw/颠倒.png"):
             joined = extracted[src]["text"]
             assert "龙泉窑青瓷" in joined and "百分之一点五" in joined, (src, joined)
             assert extracted[src]["source"] == "ocr" and extracted[src]["confidence"] > 0.9, src
         assert extracted["raw/文本层.pdf"]["source"] == "text-layer"
-        check("native adapter OCRs image + scanned PDF and reads the text-layer PDF exactly")
-
-        # upside-down raster must be corrected by the direction classifier
-        # before recognition - without cls the same crop yields garbage
-        up = adapter_text(samples / "plate_upside.png")
-        assert "龙泉窑青瓷" in up["text"] and "百分之一点五" in up["text"], up
-        assert up["source"] == "ocr" and up["confidence"] > 0.9, up
-        check("upside-down page is rotated by the cls path and fully recognized")
+        check("native adapter OCRs image + scanned PDF + upside-down page and reads the text-layer PDF exactly")
 
         # the source we publish over must stay open to the end - process it LAST,
         # since context is exclusive per vault (another_order_active otherwise)
@@ -148,24 +156,25 @@ def main():
         order_seq = [s for s in orders if s != publish_src] + [publish_src]
         for src in order_seq:
             order = orders[src]
-            ctx = ok(root, "context", order=order)
-            assert ctx["source_text"] is None and ctx["extraction_required"] is True, src
             sha = hashlib.sha256((root / src).read_bytes()).hexdigest()
             assert extracted[src]["sha256"] == sha, (src, extracted[src]["sha256"], sha)
-            r = ok(root, "extraction-submit", source=src, kind=extracted[src]["kind"],
-                   extractor="ppocrv4-mobile-ocr-rs" if extracted[src]["source"] == "ocr" else "lopdf",
-                   version="1", text=extracted[src]["text"], at="2026-11-02")
-            assert r["source_sha256"] == sha and r["replayed"] is False, r
+            # The import stage already booked the sidecar; context must serve
+            # the digest-bound text without another adapter run.
             served = ok(root, "context", order=order)
-            assert served["extraction_required"] is False, src
-            assert "龙泉窑青瓷" in served["source_text"] or extracted[src]["source"] == "text-layer", src
-            assert served["extraction"]["bound_sha256"] == sha, src
+            assert served["extraction_required"] is False, (src, served)
+            assert served["source_text"] is not None, (src, served)
+            assert served["extraction"]["bound_sha256"] == sha, (src, served)
+            expected = "lopdf" if extracted[src]["source"] == "text-layer" else "ppocrv4-mobile-ocr-rs"
+            assert served["extraction"]["extractor"] == expected, (src, served)
+            if extracted[src]["source"] == "text-layer":
+                assert served["source_text"] == extracted[src]["text"], src
+            else:
+                assert "龙泉窑青瓷" in served["source_text"], (src, served["source_text"])
             if order != publish_order:
                 ok(root, "cancel", order=order)
-        check("image and PDF originals book sidecars bound to source bytes and context serves them")
+        check("context serves the sidecars booked at import time")
 
         order = publish_order
-        ok(root, "context", order=order)
         ok(root, "analysis-submit", order=order,
            analysis={"entities": ["哥窑"], "concepts": ["粉青"], "conflicts": [],
                      "summary": "青瓷釉色与窑口（OCR 摄入）"})

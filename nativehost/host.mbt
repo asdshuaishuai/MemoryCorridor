@@ -99,7 +99,19 @@ pub fn execute(session : SessionState, request : Json) -> Json raise @base.Fault
         _ => None
       }
     }
-    let value = @agent.dispatch_with_catalog(store, request, cached_catalog)
+    let dispatched = @agent.dispatch_with_catalog(store, request, cached_catalog)
+    // Native-only OCR bridge: context still owns verification and the sidecar
+    // contract; this hook only runs when both the adapter and the source bytes
+    // pass their bindings. WASM and agent never reach it.
+    let value = if op == "context" {
+      ocr_after_context(store, request, dispatched, cached_catalog)
+    } else if op == "scan" || op == "refresh" {
+      // Import-time dispatch: only the newly created orders for PDF/image
+      // files are OCR'd; the scan/refresh response stays unchanged.
+      ocr_after_scan(store, dispatched)
+    } else {
+      dispatched
+    }
     match @platform.read("index.mbt.md") {
       Some(current) => session.catalog.val = Some(current)
       None => session.catalog.val = None
