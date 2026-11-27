@@ -169,16 +169,16 @@ static int mc_ocr_bin(char *dst, size_t cap) {
   uint32_t size = sizeof(exe);
   if (_NSGetExecutablePath(exe, &size) != 0) return -1;
 #else
-  ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-  if (n <= 0 || n >= (ssize_t)sizeof(exe) - 1) return -1;
-  exe[n] = '\0';
+  ssize_t link_len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+  if (link_len <= 0 || link_len >= (ssize_t)sizeof(exe) - 1) return -1;
+  exe[link_len] = '\0';
 #endif
-  const char *base = realpath(exe, resolved) ? resolved : exe;
+  char *base = realpath(exe, resolved) ? resolved : exe;
   char *slash = strrchr(base, '/');
   if (!slash) return -1;
   *slash = '\0';
-  int n = snprintf(dst, cap, "%s/ocr-adapter", base);
-  if (n <= 0 || n >= (int)cap) return -1;
+  int written = snprintf(dst, cap, "%s/ocr-adapter", base);
+  if (written <= 0 || written >= (int)cap) return -1;
   return access(dst, X_OK) == 0 ? 0 : -2;
 }
 
