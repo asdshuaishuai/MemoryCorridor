@@ -21,10 +21,61 @@ REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "_build/native/debug/build/cli/cli.exe"
 OS_EMBED = Path(os.environ.get("OS_EMBED_BIN", REPO / "adapters/os-embed/os-embed"))
 SPACE = {"id": "os-nl-zh-v1", "dimensions": 640}
+PROBE_VERSION = "os-embed/v1"
 
 
-def available():
-    return sys.platform == "darwin" and OS_EMBED.is_file()
+def probe_verdict():
+    """Run the adapter's host probe. None means no usable verdict.
+
+    A binary from before the probe contract answers `unknown argument: --probe`
+    with exit 2; treating that as "not built" would hide a stale install, so the
+    caller turns None into a build hint instead of a SKIP.
+    """
+    try:
+        completed = subprocess.run(
+            [str(OS_EMBED), "--probe"], stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict) or value.get("probe") != PROBE_VERSION:
+        return None
+    return value
+
+
+def probe_language(verdict, language):
+    rows = verdict.get("languages")
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if isinstance(row, dict) and row.get("language") == language:
+            return row
+    return None
+
+
+def availability():
+    """Return (usable, skip_reason, failure); failure is a stale/broken install."""
+    if sys.platform != "darwin":
+        return False, f"adapter targets macOS only (platform is {sys.platform})", None
+    if not OS_EMBED.is_file():
+        return False, "adapter not built (run scripts/build_os_embed.sh)", None
+    verdict = probe_verdict()
+    if verdict is None:
+        return False, None, ("adapter exists but --probe produced no os-embed/v1 verdict "
+                             "(stale build? run scripts/build_os_embed.sh)")
+    if verdict.get("available") is not True:
+        return False, f"probe reports unavailable (reason={verdict.get('reason')})", None
+    row = probe_language(verdict, "zh")
+    if row is None:
+        return False, "probe has no zh row", None
+    if row.get("available") is not True:
+        return False, f"probe reports zh unavailable (reason={row.get('reason')})", None
+    return True, None, None
 
 
 def embed_items(items):
@@ -38,9 +89,12 @@ def main():
     if not CLI.is_file():
         print("SKIP: build the CLI first (moon build --target native cli)")
         return 0
-    if not available():
-        print("SKIP os_embed_e2e: macOS NLEmbedding adapter not built "
-              "(run scripts/build_os_embed.sh); the engine vector seam is still "
+    usable, skip_reason, failure = availability()
+    if failure:
+        print(f"FAIL os_embed_e2e: {failure}", file=sys.stderr)
+        return 2
+    if not usable:
+        print(f"SKIP os_embed_e2e: {skip_reason}; the engine vector seam is still "
               "covered by redundancy_e2e.py.")
         return 0
     with tempfile.TemporaryDirectory(prefix="corridor-os-embed-") as work:

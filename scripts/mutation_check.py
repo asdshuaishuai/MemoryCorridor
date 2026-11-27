@@ -1822,7 +1822,7 @@ MUTATIONS = [
       let (system_pages, vector_space) = if query_vector == Json::null() {''',
      '''      let query_vector = try arg("query_vector") catch { _ => Json::null() }
       let (system_pages, vector_space) = if true {''',
-     "os embed e2e:", "os_embed_e2e.py"),
+     "chunk-level retrieve reports lanes and honours namespaces", "e2e.py"),
 ]
 
 

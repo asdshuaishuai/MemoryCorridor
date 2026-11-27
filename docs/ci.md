@@ -8,7 +8,7 @@ budget:
   official Unix installer (the repository does not vendor the toolchain, but
   pins the version so CI matches the locally verified gate). The gate includes
   the wasm service e2e (`scripts/wasm_service_e2e.py`), which bootstraps a
-  wasmtime venv on the runner, and the 250-entry mutation gate. Budget:
+  wasmtime venv on the runner, and the 252-entry mutation gate. Budget:
   `timeout-minutes: 300`.
 - `release` independently builds the deterministic native release archive with
   `scripts/release.py`, re-checks it with `scripts/release_e2e.py`, and uploads
@@ -25,10 +25,27 @@ success — check `gh run view` conclusions, not the watcher exit code.
 Local changes use the tiered gate: `scripts/quick_verify.sh` runs `moon check
 --deny-warn`, `moon test`, the native build, and the focused e2e set
 (`e2e.py`, `interop_e2e.py`, `retrieval_e2e.py`, `embedding_e2e.py`,
-`os_embed_e2e.py`, `memory_e2e.py`, `dream_e2e.py`,
-`workspace_layer_e2e.py`, `project_wiki_bench.py`). The full `scripts/verify.sh`
+`os_embed_e2e.py`, `os_embed_probe_e2e.py`, `vector_engine_e2e.py`,
+`memory_e2e.py`, `dream_e2e.py`, `workspace_layer_e2e.py`,
+`project_wiki_bench.py`). The full `scripts/verify.sh`
 (including the mutation matrix and all WASM/Web faces) is reserved for release,
 nightly and CI; it is not the per-change default.
+
+`os_embed_e2e.py` distinguishes a missing adapter (SKIP, with the
+`scripts/build_os_embed.sh` hint) from a present binary whose `--probe` exits 2
+or emits no `os-embed/v1` verdict (FAIL, with the same build hint); a valid
+verdict with `available:false` (or an unavailable `zh` row) is a SKIP naming the
+probe reason. The two
+host-only probe gates, `os_embed_probe_e2e.py` and `vector_engine_e2e.py`, run
+on Linux as well: their contract branches use stub adapters plus the native CLI,
+and only the macOS live branch needs the OS engine. `vector_engine_e2e.py`'s
+live branch also fails a present-but-stale adapter with the build hint, and its
+live `ensure` check removes the canonical binary, rebuilds it from the
+checked-in Swift source, and restores the original; a custom `OS_EMBED_BIN`
+skips that check. `os_embed_probe_e2e.py` guards the Swift adapter's imports
+and probe tokens and bans fetch tokens in the gate files; `vector_engine_e2e.py`
+guards the helper and its own source against network tokens and does the same
+gate check. None of these paths downloads a model or touches the network.
 
 Cross-platform delivery is the wasm service runtime's job: the engine module
 runs under any WASM runtime with a thin host (see `docs/wasm.md`), so the

@@ -623,7 +623,10 @@ test "memory candidates excludes conflicted notes from merging and pruning" {
   ignore(memory_submit(store, @vault.load(store), { "op": "memory-submit",
     "kind": "fact", "scope": "project", "workspace": test_ws(), "text": second, "conditions": ["核对釉色"],
     "sources": [], "at": "2026-11-12T09:05:00Z", "key": "y" }))
-  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws(), "now": "2026-11-26T00:00:00Z" })
+  // A far-future clock is deliberate: both notes have decayed well past the
+  // normal prune threshold, so the only reason they stay out of `prune` is the
+  // unresolved-conflict guard.
+  let candidates = memory_candidates(store, @vault.load(store), { "workspace": test_ws(), "now": "2030-01-01T00:00:00Z" })
   // Dropping one side would hide the competing judgment the host must confirm.
   assert_eq(@base.array(@base.field(candidates, "merge")).length(), 0)
   assert_eq(@base.array(@base.field(candidates, "prune")).length(), 0)

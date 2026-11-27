@@ -26,8 +26,25 @@ func cosine(_ a: [Double], _ b: [Double]) -> Double {
     return dot / (aa.squareRoot() * bb.squareRoot())
 }
 
+// One verdict row per model. `dimensions` comes from the runtime embedding, so
+// an OS change that alters the model size is reported instead of trusted.
+func probeLanguage(_ tag: String, _ nl: NLLanguage, _ expected: Int) -> [String: Any] {
+    guard let embedding = NLEmbedding.sentenceEmbedding(for: nl) else {
+        return ["language": tag, "available": false, "dimensions": NSNull(),
+                "reason": "engine_absent"]
+    }
+    if embedding.dimension != expected {
+        return ["language": tag, "available": false, "dimensions": NSNull(),
+                "reason": "dimension_mismatch"]
+    }
+    return ["language": tag, "available": true, "dimensions": embedding.dimension,
+            "reason": NSNull()]
+}
+
 var language = "zh"
+var languageGiven = false
 var selftest = false
+var probe = false
 var index = 1
 while index < CommandLine.arguments.count {
     switch CommandLine.arguments[index] {
@@ -35,12 +52,42 @@ while index < CommandLine.arguments.count {
         index += 1
         if index >= CommandLine.arguments.count { fail("--language needs zh|en") }
         language = CommandLine.arguments[index]
+        languageGiven = true
     case "--selftest":
         selftest = true
+    case "--probe":
+        probe = true
     default:
         fail("unknown argument: \(CommandLine.arguments[index])")
     }
     index += 1
+}
+
+// A probe is a verdict, not an embedding request: it reads no stdin and never
+// touches a vault. Exit 0 means the verdict exists; `available` carries the
+// answer. Combining it with the single-language modes is a usage error.
+if probe {
+    if languageGiven || selftest { fail("probe_exclusive") }
+    let languages: [[String: Any]] = [
+        probeLanguage("zh", .simplifiedChinese, 640),
+        probeLanguage("en", .english, 512),
+    ]
+    let usable = languages.contains { ($0["available"] as? Bool) == true }
+    let firstUnusable = languages.first { ($0["available"] as? Bool) == false }
+    var topReason: Any = NSNull()
+    if !usable, let row = firstUnusable, let reason = row["reason"] { topReason = reason }
+    let verdict: [String: Any] = [
+        "probe": "os-embed/v1",
+        "available": usable,
+        "reason": topReason,
+        "languages": languages,
+        "engine": "nlembedding",
+        "platform": "darwin",
+        "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+    ]
+    let encoded = try JSONSerialization.data(withJSONObject: verdict)
+    FileHandle.standardOutput.write(encoded)
+    exit(0)
 }
 
 let nlLanguage: NLLanguage

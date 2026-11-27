@@ -1,3 +1,7 @@
+// OPTIONAL LEGACY: not required, not the default host path, and no gate depends
+// on this adapter or its model fetch. The current host path probes the OS engine
+// (adapters/os-embed/os-embed --probe). Kept as a reference implementation.
+//
 // Native embedding provider for MemoryCorridor's vector subsystem (续二十五).
 // The engine's MoonBit core never calls a model; it stores and searches vectors
 // that a host produces. This is that host producer: bge-small-zh-v1.5 (Apache-2.0,

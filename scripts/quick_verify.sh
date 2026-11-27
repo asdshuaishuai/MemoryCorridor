@@ -22,6 +22,8 @@ python3 scripts/interop_e2e.py
 python3 scripts/retrieval_e2e.py
 python3 scripts/embedding_e2e.py
 python3 scripts/os_embed_e2e.py
+python3 scripts/os_embed_probe_e2e.py
+python3 scripts/vector_engine_e2e.py
 python3 scripts/memory_e2e.py
 python3 scripts/dream_e2e.py
 python3 scripts/workspace_layer_e2e.py

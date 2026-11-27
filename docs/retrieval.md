@@ -15,7 +15,8 @@
 - 内核：MoonRetrieve 0.6.0 分块 BM25（Apache-2.0，纯 MoonBit）。页面按 800 字符切块、80 字符重叠，块 id 为 `<页面ID>#<序号>`；块表只存哈希，不内嵌正文。
 - 缓存：`.corridor/fts.json`（制品 v5，含算法、输入指纹、页面绑定、块表与序列化 BM25）与旁车 `.corridor/fts.vectors.bin`（逐块 256 维 f32 小端，主文件用 `vectors_sha256` 钉住）。两者都是派生缓存，可整目录删除重建。
 - 向量兜底：字符 2/3 元组 + 拉丁词元的签名哈希特征，256 维、L2 归一化、精确扫描；与文本路按固定 `k=60` 的 RRF 融合，同分按块 id 定序。响应的 `lanes` 如实报告 `text:"on"`、`vector:"algo"`、`reason:"no_system_engine"`。
-- 系统向量路：`retrieve` 可选 `query_vector` + `provider`。宿主自行生成查询向量，引擎按 provider 注册校验后，把向量路切到页面级系统向量（每个命中页映射到首块 `<page>#0`，保留宿主返回的排序），`lanes` 报 `vector:"system"`、`reason:"provider_vectors"` 并回显 `vector_space`；无可用页面向量时仍报 `vector:"system"`、`reason:"no_matching_vectors"`。缺省（不传 `query_vector`）继续算法兜底，绝不静默切换。核心不调用 OS/模型，只校验与计算。
+- 系统向量路：`retrieve` 可选 `query_vector` + `provider`。宿主自行生成查询向量，引擎按 provider 注册校验后，把向量路切到页面级系统向量（每个命中页映射到首块 `<page>#0`，保留宿主返回的排序），`lanes` 报 `vector:"system"`、`reason:"provider_vectors"` 并回显 `vector_space`；无可用页面向量时仍报 `vector:"system"`、`reason:"no_matching_vectors"`。缺省（不传 `query_vector`）继续算法兜底，绝不静默切换。核心不调用 OS/模型，只校验与计算；OS/模型引擎是否存在由宿主探测（`adapters/os-embed/os-embed --probe`，见 [vector.md](vector.md)），探针为正也不会自动切换 lane——只有请求显式携带 `query_vector` + 已注册 provider 时 system 路才启用。`lanes.reason:"no_system_engine"` 表示本次请求未携带宿主查询向量，不表示机器没有引擎。
+- 宿主探针与助手（续八十五）：`adapters/os-embed/os-embed --probe` 或 `python3 -I scripts/vector_engine.py probe` 只检测 OS 句向量引擎，输出 `os-embed/v1` verdict；`available:false` 是成功检测而非错误，退出 0，不注册 provider、不生成 plan/`embedding-submit`、不合成 `query_vector`、不写 vault，检索继续算法兜底并报 `no_system_engine`。只有 `available:true` 时宿主才可 `register`（调用既有 `provider-register`）并用 `query-text` 取得 `{space,values}` 驱动 system 路；探针为正也不会自动切换 lane。该路径不引入新向量模型、不下载模型、不联网；`adapters/embed-rs` + bge 是可选旧参考实现，不是默认或必装。探针不自动注册、不生成 `embedding-plan`、不自动索引。
 - 接口：`retrieve` 返回块级命中与 `text_rank`/`vector_rank`；`search` 是同一内核上的页面视图（每页取最高分块）；`context` 默认 `scope=related`（引用页 + 同来源命名空间，`CONTEXT_PAGE_LIMIT=64`），显式 `scope=all` 才做整库装配，并报告 `pages_total`/`pages_omitted`。
 - 校验：分块缓存绑定页面哈希与输入指纹；制品自洽但页绑定/块号/BM25 计数/旁车长度/旁车哈希任一不符都拒绝。超过 16 MiB 单文件上限的库降级为进程内集合继续应答（`cache_rebuilt:true`），`lint` 报 `cache_invalid: file_too_large`。
 - 增量：`@platform.signature` 提供变化信号，`@vault.VerifyMemo` 在同一请求内前后采样一致时复用；WASM 面 `stat→None` 永远全量。
@@ -31,14 +32,14 @@
 
 - 不在核心里生成答案、摘要或查询改写；不默认用 LLM 改写查询；不引入交叉编码器重排。需要模型的部分留给外部调用方。
 - 不把检索命中当成知识页；不自动写入 `wiki/`、`index.mbt.md` 或 OKF 导出。
-- 核心不生成查询向量、不链接 OS/模型框架。系统向量只经宿主适配器（见 [vector.md](vector.md)）以 `query_vector` 提供；不可用时明确回退算法路并报告原因。
+- 核心不生成查询向量、不链接 OS/模型框架。系统向量只经宿主适配器（见 [vector.md](vector.md)）以 `query_vector` 提供；不可用时明确回退算法路并报告原因。宿主探针（`os-embed --probe`）及其可用性判断同样在宿主侧，引擎不读取、不信任、不链接。
 
 ## 4. 待办
 
 - 块级系统向量（`vector-submit`）尚未加入：当前系统向量按页面映射到首块 `<page>#0`，保留宿主页级排序；块级排序留给后续，不写成已交付。
-- macOS `NLEmbedding` 适配器已作为宿主工具交付（`adapters/os-embed/`、`scripts/build_os_embed.sh`），由 `scripts/os_embed_e2e.py` 验证；其他平台继续算法兜底。
+- macOS `NLEmbedding` 适配器与宿主探针已作为宿主工具交付（`adapters/os-embed/`、`scripts/build_os_embed.sh`、`scripts/vector_engine.py`、`os-embed/v1`），由 `scripts/os_embed_e2e.py`、`scripts/os_embed_probe_e2e.py`、`scripts/vector_engine_e2e.py` 验证；其他平台继续算法兜底。
 - 分词：MoonBit jieba 因固定工具链与体积暂缓（见 `specs/engine/tasks.md` 历史账），当前 CJK n-gram 已覆盖召回；不写成已启用。
 
 ## 5. 验证
 
-`retrieval_wbtest.mbt` 覆盖唯一标识、制品自洽拒绝、旁车哈希、向量路召回文本路漏掉的截断标识符、宿主页排序替换算法路与命名空间过滤；`retrieval_e2e.py` 覆盖块级 retrieve/命名空间/非法前缀；`embedding_e2e.py` 用手工 2 维 provider 向量在平台无关路径覆盖 `retrieve` 的 system 路、首块映射与旧向量排除（Linux CI 也执行）；`os_embed_e2e.py` 在 macOS 上验证真实 `NLEmbedding` 适配器驱动同一路径，非 macOS 显式 SKIP；`e2e.py`、`interop_e2e.py` 守住知识基线与 OKF；全部由 `./scripts/verify.sh` 执行。
+`retrieval_wbtest.mbt` 覆盖唯一标识、制品自洽拒绝、旁车哈希、向量路召回文本路漏掉的截断标识符、宿主页排序替换算法路与命名空间过滤；`retrieval_e2e.py` 覆盖块级 retrieve/命名空间/非法前缀；`embedding_e2e.py` 用手工 2 维 provider 向量在平台无关路径覆盖 `retrieve` 的 system 路、首块映射与旧向量排除（Linux CI 也执行）；`os_embed_e2e.py` 在 macOS 上验证真实 `NLEmbedding` 适配器驱动同一路径，非 macOS 显式 SKIP，存在但陈旧/损坏的适配器则 FAIL 并提示重跑构建；`os_embed_probe_e2e.py` 与 `vector_engine_e2e.py` 覆盖探针契约、不可用零写入、无网络静态守卫与 macOS live `ensure` 重建（后者临时删除标准适配器二进制并由源码重建再还原）；`e2e.py`、`interop_e2e.py` 守住知识基线与 OKF；全部由 `./scripts/verify.sh` 执行。

@@ -499,6 +499,12 @@ with tempfile.TemporaryDirectory(prefix="memorycorridor-e2e-") as work:
     lanes = retrieved["lanes"]
     assert (lanes["text"], lanes["vector"], lanes["reason"]) == ("on", "algo", "no_system_engine"), retrieved
     assert lanes["vector_space"] is None, retrieved
+    # A supplied query vector without a provider is refused: ignoring it would
+    # silently change the lane, and the system lane must be traceable to a
+    # registered embedding provider. This is platform-independent (no model).
+    s.call("retrieve", query="叶绿素", provider=None,
+           query_vector={"space": {"id": "e2e-space", "dimensions": 2}, "values": [1, 0]},
+           error="retrieve_provider_required")
     assert retrieved["hits"] and all("#" in hit["chunk"] for hit in retrieved["hits"]), retrieved
     assert all(hit["page"] and hit["text"] for hit in retrieved["hits"]), retrieved
     assert retrieved["hits"][0]["page"] == "concepts/共享", retrieved
